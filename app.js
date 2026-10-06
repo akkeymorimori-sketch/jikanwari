@@ -24,6 +24,7 @@ const addDays = (d, k) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 
 const md = d => `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`;
 const hm = d => `${d.getHours()}:${pad(d.getMinutes())}`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isHttp = s => /^https?:\/\//i.test(s || '');
 
 const DEFAULT_TIMES = [
   ['08:50', '10:20'], ['10:30', '12:00'], ['13:00', '14:30'], ['14:40', '16:10'],
@@ -56,19 +57,6 @@ const PROVIDERS = {
 
 // 混雑時に切り替える予備のモデル
 const FALLBACK_MODEL = { gemini: 'gemini-3.5-flash-lite' };
-
-const ICON_PRESETS = [
-  { id: 'grid-blue', kind: 'grid', bg: '#2f6fde', accent: '#ffd43b' },
-  { id: 'grid-green', kind: 'grid', bg: '#2b8a3e', accent: '#ffd43b' },
-  { id: 'grid-orange', kind: 'grid', bg: '#e8590c', accent: '#fff3bf' },
-  { id: 'grid-dark', kind: 'grid', bg: '#343a40', accent: '#4dabf7' },
-  { id: 'char-ji', kind: 'char', bg: '#2f6fde', text: '時' },
-  { id: 'char-wari', kind: 'char', bg: '#7048e8', text: '割' },
-  { id: 'char-ju', kind: 'char', bg: '#d6336c', text: '授' },
-  { id: 'char-memo', kind: 'char', bg: '#f08c00', text: 'メモ' }
-];
-const DEFAULT_ICON = { preset: 'grid-blue', custom: null, useCustom: false };
-const DEFAULT_APP_NAME = '時間割メモ';
 
 /* ===== データ ===== */
 let state;
@@ -116,6 +104,7 @@ function normalize(s) {
   s.periods ??= 7;
   s.showSat ??= false;
   s.shiftTimes ??= false;
+  s.syllabusSearch ??= '';
   s.times ??= [];
   for (let i = 0; i < 10; i++) {
     s.times[i] ??= { start: DEFAULT_TIMES[i][0], end: DEFAULT_TIMES[i][1] };
@@ -124,10 +113,8 @@ function normalize(s) {
   s.keys ??= {};
   s.models ??= {};
   s.packChecks ??= {};
-  s.icon = { ...DEFAULT_ICON, ...(s.icon || {}) };
-  if (!ICON_PRESETS.some(p => p.id === s.icon.preset)) s.icon.preset = DEFAULT_ICON.preset;
-  if (!s.icon.custom) s.icon.useCustom = false;
-  s.appName = (s.appName || '').trim() || DEFAULT_APP_NAME;
+  delete s.icon;     // 前のバージョンのアイコン設定は使わない
+  delete s.appName;
   if (!Array.isArray(s.terms) || !s.terms.length) s.terms = [newTerm(defaultTermName())];
   if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   for (const t of s.terms) {
@@ -138,7 +125,7 @@ function normalize(s) {
     t.courses ??= [];
     for (const c of t.courses) {
       c.id ??= uid();
-      c.name ??= ''; c.teacher ??= ''; c.room ??= '';
+      c.name ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
       for (const i of c.items) {
         i.id ??= uid();
@@ -298,6 +285,27 @@ function suggestTerm(now) {
     .sort((a, b) => (a.start || '').localeCompare(b.start || ''))[0] || null;
 }
 
+/* ===== シラバス ===== */
+// 開くURL（授業ごとのURL → なければ検索URL）
+function syllabusURL(c) {
+  if (isHttp(c.syllabus)) return c.syllabus.trim();
+  const tpl = state.syllabusSearch.trim();
+  if (!isHttp(tpl)) return '';
+  return tpl.replace(/\{授業名\}/g, encodeURIComponent(c.name.trim()));
+}
+
+function renderSyllabusHint() {
+  const c = cur();
+  if (!c) return;
+  const v = c.syllabus.trim();
+  let msg;
+  if (v && !isHttp(v)) msg = 'URLは https:// から始まる形で入れてね';
+  else if (v) msg = '登録したURLを開くよ';
+  else if (isHttp(state.syllabusSearch)) msg = `URLがないから、シラバス検索で「${c.name}」を開くよ`;
+  else msg = '設定でシラバス検索のURLを入れておくと、URLを貼らなくても開けるよ';
+  $('#cSyllabusHint').textContent = msg;
+}
+
 /* ===== 画面：次の授業 ===== */
 function upcoming(now) {
   const t = term(), base = searchBase(now, t), list = [];
@@ -355,14 +363,14 @@ function renderNow() {
   }
 
   const list = upcoming(now);
-  const cur = list.filter(x => x.start <= now);
+  const curList = list.filter(x => x.start <= now);
   const first = list.find(x => x.start > now);
   const nxt = first ? list.filter(x => +x.start === +first.start) : [];
   let body = '';
-  if (cur.length) {
-    const c = cur[0].c;
-    body += `<h2>今の授業 <small>${DAYS[c.day]}${c.period}・あと${fmtLeft(cur[0].end - now)}で終わり</small></h2>` +
-      cur.map(courseLine).join('');
+  if (curList.length) {
+    const c = curList[0].c;
+    body += `<h2>今の授業 <small>${DAYS[c.day]}${c.period}・あと${fmtLeft(curList[0].end - now)}で終わり</small></h2>` +
+      curList.map(courseLine).join('');
   }
   if (nxt.length) {
     const c = nxt[0].c;
@@ -549,7 +557,7 @@ $('#grid').addEventListener('click', e => {
   if (!cell) return;
   const d = +cell.dataset.d, p = +cell.dataset.p;
   if (!confirm(`${DAYS[d]}曜${p}限に授業を追加する？`)) return;
-  const c = { id: uid(), day: d, period: p, name: '新しい授業', teacher: '', room: '', items: [], memos: [], tasks: [] };
+  const c = { id: uid(), day: d, period: p, name: '新しい授業', teacher: '', room: '', syllabus: '', items: [], memos: [], tasks: [] };
   courses().push(c);
   save(); renderAll(); openCourse(c.id);
 });
@@ -573,10 +581,12 @@ function openCourse(id) {
   $('#cName').value = c.name;
   $('#cTeacher').value = c.teacher;
   $('#cRoom').value = c.room;
+  $('#cSyllabus').value = c.syllabus;
   $('#cDay').value = c.day;
   $('#cPeriod').value = c.period;
   $('#taskDue').value = '';
   renderDetail();
+  renderSyllabusHint();
   $('#courseDlg').showModal();
 }
 
@@ -609,7 +619,11 @@ function renderDetail() {
 }
 
 for (const [id, key] of [['cName', 'name'], ['cTeacher', 'teacher'], ['cRoom', 'room']]) {
-  $('#' + id).addEventListener('input', e => { cur()[key] = e.target.value; save(); renderAll(); });
+  $('#' + id).addEventListener('input', e => {
+    cur()[key] = e.target.value;
+    save(); renderAll();
+    if (key === 'name') renderSyllabusHint();
+  });
 }
 for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
   $('#' + id).addEventListener('change', e => {
@@ -618,6 +632,19 @@ for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
     renderDetail();
   });
 }
+
+// シラバス
+$('#cSyllabus').addEventListener('input', e => {
+  cur().syllabus = e.target.value.trim();
+  save(); renderSyllabusHint();
+});
+$('#cSyllabusOpen').onclick = () => {
+  const c = cur();
+  if (c.syllabus && !isHttp(c.syllabus)) return alert('URLは https:// から始まる形で入れてね');
+  const url = syllabusURL(c);
+  if (!url) return alert('シラバスのURLを貼るか、設定でシラバス検索のURLを入れてね');
+  window.open(url, '_blank', 'noopener');
+};
 
 // 持ち物
 $('#itemAdd').onclick = () => {
@@ -863,13 +890,14 @@ function applyImport(replace) {
       room: tr.querySelector('.rm').value.trim()
     }));
   if (!rows.length) return alert('保存する授業がないよ');
-  if (replace && !confirm(`「${term().name}」の時間割を置き換える？（同じ名前の授業のメモ・持ち物・課題は引き継ぐ）`)) return;
+  if (replace && !confirm(`「${term().name}」の時間割を置き換える？（同じ名前の授業のメモ・持ち物・課題・シラバスは引き継ぐ）`)) return;
 
   const old = courses();
   const added = rows.map(r => {
     const prev = old.find(c => c.name === r.name);
     return {
       id: uid(), ...r,
+      syllabus: prev ? prev.syllabus : '',
       items: prev ? structuredClone(prev.items) : [],
       memos: prev ? structuredClone(prev.memos) : [],
       tasks: prev ? structuredClone(prev.tasks) : []
@@ -989,6 +1017,7 @@ $('#termCreate').onclick = () => {
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
   const copied = $('#newTermCopy').checked ? courses().map(c => ({
     id: uid(), day: c.day, period: c.period, name: c.name, teacher: c.teacher, room: c.room,
+    syllabus: c.syllabus,
     items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() })),
     memos: [], tasks: []
   })) : [];
@@ -997,116 +1026,6 @@ $('#termCreate').onclick = () => {
   state.currentTermId = t.id;
   save(); renderAll(); $('#termDlg').close();
 };
-
-/* ===== アイコン ===== */
-function fillRound(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawPreset(ctx, p, s) {
-  ctx.fillStyle = p.bg;
-  ctx.fillRect(0, 0, s, s);
-  if (p.kind === 'grid') {
-    const m = s * 0.18, w = s - m * 2, gap = w * 0.06, headH = w * 0.16, r = s * 0.03;
-    const cw = (w - gap * 2) / 3, ch = (w - headH - gap * 3) / 3;
-    ctx.fillStyle = '#fff';
-    fillRound(ctx, m, m, w, headH, r);
-    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
-      ctx.fillStyle = i === 1 && j === 2 ? p.accent : 'rgba(255,255,255,0.82)';
-      fillRound(ctx, m + j * (cw + gap), m + headH + gap + i * (ch + gap), cw, ch, r);
-    }
-  } else {
-    const fs = s * (p.text.length === 1 ? 0.56 : 0.34);
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = `bold ${fs}px "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif`;
-    ctx.fillText(p.text, s / 2, s / 2 + fs * 0.04);
-  }
-}
-
-const presetById = id => ICON_PRESETS.find(p => p.id === id) || ICON_PRESETS[0];
-
-function presetURL(p, size) {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = size;
-  drawPreset(cv.getContext('2d'), p, size);
-  return cv.toDataURL('image/png');
-}
-
-async function iconURL(icon, size) {
-  if (!icon.useCustom || !icon.custom) return presetURL(presetById(icon.preset), size);
-  const img = await loadImg(icon.custom);
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = size;
-  cv.getContext('2d').drawImage(img, 0, 0, size, size);
-  return cv.toDataURL('image/png');
-}
-
-// 自分の画像を正方形に切り抜いて512pxにする
-async function cropToSquare(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImg(url);
-    const side = Math.min(img.width, img.height);
-    const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
-    const cv = document.createElement('canvas');
-    cv.width = cv.height = 512;
-    const ctx = cv.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, 512, 512);
-    ctx.drawImage(img, sx, sy, side, side, 0, 0, 512, 512);
-    return cv.toDataURL('image/jpeg', 0.9);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function ensureLink(rel) {
-  let l = document.head.querySelector(`link[rel="${rel}"]`);
-  if (!l) {
-    l = document.createElement('link');
-    l.rel = rel;
-    document.head.appendChild(l);
-  }
-  return l;
-}
-
-// タブのアイコン・名前とAndroid用のmanifestを反映
-// iPhoneのホーム画面アイコンは index.html の apple-touch-icon.png を使うので、ここでは触らない
-async function applyIcon() {
-  try {
-    const [i192, i512] = await Promise.all([192, 512].map(s => iconURL(state.icon, s)));
-    ensureLink('icon').href = i192;
-    document.title = state.appName;
-    $('#appTitle').textContent = state.appName;
-
-    const base = location.href.split(/[?#]/)[0];
-    const manifest = {
-      name: state.appName,
-      short_name: state.appName,
-      start_url: base,
-      scope: base.replace(/[^/]*$/, ''),
-      display: 'standalone',
-      background_color: '#f4f5f7',
-      theme_color: '#2f6fde',
-      icons: [
-        { src: i192, sizes: '192x192', type: 'image/png' },
-        { src: i512, sizes: '512x512', type: 'image/png' }
-      ]
-    };
-    ensureLink('manifest').href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(manifest));
-  } catch (err) {
-    console.warn('アイコンの反映に失敗', err);
-  }
-}
 
 /* ===== 設定 ===== */
 let tmp = null;      // 保存を押すまでの一時データ
@@ -1168,41 +1087,6 @@ $('#sTimes').addEventListener('change', e => {
   renderTimes();
 });
 
-function renderIconPicker() {
-  const sel = tmp.icon.useCustom && tmp.icon.custom ? 'custom' : 'p:' + tmp.icon.preset;
-  const opts = ICON_PRESETS.map(p => ({ key: 'p:' + p.id, src: presetURL(p, 96) }));
-  if (tmp.icon.custom) opts.push({ key: 'custom', src: tmp.icon.custom });
-  $('#iconPicker').innerHTML = opts.map(o =>
-    `<button type="button" class="iconOpt ${o.key === sel ? 'sel' : ''}" data-icon="${o.key}">` +
-    `<img src="${o.src}" alt=""></button>`).join('');
-  iconURL(tmp.icon, 180).then(url => {
-    $('#iconPreview').src = url;
-    $('#iconDl').href = url;
-  }).catch(() => {});
-}
-
-$('#iconPicker').addEventListener('click', e => {
-  const key = e.target.closest('[data-icon]')?.dataset.icon;
-  if (!key) return;
-  if (key === 'custom') tmp.icon.useCustom = true;
-  else { tmp.icon.useCustom = false; tmp.icon.preset = key.slice(2); }
-  renderIconPicker();
-});
-
-$('#iconFile').onchange = async e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  try {
-    tmp.icon.custom = await cropToSquare(f);
-    tmp.icon.useCustom = true;
-    renderIconPicker();
-  } catch {
-    alert('画像が読めなかった');
-  } finally {
-    e.target.value = '';
-  }
-};
-
 // 画面の入力を一時データに集める
 function collect() {
   stashProviderFields();
@@ -1210,7 +1094,7 @@ function collect() {
   tmp.periods = clampPeriods($('#sPeriods').value);
   tmp.showSat = $('#sSat').checked;
   tmp.shiftTimes = $('#sShift').checked;
-  tmp.appName = $('#sAppName').value.trim();
+  tmp.syllabusSearch = $('#sSyllabus').value.trim();
 }
 
 function openSettings() {
@@ -1219,19 +1103,18 @@ function openSettings() {
     keys: { ...state.keys },
     models: { ...state.models },
     times: structuredClone(state.times),
-    icon: { ...state.icon },
     periods: state.periods,
     showSat: state.showSat,
     shiftTimes: state.shiftTimes,
-    appName: state.appName
+    syllabusSearch: state.syllabusSearch
   };
   fillProviderFields(state.provider);
   $('#sPeriods').value = tmp.periods;
   $('#sSat').checked = tmp.showSat;
   $('#sShift').checked = tmp.shiftTimes;
-  $('#sAppName').value = tmp.appName;
+  $('#sSyllabus').value = tmp.syllabusSearch;
+  $('#restoreFile').value = '';
   renderTimes();
-  renderIconPicker();
   collect();
   snapshot = JSON.stringify(tmp);
   $('#settingsDlg').showModal();
@@ -1263,20 +1146,20 @@ $('#sSave').onclick = () => {
     const s = toMin(tmp.times[i].start), en = toMin(tmp.times[i].end);
     if (s != null && en != null && s >= en) return alert(`${i + 1}限の終了が開始より前になってるよ`);
   }
+  if (tmp.syllabusSearch && !isHttp(tmp.syllabusSearch)) return alert('シラバス検索のURLは https:// から始まる形で入れてね');
   state.provider = tmp.provider;
   state.keys = tmp.keys;
   state.models = tmp.models;
   state.times = tmp.times;
-  state.icon = tmp.icon;
-  state.appName = tmp.appName || DEFAULT_APP_NAME;
   state.periods = tmp.periods;
   state.showSat = tmp.showSat;
   state.shiftTimes = tmp.shiftTimes;
+  state.syllabusSearch = tmp.syllabusSearch;
   scheduleChanged();
-  applyIcon();
   $('#settingsDlg').close();
 };
 
+/* ===== バックアップ ===== */
 $('#exportBtn').onclick = () => {
   const { keys, ...rest } = state; // キーは書き出さない
   const a = document.createElement('a');
@@ -1297,7 +1180,6 @@ $('#restoreFile').onchange = async e => {
     if (!confirm('今のデータを置き換えて復元する？')) return;
     state = normalize({ ...s, keys: state.keys, models: state.models, provider: state.provider });
     scheduleChanged();
-    applyIcon();
     $('#settingsDlg').close();
     alert('復元したよ');
   } catch {
@@ -1313,7 +1195,6 @@ recomputeUntil();
 prune();
 save();
 renderAll();
-applyIcon();
 
 function tick() { prune(); renderAll(); }
 setInterval(tick, 30000);

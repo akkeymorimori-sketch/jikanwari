@@ -6,12 +6,13 @@
 <meta name="theme-color" content="#2f6fde">
 <meta name="apple-mobile-web-app-title" content="時間割メモ">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1 id="appTitle">時間割メモ</h1>
+  <h1>時間割メモ</h1>
   <select id="termSelect" aria-label="学期"></select>
   <div class="hbtns">
     <button id="importBtn" class="primary">画像から読込</button>
@@ -36,6 +37,13 @@
       <select id="cPeriod" aria-label="時限"></select>
     </div>
     <div class="row"><input id="cTeacher" placeholder="教員"><input id="cRoom" placeholder="教室"></div>
+
+    <h3>シラバス</h3>
+    <div class="row">
+      <input id="cSyllabus" type="url" inputmode="url" placeholder="シラバスのURLを貼り付け">
+      <button id="cSyllabusOpen">開く</button>
+    </div>
+    <p class="hint" id="cSyllabusHint"></p>
 
     <h3>持ち物</h3>
     <ul id="itemList"></ul>
@@ -160,19 +168,9 @@
     <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
     <table id="sTimes"></table>
 
-    <h3>ホーム画面のアイコン</h3>
-    <div id="iconPicker" class="iconGrid"></div>
-    <label class="inline">自分の画像を使う <input type="file" id="iconFile" accept="image/*"></label>
-    <div class="iconOut">
-      <img id="iconPreview" alt="アイコンのプレビュー">
-      <div>
-        <a id="iconDl" download="apple-touch-icon.png">画像として保存</a>
-        <p class="hint">長押しで写真に保存できるよ。iPhoneでアイコンを変えるときに使う</p>
-      </div>
-    </div>
-    <h3>ホーム画面での名前</h3>
-    <input id="sAppName" maxlength="12">
-    <p class="hint">ホーム画面に追加する前に決めておいてね。追加した後に変えるなら、一度削除して追加し直す</p>
+    <h3>シラバス検索</h3>
+    <input id="sSyllabus" type="url" inputmode="url" placeholder="例: https://syllabus.example.ac.jp/search?q={授業名}">
+    <p class="hint">{授業名} のところに授業名が入るよ。URLを登録してない授業は、ここで開く</p>
 
     <h3>バックアップ</h3>
     <div class="row">
