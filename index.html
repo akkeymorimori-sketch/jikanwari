@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#2f6fde">
+<title>時間割メモ</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>時間割メモ</h1>
+  <select id="termSelect" aria-label="学期"></select>
+  <div class="hbtns">
+    <button id="importBtn" class="primary">画像から読込</button>
+    <button id="termBtn">学期</button>
+    <button id="settingsBtn">設定</button>
+  </div>
+</header>
+
+<main>
+  <section class="card" id="nowCard"></section>
+  <section class="card" id="packCard"></section>
+  <section class="card" id="taskCard"></section>
+  <div id="grid"></div>
+</main>
+
+<!-- 授業詳細 -->
+<dialog id="courseDlg">
+  <div class="dlg">
+    <input id="cName" placeholder="授業名">
+    <div class="row">
+      <select id="cDay" aria-label="曜日"></select>
+      <select id="cPeriod" aria-label="時限"></select>
+    </div>
+    <div class="row"><input id="cTeacher" placeholder="教員"><input id="cRoom" placeholder="教室"></div>
+
+    <h3>持ち物</h3>
+    <ul id="itemList"></ul>
+    <div class="row">
+      <input id="itemInput" placeholder="例: 実験ノート">
+      <select id="itemType" class="narrow">
+        <option value="next">次回だけ</option>
+        <option value="always">毎回</option>
+      </select>
+      <button id="itemAdd">追加</button>
+    </div>
+    <p class="hint">「次回だけ」は次の授業が終わると自動で消えるよ</p>
+
+    <h3>課題</h3>
+    <ul id="taskList"></ul>
+    <div class="row">
+      <input id="taskInput" placeholder="例: レポート第3回">
+      <input id="taskDue" type="date" class="narrow">
+      <button id="taskAdd">追加</button>
+    </div>
+
+    <h3>先生の一言</h3>
+    <div class="row">
+      <textarea id="memoInput" rows="2" placeholder="例: 来週は小テスト"></textarea>
+      <button id="memoAdd">追加</button>
+    </div>
+    <ul id="memoList"></ul>
+
+    <div class="row end">
+      <button id="cDelete" class="danger">授業を削除</button>
+      <button id="cClose" class="primary">閉じる</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 画像読み込み -->
+<dialog id="importDlg">
+  <div class="dlg">
+    <h3>画像から読み込み</h3>
+    <p class="hint" id="importTarget"></p>
+    <input type="file" id="imgFile" accept="image/*">
+    <img id="imgPreview" alt="">
+    <button id="runOcr" class="primary">読み取る</button>
+    <p id="ocrStatus"></p>
+    <div id="ocrResult"></div>
+    <div class="row end">
+      <button id="applyReplace" class="primary">置き換えて保存</button>
+      <button id="applyAdd">追加で保存</button>
+      <button id="importClose">閉じる</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 学期管理 -->
+<dialog id="termDlg">
+  <div class="dlg">
+    <h3>学期の管理</h3>
+    <ul id="termList"></ul>
+    <h3>新しい学期を作る</h3>
+    <input id="newTermName">
+    <label class="inline"><input type="checkbox" id="newTermCopy"> 今の学期の授業をコピーする（メモと課題はコピーしない）</label>
+    <div class="row end">
+      <button id="termCreate" class="primary">作成して切り替え</button>
+      <button id="termClose">閉じる</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- 設定 -->
+<dialog id="settingsDlg">
+  <div class="dlg">
+    <h3>読み取りに使うAI</h3>
+    <select id="sProvider"></select>
+    <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
+    <p id="sNote" class="hint"></p>
+    <h3>APIキー</h3>
+    <input id="sKey" type="password" placeholder="ここに貼り付け">
+    <h3>モデル</h3>
+    <input id="sModel">
+
+    <h3>表示</h3>
+    <div class="row">
+      <label class="inline">時限数 <input id="sPeriods" type="number" min="1" max="10" class="num"></label>
+      <label class="inline"><input type="checkbox" id="sSat"> 土曜を表示</label>
+    </div>
+
+    <h3>各時限の時刻</h3>
+    <table id="sTimes"></table>
+
+    <h3>バックアップ</h3>
+    <div class="row">
+      <button id="exportBtn">書き出し</button>
+      <label class="inline">復元 <input type="file" id="restoreFile" accept=".json"></label>
+    </div>
+    <div class="row end"><button id="sSave" class="primary">保存して閉じる</button></div>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
