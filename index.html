@@ -9,11 +9,11 @@
 </head>
 <body>
 <header>
-  <h1>時間割メモ</h1>
+  <h1 id="appTitle">時間割メモ</h1>
   <select id="termSelect" aria-label="学期"></select>
   <div class="hbtns">
     <button id="importBtn" class="primary">画像から読込</button>
-    <button id="termBtn">学期</button>
+    <button id="termBtn">学期・休み</button>
     <button id="settingsBtn">設定</button>
   </div>
 </header>
@@ -87,13 +87,42 @@
   </div>
 </dialog>
 
-<!-- 学期管理 -->
+<!-- 学期・休み -->
 <dialog id="termDlg">
   <div class="dlg">
     <h3>学期の管理</h3>
     <ul id="termList"></ul>
+    <p class="hint">開始日より前は授業がない扱いになるよ。終了日は空でもOK</p>
+
+    <h3 id="offTitle">授業がない日</h3>
+    <ul id="offList"></ul>
+    <div class="row">
+      <input type="date" id="offFrom" aria-label="休みの開始日">
+      <span class="hint">〜</span>
+      <input type="date" id="offTo" aria-label="休みの終了日">
+    </div>
+    <div class="row">
+      <input id="offNote" placeholder="例: 文化の日、大学祭">
+      <button id="offAdd">追加</button>
+    </div>
+    <p class="hint">1日だけなら右の日付は空でOK</p>
+
+    <h3>曜日の振替</h3>
+    <ul id="swapList"></ul>
+    <div class="row">
+      <input type="date" id="swapDate" aria-label="振替する日">
+      <span class="hint">は</span>
+      <select id="swapDay" class="narrow" aria-label="行う授業の曜日"></select>
+      <span class="hint">の授業</span>
+      <button id="swapAdd">追加</button>
+    </div>
+
     <h3>新しい学期を作る</h3>
     <input id="newTermName">
+    <div class="row">
+      <span class="hint">開始</span><input type="date" id="newTermStart">
+      <span class="hint">終了</span><input type="date" id="newTermEnd">
+    </div>
     <label class="inline"><input type="checkbox" id="newTermCopy"> 今の学期の授業をコピーする（メモと課題はコピーしない）</label>
     <div class="row end">
       <button id="termCreate" class="primary">作成して切り替え</button>
@@ -122,6 +151,13 @@
 
     <h3>各時限の時刻</h3>
     <table id="sTimes"></table>
+
+    <h3>ホーム画面のアイコン</h3>
+    <div id="iconPicker" class="iconGrid"></div>
+    <label class="inline">自分の画像を使う <input type="file" id="iconFile" accept="image/*"></label>
+    <h3>ホーム画面での名前</h3>
+    <input id="sAppName" maxlength="12">
+    <p class="hint">ホーム画面に追加する前に決めておいてね。追加した後に変えるなら、一度削除して追加し直す</p>
 
     <h3>バックアップ</h3>
     <div class="row">

@@ -28,12 +28,14 @@ input, textarea, select {
   border: 1px solid #bbb; border-radius: 6px; width: 100%;
 }
 input[type=checkbox] { width: auto; }
+input[type=date] { min-width: 0; }
 
 main { max-width: 900px; margin: 0 auto; padding: 8px; }
 .card { background: #fff; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .muted { color: #888; font-size: 13px; margin: 0; }
 .hint { color: #888; font-size: 12px; margin: 0; }
 .ok { color: #2b8a3e; font-weight: bold; margin: 4px 0 0; font-size: 13px; }
+.start { margin: 0 0 6px; font-size: 14px; color: #2f6fde; }
 
 /* 次の授業 */
 .nc {
@@ -89,7 +91,7 @@ dialog { border: none; border-radius: 10px; width: min(600px, 94vw); padding: 0;
 .dlg { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > * { flex: 1; }
-.row > button, .row > .narrow, .row > .inline { flex: none; }
+.row > button, .row > .narrow, .row > .inline, .row > .hint { flex: none; }
 .narrow { width: auto; }
 .row.end { justify-content: flex-end; }
 .row.end > * { flex: none; }
@@ -101,3 +103,13 @@ table { width: 100%; border-collapse: collapse; font-size: 12px; }
 td { padding: 2px; }
 td input, td select { padding: 3px; font-size: 12px; }
 #sTimes td:first-child { white-space: nowrap; width: 3em; }
+
+/* 学期 */
+.termBox { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.termBox .row > span, .termBox .row > button { flex: none; }
+
+/* アイコン選択 */
+.iconGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 8px; }
+.iconOpt { padding: 0; border: 3px solid transparent; border-radius: 16px; background: none; }
+.iconOpt img { width: 100%; aspect-ratio: 1; border-radius: 12px; display: block; }
+.iconOpt.sel { border-color: #2f6fde; }

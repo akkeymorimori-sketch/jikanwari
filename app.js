@@ -6,12 +6,18 @@ const DAYS = ['月', '火', '水', '木', '金', '土'];
 const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 const KEY = 'jikanwari-v2';
 const OLD_KEY = 'jikanwari-v1';
+const SEARCH_DAYS = 120; // 長期休みをまたいで次の授業を探す日数
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const pad = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseYmd = s => {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 const todayStr = () => ymd(new Date());
 const dayIndex = d => (d.getDay() + 6) % 7; // 月=0 … 日=6
 const addDays = (d, k) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
@@ -51,6 +57,19 @@ const PROVIDERS = {
 // 混雑時に切り替える予備のモデル
 const FALLBACK_MODEL = { gemini: 'gemini-3.5-flash-lite' };
 
+const ICON_PRESETS = [
+  { id: 'grid-blue', kind: 'grid', bg: '#2f6fde', accent: '#ffd43b' },
+  { id: 'grid-green', kind: 'grid', bg: '#2b8a3e', accent: '#ffd43b' },
+  { id: 'grid-orange', kind: 'grid', bg: '#e8590c', accent: '#fff3bf' },
+  { id: 'grid-dark', kind: 'grid', bg: '#343a40', accent: '#4dabf7' },
+  { id: 'char-ji', kind: 'char', bg: '#2f6fde', text: '時' },
+  { id: 'char-wari', kind: 'char', bg: '#7048e8', text: '割' },
+  { id: 'char-ju', kind: 'char', bg: '#d6336c', text: '授' },
+  { id: 'char-memo', kind: 'char', bg: '#f08c00', text: 'メモ' }
+];
+const DEFAULT_ICON = { preset: 'grid-blue', custom: null, useCustom: false };
+const DEFAULT_APP_NAME = '時間割メモ';
+
 /* ===== データ ===== */
 let state;
 
@@ -70,15 +89,18 @@ function nextTermName(name) {
   return m[2] === '前期' ? `${m[1]}年度 後期` : `${+m[1] + 1}年度 前期`;
 }
 
+const newTerm = (name, start = '', end = '', courses = []) =>
+  ({ id: uid(), name, start, end, offDays: [], swaps: [], courses });
+
 // 旧バージョン（学期なし）のデータを変換
 function fromV1(old) {
-  const t = { id: uid(), name: defaultTermName(), courses: [] };
+  const t = newTerm(defaultTermName());
   const s = { terms: [t], currentTermId: t.id };
   if (!old) return s;
   t.courses = (old.courses || []).map(c => ({
     ...c,
     items: (c.items || []).filter(i => !i.done)
-      .map(i => ({ id: uid(), text: i.text, type: 'next', until: null }))
+      .map(i => ({ id: uid(), text: i.text, type: 'next', added: Date.now(), until: null }))
   }));
   s.periods = old.periods;
   s.showSat = old.showSat;
@@ -101,17 +123,28 @@ function normalize(s) {
   s.keys ??= {};
   s.models ??= {};
   s.packChecks ??= {};
-  if (!Array.isArray(s.terms) || !s.terms.length) {
-    s.terms = [{ id: uid(), name: defaultTermName(), courses: [] }];
-  }
+  s.icon = { ...DEFAULT_ICON, ...(s.icon || {}) };
+  if (!ICON_PRESETS.some(p => p.id === s.icon.preset)) s.icon.preset = DEFAULT_ICON.preset;
+  if (!s.icon.custom) s.icon.useCustom = false;
+  s.appName = (s.appName || '').trim() || DEFAULT_APP_NAME;
+  if (!Array.isArray(s.terms) || !s.terms.length) s.terms = [newTerm(defaultTermName())];
   if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   for (const t of s.terms) {
+    t.start ??= '';
+    t.end ??= '';
+    t.offDays ??= [];
+    t.swaps ??= [];
     t.courses ??= [];
     for (const c of t.courses) {
       c.id ??= uid();
       c.name ??= ''; c.teacher ??= ''; c.room ??= '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
-      for (const i of c.items) { i.id ??= uid(); i.type ??= 'next'; i.until ??= null; }
+      for (const i of c.items) {
+        i.id ??= uid();
+        i.type ??= 'next';
+        i.added ??= Date.now();
+        i.until ??= null;
+      }
     }
   }
   return s;
@@ -122,11 +155,46 @@ const term = () => state.terms.find(t => t.id === state.currentTermId);
 const courses = () => term().courses;
 const modelOf = p => state.models[p] || PROVIDERS[p].model;
 
-/* ===== 時刻の計算 ===== */
+/* ===== 日付・時刻の計算 ===== */
 function toMin(v) {
   if (!v) return null;
   const [h, m] = v.split(':').map(Number);
   return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+}
+
+// 学期の期間内か
+function inTerm(date, t = term()) {
+  const k = ymd(date);
+  return (!t.start || k >= t.start) && (!t.end || k <= t.end);
+}
+const pastEnd = (date, t) => !!t.end && ymd(date) > t.end;
+
+// 授業がない日の登録があればそれを返す
+function offInfo(date, t = term()) {
+  const k = ymd(date);
+  return t.offDays.find(o => k >= o.from && k <= (o.to || o.from)) || null;
+}
+
+// その日に行う授業の曜日（振替があればそちら）
+function effDay(date, t = term()) {
+  const k = ymd(date);
+  const s = t.swaps.find(x => x.date === k);
+  return s ? s.asDay : dayIndex(date);
+}
+
+const isClassDay = (date, t = term()) => inTerm(date, t) && !offInfo(date, t);
+
+// その日にある授業
+function coursesOn(date, t = term()) {
+  if (!isClassDay(date, t)) return [];
+  const d = effDay(date, t);
+  return t.courses.filter(c => c.day === d).sort((a, b) => a.period - b.period);
+}
+
+// 探し始める日（学期開始前なら開始日から）
+function searchBase(from, t = term()) {
+  const s = parseYmd(t.start);
+  return s && s > from ? s : from;
 }
 
 // 指定日の授業の開始・終了
@@ -139,22 +207,24 @@ function occurrence(c, date) {
 }
 
 // from より後に始まる、いちばん近い回
-function nextOccurrence(c, from = new Date()) {
-  for (let k = 0; k <= 7; k++) {
-    const date = addDays(from, k);
-    if (dayIndex(date) !== c.day) continue;
+function nextOccurrence(c, t = term(), from = new Date()) {
+  const base = searchBase(from, t);
+  for (let k = 0; k < SEARCH_DAYS; k++) {
+    const date = addDays(base, k);
+    if (pastEnd(date, t)) break;
+    if (!isClassDay(date, t) || effDay(date, t) !== c.day) continue;
     const o = occurrence(c, date);
     if (o && o.start > from) return o;
   }
   return null;
 }
 
-const untilFor = c => nextOccurrence(c)?.end.getTime() ?? null;
+const untilFor = (c, t = term(), from = new Date()) => nextOccurrence(c, t, from)?.end.getTime() ?? null;
 
-// 「次回だけ」の消える時刻が未設定のものを埋める
-function fillMissingUntil() {
-  for (const t of state.terms) for (const c of t.courses) {
-    for (const i of c.items) if (i.type === 'next' && i.until == null) i.until = untilFor(c);
+// 「次回だけ」は「登録した後の最初の授業」の終了時刻で消える
+function recomputeUntil() {
+  for (const t of state.terms) for (const c of t.courses) for (const i of c.items) {
+    if (i.type === 'next') i.until = untilFor(c, t, new Date(i.added));
   }
 }
 
@@ -172,6 +242,14 @@ function prune() {
     if (k < today) { delete state.packChecks[k]; changed = true; }
   }
   if (changed) save();
+}
+
+// 時刻・休み・曜日などが変わったときの再計算
+function scheduleChanged() {
+  recomputeUntil();
+  prune();
+  save();
+  renderAll();
 }
 
 // ある回に持っていく物
@@ -193,8 +271,7 @@ function dayDiff(a, b) {
 
 function dueState(due) {
   if (!due) return { cls: '', label: '期限なし' };
-  const [y, m, d] = due.split('-').map(Number);
-  const dd = new Date(y, m - 1, d);
+  const dd = parseYmd(due);
   const diff = dayDiff(dd, new Date());
   if (diff < 0) return { cls: 'over', label: `${md(dd)} 期限切れ` };
   if (diff === 0) return { cls: 'soon', label: '今日まで' };
@@ -203,16 +280,33 @@ function dueState(due) {
   return { cls: '', label: `${md(dd)}まで` };
 }
 
+function offLabel(o) {
+  const f = parseYmd(o.from);
+  const range = o.to && o.to !== o.from ? `${md(f)}〜${md(parseYmd(o.to))}` : md(f);
+  return o.note ? `${range} ${o.note}` : range;
+}
+
+const termEnded = (t = term(), now = new Date()) => !!t.end && t.end < ymd(now);
+
+// 今の学期が終わったときに切り替え先として出す学期
+function suggestTerm(now) {
+  const today = ymd(now);
+  return state.terms
+    .filter(x => x.id !== state.currentTermId && (!x.end || x.end >= today))
+    .sort((a, b) => (a.start || '').localeCompare(b.start || ''))[0] || null;
+}
+
 /* ===== 画面：次の授業 ===== */
 function upcoming(now) {
-  const list = [];
-  for (let k = 0; k < 8; k++) {
-    const date = addDays(now, k), di = dayIndex(date);
-    for (const c of courses()) {
-      if (c.day !== di) continue;
+  const t = term(), base = searchBase(now, t), list = [];
+  for (let k = 0; k < SEARCH_DAYS; k++) {
+    const date = addDays(base, k);
+    if (pastEnd(date, t)) break;
+    for (const c of coursesOn(date, t)) {
       const o = occurrence(c, date);
       if (o && o.end > now) list.push({ c, ...o });
     }
+    if (list.some(x => x.start > now)) break;
   }
   return list.sort((a, b) => a.start - b.start);
 }
@@ -233,45 +327,84 @@ function whenLabel(start, now) {
 }
 
 function renderNow() {
-  const el = $('#nowCard'), now = new Date();
+  const el = $('#nowCard'), now = new Date(), t = term();
   if (!courses().length) {
     el.innerHTML = '<h2>次の授業</h2><p class="muted">時間割を登録するとここに出るよ</p>';
     return;
   }
+
+  if (termEnded(t, now)) {
+    const nt = suggestTerm(now);
+    el.innerHTML = `<h2>この学期は終わったよ</h2>` +
+      `<p class="muted">${esc(t.name)}は${md(parseYmd(t.end))}で終了</p>` +
+      (nt ? `<button data-switch="${nt.id}">「${esc(nt.name)}」に切り替える</button>`
+          : '<p class="muted">「学期・休み」から次の学期を作ってね</p>');
+    return;
+  }
+
+  let h = '';
+  const s = parseYmd(t.start);
+  if (s && dayDiff(s, now) > 0) {
+    h += `<p class="start">授業開始まで <b>あと${dayDiff(s, now)}日</b>（${md(s)}から）</p>`;
+  } else if (inTerm(now, t)) {
+    const off = offInfo(now, t);
+    if (off) h += `<p class="start">今日は授業なし${off.note ? `（${esc(off.note)}）` : ''}</p>`;
+    else if (effDay(now, t) !== dayIndex(now)) h += `<p class="start">今日は${DAYS[effDay(now, t)]}曜の授業をやる日</p>`;
+  }
+
   const list = upcoming(now);
   const cur = list.filter(x => x.start <= now);
   const first = list.find(x => x.start > now);
   const nxt = first ? list.filter(x => +x.start === +first.start) : [];
-  let h = '';
+  let body = '';
   if (cur.length) {
     const c = cur[0].c;
-    h += `<h2>今の授業 <small>${DAYS[c.day]}${c.period}・あと${fmtLeft(cur[0].end - now)}で終わり</small></h2>` +
+    body += `<h2>今の授業 <small>${DAYS[c.day]}${c.period}・あと${fmtLeft(cur[0].end - now)}で終わり</small></h2>` +
       cur.map(courseLine).join('');
   }
   if (nxt.length) {
     const c = nxt[0].c;
-    h += `<h2>次の授業 <small>${DAYS[c.day]}${c.period}・${whenLabel(nxt[0].start, now)}</small></h2>` +
+    body += `<h2>次の授業 <small>${DAYS[c.day]}${c.period}・${whenLabel(nxt[0].start, now)}</small></h2>` +
       nxt.map(courseLine).join('');
   }
-  el.innerHTML = h || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>';
+  el.innerHTML = h + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>');
 }
 
 /* ===== 画面：明日の持ち物 ===== */
 let packList = [], packKey = '';
 
 function packTarget(now) {
-  for (let k = 1; k <= 7; k++) {
-    const date = addDays(now, k);
-    const cs = courses().filter(c => c.day === dayIndex(date)).sort((a, b) => a.period - b.period);
-    if (cs.length) return { date, k, cs };
+  const t = term(), s = parseYmd(t.start);
+  const base = searchBase(addDays(now, 1), t);
+  const offs = [];
+  for (let k = 0; k < SEARCH_DAYS; k++) {
+    const date = addDays(base, k);
+    if (pastEnd(date, t)) break;
+    if (!inTerm(date, t)) continue;
+    const off = offInfo(date, t);
+    if (off) {
+      const hadClass = t.courses.some(c => c.day === effDay(date, t));
+      if (hadClass && !offs.includes(off)) offs.push(off);
+      continue;
+    }
+    const cs = coursesOn(date, t);
+    if (cs.length) {
+      const ed = effDay(date, t);
+      return {
+        date, cs, offs,
+        first: !!s && dayDiff(s, now) > 0,
+        swapped: ed !== dayIndex(date) ? ed : null
+      };
+    }
   }
   return null;
 }
 
 function renderPack() {
-  const el = $('#packCard'), t = packTarget(new Date());
+  const el = $('#packCard'), now = new Date(), t = packTarget(now);
   if (!t) {
-    el.innerHTML = '<h2>明日の持ち物</h2><p class="muted">授業がまだ登録されてないよ</p>';
+    const msg = courses().length ? '近いうちに授業はないよ' : '授業がまだ登録されてないよ';
+    el.innerHTML = `<h2>明日の持ち物</h2><p class="muted">${msg}</p>`;
     packList = [];
     return;
   }
@@ -293,11 +426,16 @@ function renderPack() {
   }
   packList = [...map.values()];
   const done = packList.filter(e => checks[e.text]).length;
-  const title = t.k === 1 ? `明日 ${md(t.date)}` : md(t.date);
+
+  let title = dayDiff(t.date, now) === 1 ? `明日 ${md(t.date)}` : md(t.date);
+  if (t.swapped != null) title += `（${DAYS[t.swapped]}曜授業）`;
+  if (t.first) title += '（授業初日）';
   const names = t.cs.map(c => `${c.period}限 ${esc(c.name)}`).join('／');
+  const offHint = t.offs.length ? `<p class="hint">休み：${t.offs.map(o => esc(offLabel(o))).join('、')}</p>` : '';
 
   el.innerHTML =
     `<h2>${title}の持ち物 <small>${packList.length ? `${done}/${packList.length}` : ''}</small></h2>` +
+    offHint +
     `<p class="hint">${names}</p>` +
     (packList.length
       ? '<ul>' + packList.map((e, idx) =>
@@ -331,7 +469,7 @@ function renderTasks() {
 function renderGrid() {
   const days = state.showSat || courses().some(c => c.day === 5) ? 6 : 5;
   const periods = Math.max(state.periods, ...courses().map(c => c.period));
-  const today = dayIndex(new Date());
+  const today = effDay(new Date());
   const g = $('#grid');
   g.style.gridTemplateColumns = `34px repeat(${days},1fr)`;
   let h = '<div class="head"></div>';
@@ -370,6 +508,12 @@ function renderAll() {
 
 /* ===== メイン画面の操作 ===== */
 $('#nowCard').addEventListener('click', e => {
+  const sw = e.target.dataset.switch;
+  if (sw) {
+    state.currentTermId = sw;
+    save(); renderAll();
+    return;
+  }
   const n = e.target.closest('.nc');
   if (n) openCourse(n.dataset.id);
 });
@@ -467,10 +611,9 @@ for (const [id, key] of [['cName', 'name'], ['cTeacher', 'teacher'], ['cRoom', '
 }
 for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
   $('#' + id).addEventListener('change', e => {
-    const c = cur();
-    c[key] = +e.target.value;
-    for (const i of c.items) if (i.type === 'next') i.until = untilFor(c);
-    save(); renderDetail(); renderAll();
+    cur()[key] = +e.target.value;
+    scheduleChanged();
+    renderDetail();
   });
 }
 
@@ -478,8 +621,8 @@ for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
 $('#itemAdd').onclick = () => {
   const v = $('#itemInput').value.trim();
   if (!v) return;
-  const c = cur(), type = $('#itemType').value;
-  c.items.push({ id: uid(), text: v, type, until: type === 'next' ? untilFor(c) : null });
+  const c = cur(), type = $('#itemType').value, now = Date.now();
+  c.items.push({ id: uid(), text: v, type, added: now, until: type === 'next' ? untilFor(c, term(), new Date(now)) : null });
   $('#itemInput').value = '';
   save(); renderDetail(); renderAll();
 };
@@ -551,24 +694,29 @@ const PROMPT = `これは大学の時間割表の画像です。各授業を読�
 - 1つのコマに複数の授業があれば、それぞれ別の要素にする。
 - 空のコマは出力しない。`;
 
-function fileToJpegBase64(file, max = 1568) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, max / Math.max(img.width, img.height));
-      const cv = document.createElement('canvas');
-      cv.width = Math.round(img.width * s);
-      cv.height = Math.round(img.height * s);
-      const ctx = cv.getContext('2d');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, cv.width, cv.height);
-      ctx.drawImage(img, 0, 0, cv.width, cv.height);
-      URL.revokeObjectURL(img.src);
-      res(cv.toDataURL('image/jpeg', 0.9).split(',')[1]);
-    };
-    img.onerror = rej;
-    img.src = URL.createObjectURL(file);
-  });
+const loadImg = src => new Promise((res, rej) => {
+  const img = new Image();
+  img.onload = () => res(img);
+  img.onerror = rej;
+  img.src = src;
+});
+
+async function fileToJpegBase64(file, max = 1568) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImg(url);
+    const s = Math.min(1, max / Math.max(img.width, img.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * s);
+    cv.height = Math.round(img.height * s);
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 // 混雑・サーバー側の一時的なエラーか
@@ -718,34 +866,53 @@ function applyImport(replace) {
   const old = courses();
   const added = rows.map(r => {
     const prev = old.find(c => c.name === r.name);
-    const c = {
+    return {
       id: uid(), ...r,
       items: prev ? structuredClone(prev.items) : [],
       memos: prev ? structuredClone(prev.memos) : [],
       tasks: prev ? structuredClone(prev.tasks) : []
     };
-    for (const i of c.items) if (i.type === 'next') i.until = untilFor(c);
-    return c;
   });
   term().courses = replace ? added : old.concat(added);
   state.periods = Math.max(state.periods, ...rows.map(r => r.period));
   if (rows.some(r => r.day === 5)) state.showSat = true;
-  save(); renderAll(); $('#importDlg').close();
+  scheduleChanged();
+  $('#importDlg').close();
 }
 $('#applyReplace').onclick = () => applyImport(true);
 $('#applyAdd').onclick = () => applyImport(false);
 
-/* ===== 学期の管理 ===== */
+/* ===== 学期・休み ===== */
+$('#swapDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('');
+
 function renderTermList() {
   $('#termList').innerHTML = state.terms.map(t =>
-    `<li><input data-rename="${t.id}" value="${esc(t.name)}">` +
-    (t.id === state.currentTermId ? '<span class="tag">表示中</span>' : '') +
-    `<span class="from">${t.courses.length}件</span>` +
-    `<button class="x" data-termdel="${t.id}">削除</button></li>`).join('');
+    `<li><div class="termBox">` +
+      `<div class="row"><input data-rename="${t.id}" value="${esc(t.name)}">` +
+        (t.id === state.currentTermId ? '<span class="tag">表示中</span>' : '') +
+        `<span class="from">${t.courses.length}件</span>` +
+        `<button class="x" data-termdel="${t.id}">削除</button></div>` +
+      `<div class="row"><span class="hint">開始</span><input type="date" data-tstart="${t.id}" value="${esc(t.start)}">` +
+        `<span class="hint">終了</span><input type="date" data-tend="${t.id}" value="${esc(t.end)}"></div>` +
+    `</div></li>`).join('');
+}
+
+function renderOffList() {
+  const t = term();
+  $('#offTitle').textContent = `「${t.name}」の授業がない日`;
+  $('#offList').innerHTML = t.offDays.slice().sort((a, b) => a.from.localeCompare(b.from)).map(o =>
+    `<li><span>${esc(offLabel(o))}</span><button class="x" data-offdel="${o.id}">×</button></li>`).join('')
+    || '<li class="muted">なし</li>';
+  $('#swapList').innerHTML = t.swaps.slice().sort((a, b) => a.date.localeCompare(b.date)).map(x =>
+    `<li><span>${md(parseYmd(x.date))} は${DAYS[x.asDay]}曜の授業</span>` +
+    `<button class="x" data-swapdel="${x.id}">×</button></li>`).join('')
+    || '<li class="muted">なし</li>';
 }
 
 $('#termBtn').onclick = () => {
   renderTermList();
+  renderOffList();
+  for (const id of ['offFrom', 'offTo', 'offNote', 'swapDate', 'newTermStart', 'newTermEnd']) $('#' + id).value = '';
   $('#newTermName').value = nextTermName(term().name);
   $('#newTermCopy').checked = false;
   $('#termDlg').showModal();
@@ -756,7 +923,17 @@ $('#termList').addEventListener('input', e => {
   const id = e.target.dataset.rename;
   if (!id) return;
   state.terms.find(t => t.id === id).name = e.target.value;
-  save(); renderTermSelect();
+  save(); renderTermSelect(); renderOffList();
+});
+$('#termList').addEventListener('change', e => {
+  const { tstart, tend } = e.target.dataset;
+  const id = tstart || tend;
+  if (!id) return;
+  const t = state.terms.find(x => x.id === id);
+  if (tstart) t.start = e.target.value;
+  else t.end = e.target.value;
+  if (t.start && t.end && t.end < t.start) alert('終了日が開始日より前になってるよ');
+  scheduleChanged();
 });
 $('#termList').addEventListener('click', e => {
   const id = e.target.dataset.termdel;
@@ -766,24 +943,178 @@ $('#termList').addEventListener('click', e => {
   if (!confirm(`「${t.name}」を削除する？授業・メモ・課題も全部消えるよ`)) return;
   state.terms = state.terms.filter(x => x.id !== id);
   if (state.currentTermId === id) state.currentTermId = state.terms[0].id;
-  save(); renderTermList(); renderAll();
+  save(); renderTermList(); renderOffList(); renderAll();
+});
+
+// 授業がない日
+$('#offAdd').onclick = () => {
+  const from = $('#offFrom').value;
+  let to = $('#offTo').value;
+  if (!from) return alert('休みの日付を選んでね');
+  if (to && to < from) return alert('終わりの日が始まりの日より前になってるよ');
+  if (to === from) to = '';
+  term().offDays.push({ id: uid(), from, to, note: $('#offNote').value.trim() });
+  for (const id of ['offFrom', 'offTo', 'offNote']) $('#' + id).value = '';
+  scheduleChanged(); renderOffList();
+};
+$('#offList').addEventListener('click', e => {
+  const id = e.target.dataset.offdel;
+  if (!id) return;
+  term().offDays = term().offDays.filter(o => o.id !== id);
+  scheduleChanged(); renderOffList();
+});
+
+// 曜日の振替
+$('#swapAdd').onclick = () => {
+  const date = $('#swapDate').value;
+  if (!date) return alert('日付を選んでね');
+  const t = term();
+  t.swaps = t.swaps.filter(x => x.date !== date); // 同じ日は上書き
+  t.swaps.push({ id: uid(), date, asDay: +$('#swapDay').value });
+  $('#swapDate').value = '';
+  scheduleChanged(); renderOffList();
+};
+$('#swapList').addEventListener('click', e => {
+  const id = e.target.dataset.swapdel;
+  if (!id) return;
+  term().swaps = term().swaps.filter(x => x.id !== id);
+  scheduleChanged(); renderOffList();
 });
 
 $('#termCreate').onclick = () => {
   const name = $('#newTermName').value.trim() || defaultTermName();
-  const copy = $('#newTermCopy').checked;
-  const t = {
-    id: uid(), name,
-    courses: copy ? courses().map(c => ({
-      id: uid(), day: c.day, period: c.period, name: c.name, teacher: c.teacher, room: c.room,
-      items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() })),
-      memos: [], tasks: []
-    })) : []
-  };
+  const start = $('#newTermStart').value, end = $('#newTermEnd').value;
+  if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
+  const copied = $('#newTermCopy').checked ? courses().map(c => ({
+    id: uid(), day: c.day, period: c.period, name: c.name, teacher: c.teacher, room: c.room,
+    items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() })),
+    memos: [], tasks: []
+  })) : [];
+  const t = newTerm(name, start, end, copied);
   state.terms.push(t);
   state.currentTermId = t.id;
   save(); renderAll(); $('#termDlg').close();
 };
+
+/* ===== アイコン ===== */
+function fillRound(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawPreset(ctx, p, s) {
+  ctx.fillStyle = p.bg;
+  ctx.fillRect(0, 0, s, s);
+  if (p.kind === 'grid') {
+    const m = s * 0.18, w = s - m * 2, gap = w * 0.06, headH = w * 0.16, r = s * 0.03;
+    const cw = (w - gap * 2) / 3, ch = (w - headH - gap * 3) / 3;
+    ctx.fillStyle = '#fff';
+    fillRound(ctx, m, m, w, headH, r);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      ctx.fillStyle = i === 1 && j === 2 ? p.accent : 'rgba(255,255,255,0.82)';
+      fillRound(ctx, m + j * (cw + gap), m + headH + gap + i * (ch + gap), cw, ch, r);
+    }
+  } else {
+    const fs = s * (p.text.length === 1 ? 0.56 : 0.34);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${fs}px "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif`;
+    ctx.fillText(p.text, s / 2, s / 2 + fs * 0.04);
+  }
+}
+
+const presetById = id => ICON_PRESETS.find(p => p.id === id) || ICON_PRESETS[0];
+
+function presetURL(p, size) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  drawPreset(cv.getContext('2d'), p, size);
+  return cv.toDataURL('image/png');
+}
+
+async function iconURL(icon, size) {
+  if (!icon.useCustom || !icon.custom) return presetURL(presetById(icon.preset), size);
+  const img = await loadImg(icon.custom);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  cv.getContext('2d').drawImage(img, 0, 0, size, size);
+  return cv.toDataURL('image/png');
+}
+
+// 自分の画像を正方形に切り抜いて512pxにする
+async function cropToSquare(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImg(url);
+    const side = Math.min(img.width, img.height);
+    const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 512;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, 512, 512);
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, 512, 512);
+    return cv.toDataURL('image/jpeg', 0.9);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function ensureLink(rel) {
+  let l = document.head.querySelector(`link[rel="${rel}"]`);
+  if (!l) {
+    l = document.createElement('link');
+    l.rel = rel;
+    document.head.appendChild(l);
+  }
+  return l;
+}
+function ensureMeta(name) {
+  let m = document.head.querySelector(`meta[name="${name}"]`);
+  if (!m) {
+    m = document.createElement('meta');
+    m.name = name;
+    document.head.appendChild(m);
+  }
+  return m;
+}
+
+// ホーム画面用のアイコン・名前をページに反映
+async function applyIcon() {
+  try {
+    const [i180, i192, i512] = await Promise.all([180, 192, 512].map(s => iconURL(state.icon, s)));
+    ensureLink('apple-touch-icon').href = i180;
+    ensureLink('icon').href = i192;
+    ensureMeta('apple-mobile-web-app-title').content = state.appName;
+    document.title = state.appName;
+    $('#appTitle').textContent = state.appName;
+
+    const base = location.href.split(/[?#]/)[0];
+    const manifest = {
+      name: state.appName,
+      short_name: state.appName,
+      start_url: base,
+      scope: base.replace(/[^/]*$/, ''),
+      display: 'standalone',
+      background_color: '#f4f5f7',
+      theme_color: '#2f6fde',
+      icons: [
+        { src: i192, sizes: '192x192', type: 'image/png' },
+        { src: i512, sizes: '512x512', type: 'image/png' }
+      ]
+    };
+    ensureLink('manifest').href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(manifest));
+  } catch (err) {
+    console.warn('アイコンの反映に失敗', err);
+  }
+}
 
 /* ===== 設定 ===== */
 let tmp = null; // 保存を押すまでの一時データ
@@ -816,17 +1147,51 @@ function stashTimes() {
 }
 const clampPeriods = v => Math.min(10, Math.max(1, +v || 7));
 
+function renderIconPicker() {
+  const sel = tmp.icon.useCustom && tmp.icon.custom ? 'custom' : 'p:' + tmp.icon.preset;
+  const opts = ICON_PRESETS.map(p => ({ key: 'p:' + p.id, src: presetURL(p, 96) }));
+  if (tmp.icon.custom) opts.push({ key: 'custom', src: tmp.icon.custom });
+  $('#iconPicker').innerHTML = opts.map(o =>
+    `<button type="button" class="iconOpt ${o.key === sel ? 'sel' : ''}" data-icon="${o.key}">` +
+    `<img src="${o.src}" alt=""></button>`).join('');
+}
+
+$('#iconPicker').addEventListener('click', e => {
+  const key = e.target.closest('[data-icon]')?.dataset.icon;
+  if (!key) return;
+  if (key === 'custom') tmp.icon.useCustom = true;
+  else { tmp.icon.useCustom = false; tmp.icon.preset = key.slice(2); }
+  renderIconPicker();
+});
+
+$('#iconFile').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    tmp.icon.custom = await cropToSquare(f);
+    tmp.icon.useCustom = true;
+    renderIconPicker();
+  } catch {
+    alert('画像が読めなかった');
+  } finally {
+    e.target.value = '';
+  }
+};
+
 $('#settingsBtn').onclick = () => {
   tmp = {
     provider: state.provider,
     keys: { ...state.keys },
     models: { ...state.models },
-    times: structuredClone(state.times)
+    times: structuredClone(state.times),
+    icon: { ...state.icon }
   };
   fillProviderFields(state.provider);
   $('#sPeriods').value = state.periods;
   $('#sSat').checked = state.showSat;
+  $('#sAppName').value = state.appName;
   renderTimes(state.periods);
+  renderIconPicker();
   $('#settingsDlg').showModal();
 };
 $('#sProvider').onchange = e => { stashProviderFields(); fillProviderFields(e.target.value); };
@@ -839,10 +1204,13 @@ $('#sSave').onclick = () => {
   state.keys = tmp.keys;
   state.models = tmp.models;
   state.times = tmp.times;
+  state.icon = tmp.icon;
+  state.appName = $('#sAppName').value.trim() || DEFAULT_APP_NAME;
   state.periods = clampPeriods($('#sPeriods').value);
   state.showSat = $('#sSat').checked;
-  fillMissingUntil();
-  save(); renderAll(); $('#settingsDlg').close();
+  scheduleChanged();
+  applyIcon();
+  $('#settingsDlg').close();
 };
 
 $('#exportBtn').onclick = () => {
@@ -864,7 +1232,8 @@ $('#restoreFile').onchange = async e => {
     else throw 0;
     if (!confirm('今のデータを置き換えて復元する？')) return;
     state = normalize({ ...s, keys: state.keys, models: state.models, provider: state.provider });
-    fillMissingUntil(); prune(); save(); renderAll();
+    scheduleChanged();
+    applyIcon();
     $('#settingsDlg').close();
     alert('復元したよ');
   } catch {
@@ -876,10 +1245,11 @@ $('#restoreFile').onchange = async e => {
 
 /* ===== 起動 ===== */
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
-fillMissingUntil();
+recomputeUntil();
 prune();
 save();
 renderAll();
+applyIcon();
 
 function tick() { prune(); renderAll(); }
 setInterval(tick, 30000);
