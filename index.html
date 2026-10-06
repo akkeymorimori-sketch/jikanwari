@@ -6,7 +6,6 @@
 <meta name="theme-color" content="#2f6fde">
 <meta name="apple-mobile-web-app-title" content="時間割メモ">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -138,7 +137,7 @@
 <dialog id="settingsDlg">
   <div class="dlg">
     <div class="dlgHead">
-      <h3>設定</h3>
+      <h2>設定</h2>
       <button id="sX" class="x big" aria-label="閉じる">×</button>
     </div>
 
@@ -168,9 +167,12 @@
       <img id="iconPreview" alt="アイコンのプレビュー">
       <div>
         <a id="iconDl" download="apple-touch-icon.png">画像として保存</a>
-        <p class="hint">iPhoneは画像を長押しして保存してもOK。この画像を「apple-touch-icon.png」という名前でリポジトリに上げると、ホーム画面のアイコンになるよ</p>
+        <p class="hint">長押しで写真に保存できるよ。iPhoneでアイコンを変えるときに使う</p>
       </div>
     </div>
+    <h3>ホーム画面での名前</h3>
+    <input id="sAppName" maxlength="12">
+    <p class="hint">ホーム画面に追加する前に決めておいてね。追加した後に変えるなら、一度削除して追加し直す</p>
 
     <h3>バックアップ</h3>
     <div class="row">
