@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#2f6fde">
+<meta name="apple-mobile-web-app-title" content="時間割メモ">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -134,6 +137,11 @@
 <!-- 設定 -->
 <dialog id="settingsDlg">
   <div class="dlg">
+    <div class="dlgHead">
+      <h3>設定</h3>
+      <button id="sX" class="x big" aria-label="閉じる">×</button>
+    </div>
+
     <h3>読み取りに使うAI</h3>
     <select id="sProvider"></select>
     <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
@@ -150,21 +158,30 @@
     </div>
 
     <h3>各時限の時刻</h3>
+    <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
     <table id="sTimes"></table>
 
     <h3>ホーム画面のアイコン</h3>
     <div id="iconPicker" class="iconGrid"></div>
     <label class="inline">自分の画像を使う <input type="file" id="iconFile" accept="image/*"></label>
-    <h3>ホーム画面での名前</h3>
-    <input id="sAppName" maxlength="12">
-    <p class="hint">ホーム画面に追加する前に決めておいてね。追加した後に変えるなら、一度削除して追加し直す</p>
+    <div class="iconOut">
+      <img id="iconPreview" alt="アイコンのプレビュー">
+      <div>
+        <a id="iconDl" download="apple-touch-icon.png">画像として保存</a>
+        <p class="hint">iPhoneは画像を長押しして保存してもOK。この画像を「apple-touch-icon.png」という名前でリポジトリに上げると、ホーム画面のアイコンになるよ</p>
+      </div>
+    </div>
 
     <h3>バックアップ</h3>
     <div class="row">
       <button id="exportBtn">書き出し</button>
       <label class="inline">復元 <input type="file" id="restoreFile" accept=".json"></label>
     </div>
-    <div class="row end"><button id="sSave" class="primary">保存して閉じる</button></div>
+
+    <div class="row end">
+      <button id="sCancel">キャンセル</button>
+      <button id="sSave" class="primary">保存して閉じる</button>
+    </div>
   </div>
 </dialog>
 
