@@ -7,6 +7,7 @@ const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 const KEY = 'jikanwari-v2';
 const OLD_KEY = 'jikanwari-v1';
 const SEARCH_DAYS = 120; // 長期休みをまたいで次の授業を探す日数
+const HISTORY_MAX = 60;  // 持ち物の入力候補として覚えておく数
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,6 +19,7 @@ const parseYmd = s => {
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, m - 1, d);
 };
+const isYmd = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const todayStr = () => ymd(new Date());
 const dayIndex = d => (d.getDay() + 6) % 7; // 月=0 … 日=6
 const addDays = (d, k) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
@@ -36,6 +38,7 @@ const PROVIDERS = {
     label: 'Gemini（Google AI Studio・無料枠あり）',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     model: 'gemini-3.8-flash',
+    models: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
     keyUrl: 'https://aistudio.google.com/apikey',
     note: '無料枠では送った画像が Google の製品改善に使われる。'
   },
@@ -43,6 +46,7 @@ const PROVIDERS = {
     label: 'OpenRouter（無料モデルあり）',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     model: '',
+    models: [],
     keyUrl: 'https://openrouter.ai/collections/free-models',
     note: '画像に対応した無料モデルのIDを一覧から選んで入れてね。'
   },
@@ -50,7 +54,8 @@ const PROVIDERS = {
     label: 'Claude（有料）',
     url: 'https://api.anthropic.com/v1/messages',
     model: 'claude-sonnet-5',
-    keyUrl: 'https://docs.claude.com',
+    models: ['claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+    keyUrl: 'https://platform.claude.com/',
     note: ''
   }
 };
@@ -61,8 +66,16 @@ const FALLBACK_MODEL = { gemini: 'gemini-3.5-flash-lite' };
 /* ===== データ ===== */
 let state;
 
+let brokenSaved = false;
 function readJSON(k) {
-  try { return JSON.parse(localStorage.getItem(k)); } catch { return null; }
+  const raw = localStorage.getItem(k);
+  if (raw == null) return null;
+  try { return JSON.parse(raw); }
+  catch {
+    // 壊れたデータは消さずに別名で残す
+    try { localStorage.setItem(`${k}-broken-${Date.now()}`, raw); brokenSaved = true; } catch {}
+    return null;
+  }
 }
 
 function defaultTermName(d = new Date()) {
@@ -78,7 +91,12 @@ function nextTermName(name) {
 }
 
 const newTerm = (name, start = '', end = '', courses = []) =>
-  ({ id: uid(), name, start, end, offDays: [], swaps: [], courses });
+  ({ id: uid(), name, start, end, offDays: [], swaps: [], cancels: [], courses });
+
+const newCourse = (day, period, extra = {}) => ({
+  id: uid(), day, period, name: '', teacher: '', room: '', syllabus: '',
+  items: [], memos: [], tasks: [], absences: [], maxAbsence: '', ...extra
+});
 
 // 旧バージョン（学期なし）のデータを変換
 function fromV1(old) {
@@ -101,10 +119,20 @@ function fromV1(old) {
 }
 
 function normalize(s) {
+  // おかしなIDや重複したIDは作り直す
+  const seen = new Set();
+  const fixId = v => {
+    let id = typeof v === 'string' && /^[\w-]{1,40}$/.test(v) ? v : uid();
+    while (seen.has(id)) id = uid();
+    seen.add(id);
+    return id;
+  };
   s.periods ??= 7;
   s.showSat ??= false;
-  s.shiftTimes ??= false;
+  if (!s.shiftDefaultOn) { s.shiftTimes = true; s.shiftDefaultOn = true; } // 時刻ずらしは最初ON
   s.syllabusSearch ??= '';
+  s.lastExport ??= 0;
+  s.itemHistory = Array.isArray(s.itemHistory) ? s.itemHistory.filter(x => typeof x === 'string') : [];
   s.times ??= [];
   for (let i = 0; i < 10; i++) {
     s.times[i] ??= { start: DEFAULT_TIMES[i][0], end: DEFAULT_TIMES[i][1] };
@@ -113,32 +141,53 @@ function normalize(s) {
   s.keys ??= {};
   s.models ??= {};
   s.packChecks ??= {};
-  delete s.icon;     // 前のバージョンのアイコン設定は使わない
+  delete s.icon;
   delete s.appName;
   if (!Array.isArray(s.terms) || !s.terms.length) s.terms = [newTerm(defaultTermName())];
-  if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   for (const t of s.terms) {
+    t.id = fixId(t.id);
     t.start ??= '';
     t.end ??= '';
     t.offDays ??= [];
     t.swaps ??= [];
+    t.cancels ??= [];
     t.courses ??= [];
+    for (const o of t.offDays) o.id = fixId(o.id);
+    for (const x of t.swaps) x.id = fixId(x.id);
     for (const c of t.courses) {
-      c.id ??= uid();
+      c.id = fixId(c.id);
       c.name ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
+      c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
+      c.maxAbsence ??= '';
+      if (c.maxAbsence !== '' && !Number.isFinite(+c.maxAbsence)) c.maxAbsence = '';
       for (const i of c.items) {
-        i.id ??= uid();
+        i.id = fixId(i.id);
         i.type ??= 'next';
         i.added ??= Date.now();
         i.until ??= null;
       }
+      for (const k of c.tasks) k.id = fixId(k.id);
+      for (const m of c.memos) m.id = fixId(m.id);
     }
+    const ids = new Set(t.courses.map(c => c.id));
+    t.cancels = t.cancels.filter(x => ids.has(x.courseId) && isYmd(x.date));
+    for (const x of t.cancels) x.id = fixId(x.id);
   }
+  if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   return s;
 }
 
-const save = () => localStorage.setItem(KEY, JSON.stringify(state));
+let saveWarned = false;
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    saveWarned = false;
+  } catch {
+    if (!saveWarned) alert('保存できなかった。空き容量がないか、プライベートブラウズかも。設定から書き出しておいてね');
+    saveWarned = true;
+  }
+}
 const term = () => state.terms.find(t => t.id === state.currentTermId);
 const courses = () => term().courses;
 const modelOf = p => state.models[p] || PROVIDERS[p].model;
@@ -173,11 +222,24 @@ function effDay(date, t = term()) {
 
 const isClassDay = (date, t = term()) => inTerm(date, t) && !offInfo(date, t);
 
-// その日にある授業
+// この授業だけ休講か
+const isCancelled = (c, date, t = term()) => {
+  const k = ymd(date);
+  return t.cancels.some(x => x.courseId === c.id && x.date === k);
+};
+
+// その日にある授業（休講は除く）
 function coursesOn(date, t = term()) {
   if (!isClassDay(date, t)) return [];
   const d = effDay(date, t);
-  return t.courses.filter(c => c.day === d).sort((a, b) => a.period - b.period);
+  return t.courses.filter(c => c.day === d && !isCancelled(c, date, t)).sort((a, b) => a.period - b.period);
+}
+
+// その日に休講になった授業
+function cancelledOn(date, t = term()) {
+  if (!isClassDay(date, t)) return [];
+  const d = effDay(date, t);
+  return t.courses.filter(c => c.day === d && isCancelled(c, date, t));
 }
 
 // 探し始める日（学期開始前なら開始日から）
@@ -195,17 +257,47 @@ function occurrence(c, date) {
   return { start: new Date(y, mo, d, 0, s), end: new Date(y, mo, d, 0, e) };
 }
 
+const hasClass = (c, date, t) =>
+  isClassDay(date, t) && effDay(date, t) === c.day && !isCancelled(c, date, t);
+
 // from より後に始まる、いちばん近い回
 function nextOccurrence(c, t = term(), from = new Date()) {
   const base = searchBase(from, t);
   for (let k = 0; k < SEARCH_DAYS; k++) {
     const date = addDays(base, k);
     if (pastEnd(date, t)) break;
-    if (!isClassDay(date, t) || effDay(date, t) !== c.day) continue;
+    if (!hasClass(c, date, t)) continue;
     const o = occurrence(c, date);
     if (o && o.start > from) return o;
   }
   return null;
+}
+
+// この先の授業日（休講の候補用）
+function occurrencesAhead(c, n, t = term(), from = new Date()) {
+  const out = [], base = searchBase(from, t);
+  for (let k = 0; k < SEARCH_DAYS && out.length < n; k++) {
+    const date = addDays(base, k);
+    if (pastEnd(date, t)) break;
+    if (!hasClass(c, date, t)) continue;
+    const o = occurrence(c, date);
+    if (o && o.end <= from) continue;
+    out.push(date);
+  }
+  return out;
+}
+
+// いちばん最近あった回の日付（欠席の初期値）
+function lastClassDate(c, t = term(), now = new Date()) {
+  for (let k = 0; k < SEARCH_DAYS; k++) {
+    const date = addDays(now, -k);
+    if (t.start && ymd(date) < t.start) break;
+    if (!hasClass(c, date, t)) continue;
+    const o = occurrence(c, date);
+    if (k === 0 && o && o.start > now) continue;
+    return ymd(date);
+  }
+  return todayStr();
 }
 
 const untilFor = (c, t = term(), from = new Date()) => nextOccurrence(c, t, from)?.end.getTime() ?? null;
@@ -233,7 +325,7 @@ function prune() {
   if (changed) save();
 }
 
-// 時刻・休み・曜日などが変わったときの再計算
+// 時刻・休み・曜日・休講などが変わったときの再計算
 function scheduleChanged() {
   recomputeUntil();
   prune();
@@ -283,6 +375,13 @@ function suggestTerm(now) {
   return state.terms
     .filter(x => x.id !== state.currentTermId && (!x.end || x.end >= today))
     .sort((a, b) => (a.start || '').localeCompare(b.start || ''))[0] || null;
+}
+
+// 欠席の集計
+function absInfo(c) {
+  const n = c.absences.length;
+  const max = c.maxAbsence === '' ? null : +c.maxAbsence;
+  return { n, max, left: max == null ? null : max - n };
 }
 
 /* ===== シラバス ===== */
@@ -339,7 +438,8 @@ function whenLabel(start, now) {
 function renderNow() {
   const el = $('#nowCard'), now = new Date(), t = term();
   if (!courses().length) {
-    el.innerHTML = '<h2>次の授業</h2><p class="muted">時間割を登録するとここに出るよ</p>';
+    const ocr = state.keys[state.provider] ? '上の「画像読込」から時間割の画像を読み込むこともできるよ。' : '';
+    el.innerHTML = '<h2>はじめに</h2><p class="muted">下の時間割の空いてるマスをタップすると、授業を追加できるよ。' + ocr + '</p>';
     return;
   }
 
@@ -348,7 +448,7 @@ function renderNow() {
     el.innerHTML = `<h2>この学期は終わったよ</h2>` +
       `<p class="muted">${esc(t.name)}は${md(parseYmd(t.end))}で終了</p>` +
       (nt ? `<button data-switch="${nt.id}">「${esc(nt.name)}」に切り替える</button>`
-          : '<p class="muted">「学期・休み」から次の学期を作ってね</p>');
+          : '<p class="muted">「カレンダー」から次の学期を作ってね</p>');
     return;
   }
 
@@ -358,8 +458,13 @@ function renderNow() {
     h += `<p class="start">授業開始まで <b>あと${dayDiff(s, now)}日</b>（${md(s)}から）</p>`;
   } else if (inTerm(now, t)) {
     const off = offInfo(now, t);
-    if (off) h += `<p class="start">今日は授業なし${off.note ? `（${esc(off.note)}）` : ''}</p>`;
-    else if (effDay(now, t) !== dayIndex(now)) h += `<p class="start">今日は${DAYS[effDay(now, t)]}曜の授業をやる日</p>`;
+    if (off) {
+      h += `<p class="start">今日は授業なし${off.note ? `（${esc(off.note)}）` : ''}</p>`;
+    } else {
+      if (effDay(now, t) !== dayIndex(now)) h += `<p class="start">今日は${DAYS[effDay(now, t)]}曜の授業をやる日</p>`;
+      const cc = cancelledOn(now, t);
+      if (cc.length) h += `<p class="start">今日休講：${cc.map(c => esc(c.name)).join('、')}</p>`;
+    }
   }
 
   const list = upcoming(now);
@@ -380,28 +485,34 @@ function renderNow() {
   el.innerHTML = h + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>');
 }
 
-/* ===== 画面：明日の持ち物 ===== */
+/* ===== 画面：今日・明日の持ち物 ===== */
 let packList = [], packKey = '';
 
+// 今日まだ始まってない授業があれば今日、なければ次の授業日
 function packTarget(now) {
   const t = term(), s = parseYmd(t.start);
-  const base = searchBase(addDays(now, 1), t);
-  const offs = [];
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const pending = coursesOn(today, t).some(c => occurrence(c, today)?.start > now);
+  const base = searchBase(pending ? today : addDays(today, 1), t);
+  const notes = [], seen = new Set();
+  const note = (key, text) => { if (!seen.has(key)) { seen.add(key); notes.push(text); } };
+
   for (let k = 0; k < SEARCH_DAYS; k++) {
     const date = addDays(base, k);
     if (pastEnd(date, t)) break;
     if (!inTerm(date, t)) continue;
     const off = offInfo(date, t);
     if (off) {
-      const hadClass = t.courses.some(c => c.day === effDay(date, t));
-      if (hadClass && !offs.includes(off)) offs.push(off);
+      if (t.courses.some(c => c.day === effDay(date, t))) note(off.id, `休み：${offLabel(off)}`);
       continue;
     }
-    const cs = coursesOn(date, t);
+    const isToday = dayDiff(date, now) === 0;
+    for (const c of cancelledOn(date, t)) note(`${c.id}@${ymd(date)}`, `休講：${md(date)} ${c.name}`);
+    const cs = coursesOn(date, t).filter(c => !isToday || occurrence(c, date)?.start > now);
     if (cs.length) {
       const ed = effDay(date, t);
       return {
-        date, cs, offs,
+        date, cs, notes, isToday,
         first: !!s && dayDiff(s, now) > 0,
         swapped: ed !== dayIndex(date) ? ed : null
       };
@@ -414,7 +525,7 @@ function renderPack() {
   const el = $('#packCard'), now = new Date(), t = packTarget(now);
   if (!t) {
     const msg = courses().length ? '近いうちに授業はないよ' : '授業がまだ登録されてないよ';
-    el.innerHTML = `<h2>明日の持ち物</h2><p class="muted">${msg}</p>`;
+    el.innerHTML = `<h2>持ち物</h2><p class="muted">${msg}</p>`;
     packList = [];
     return;
   }
@@ -437,15 +548,16 @@ function renderPack() {
   packList = [...map.values()];
   const done = packList.filter(e => checks[e.text]).length;
 
-  let title = dayDiff(t.date, now) === 1 ? `明日 ${md(t.date)}` : md(t.date);
+  const diff = dayDiff(t.date, now);
+  let title = diff === 0 ? `今日 ${md(t.date)}` : diff === 1 ? `明日 ${md(t.date)}` : md(t.date);
   if (t.swapped != null) title += `（${DAYS[t.swapped]}曜授業）`;
   if (t.first) title += '（授業初日）';
   const names = t.cs.map(c => `${c.period}限 ${esc(c.name)}`).join('／');
-  const offHint = t.offs.length ? `<p class="hint">休み：${t.offs.map(o => esc(offLabel(o))).join('、')}</p>` : '';
+  const noteHint = t.notes.length ? `<p class="hint">${t.notes.map(esc).join('、')}</p>` : '';
 
   el.innerHTML =
     `<h2>${title}の持ち物 <small>${packList.length ? `${done}/${packList.length}` : ''}</small></h2>` +
-    offHint +
+    noteHint +
     `<p class="hint">${names}</p>` +
     (packList.length
       ? '<ul>' + packList.map((e, idx) =>
@@ -493,9 +605,11 @@ function renderGrid() {
         cs.map(c => {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
+          const a = absInfo(c);
           return `<div class="course" data-id="${c.id}"><b>${esc(c.name)}</b><small>${esc(c.room)}</small><div>` +
             (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
             (nt ? `<span class="badge task">課題${nt}</span>` : '') +
+            (a.left != null && a.left <= 1 ? `<span class="badge abs">欠席${a.n}/${a.max}</span>` : '') +
             `</div></div>`;
         }).join('') + '</div>';
     }
@@ -508,7 +622,20 @@ function renderTermSelect() {
     `<option value="${t.id}" ${t.id === state.currentTermId ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
 }
 
+function renderBackupWarn() {
+  const el = $('#backupWarn');
+  const has = state.terms.some(t => t.courses.length);
+  const days = state.lastExport ? dayDiff(new Date(), new Date(state.lastExport)) : null;
+  if (!has || (days != null && days < 14)) { el.hidden = true; return; }
+  el.hidden = false;
+  el.textContent = days == null
+    ? 'まだ一度もバックアップしてないよ。ここを押して設定の「書き出し」へ'
+    : `最後のバックアップから${days}日たったよ。ここを押して書き出しておこう`;
+}
+
 function renderAll() {
+  $('#importBtn').hidden = !state.keys[state.provider];
+  renderBackupWarn();
   renderTermSelect();
   renderNow();
   renderPack();
@@ -543,7 +670,10 @@ $('#taskCard').addEventListener('change', e => {
   if (!id) return;
   const c = courses().find(x => x.id === e.target.dataset.cid);
   const t = c?.tasks.find(x => x.id === id);
-  if (t) { t.done = true; save(); renderAll(); }
+  if (t) {
+    t.done = true; save(); renderAll();
+    toast(`「${t.title}」を完了にしたよ`, () => { t.done = false; save(); renderAll(); });
+  }
 });
 $('#taskCard').addEventListener('click', e => {
   const id = e.target.closest('.due')?.dataset.id;
@@ -555,11 +685,9 @@ $('#grid').addEventListener('click', e => {
   if (co) return openCourse(co.dataset.id);
   const cell = e.target.closest('.cell');
   if (!cell) return;
-  const d = +cell.dataset.d, p = +cell.dataset.p;
-  if (!confirm(`${DAYS[d]}曜${p}限に授業を追加する？`)) return;
-  const c = { id: uid(), day: d, period: p, name: '新しい授業', teacher: '', room: '', syllabus: '', items: [], memos: [], tasks: [] };
+  const c = newCourse(+cell.dataset.d, +cell.dataset.p);
   courses().push(c);
-  save(); renderAll(); openCourse(c.id);
+  renderAll(); openCourse(c.id);
 });
 
 $('#termSelect').onchange = e => {
@@ -574,6 +702,12 @@ const cur = () => courses().find(c => c.id === currentId);
 $('#cDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('');
 $('#cPeriod').innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}限</option>`).join('');
 
+function renderItemSuggest() {
+  const set = new Set(state.itemHistory);
+  for (const t of state.terms) for (const c of t.courses) for (const i of c.items) set.add(i.text.trim());
+  $('#itemSuggest').innerHTML = [...set].filter(Boolean).map(v => `<option value="${esc(v)}">`).join('');
+}
+
 function openCourse(id) {
   currentId = id;
   const c = cur();
@@ -585,37 +719,67 @@ function openCourse(id) {
   $('#cDay').value = c.day;
   $('#cPeriod').value = c.period;
   $('#taskDue').value = '';
+  $('#absDate').value = lastClassDate(c);
+  $('#absMax').value = c.maxAbsence;
+  renderItemSuggest();
   renderDetail();
   renderSyllabusHint();
   $('#courseDlg').showModal();
+  if (!c.name) $('#cName').focus(); // 新しい授業のときだけ授業名にカーソル
 }
 
 function renderDetail() {
   const c = cur();
   if (!c) return;
+  const t = term();
 
+  // 持ち物（タグをタップで「次回だけ」⇔「毎回」）
   $('#itemList').innerHTML = c.items.map(i =>
     `<li><span>` +
     (i.type === 'always'
-      ? '<span class="tag">毎回</span>'
-      : `<span class="tag next">次回${i.until ? '・' + md(new Date(i.until)) : ''}</span>`) +
-    `${esc(i.text)}</span><button class="x" data-del="${i.id}">×</button></li>`).join('')
+      ? `<button class="tag" data-toggle="${i.id}">毎回</button>`
+      : `<button class="tag next" data-toggle="${i.id}">次回${i.until ? '・' + md(new Date(i.until)) : ''}</button>`) +
+    `${esc(i.text)}</span><button class="x" data-del="${i.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
 
+  // 課題
   const ts = c.tasks.slice().sort((a, b) =>
     (a.done - b.done) || (a.due || '9999').localeCompare(b.due || '9999'));
-  $('#taskList').innerHTML = ts.map(t => {
-    const st = dueState(t.due);
-    return `<li class="${t.done ? '' : st.cls}"><label>` +
-      `<input type="checkbox" data-tdone="${t.id}" ${t.done ? 'checked' : ''}>` +
-      `<span class="${t.done ? 'done' : ''}">${esc(t.title)}</span></label>` +
-      `<span class="due">${t.done ? '完了' : st.label}</span>` +
-      `<button class="x" data-tdel="${t.id}">×</button></li>`;
+  $('#taskList').innerHTML = ts.map(k => {
+    const st = dueState(k.due);
+    return `<li class="${k.done ? '' : st.cls}"><label>` +
+      `<input type="checkbox" data-tdone="${k.id}" ${k.done ? 'checked' : ''}>` +
+      `<span class="${k.done ? 'done' : ''}">${esc(k.title)}</span></label>` +
+      `<span class="due">${k.done ? '完了' : st.label}</span>` +
+      `<button class="x" data-tdel="${k.id}" aria-label="削除">×</button></li>`;
   }).join('') || '<li class="muted">なし</li>';
 
+  // 先生の一言
   $('#memoList').innerHTML = c.memos.slice().reverse().map(m =>
     `<li><div><span class="memo-date">${esc(m.date)}</span>${esc(m.text).replace(/\n/g, '<br>')}</div>` +
-    `<button class="x" data-mdel="${m.id}">×</button></li>`).join('');
+    `<button class="x" data-mdel="${m.id}" aria-label="削除">×</button></li>`).join('');
+
+  // 休講
+  $('#cancelList').innerHTML = t.cancels.filter(x => x.courseId === c.id)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(x => `<li><span>${md(parseYmd(x.date))} 休講</span>` +
+      `<button class="x" data-cdel="${x.id}" aria-label="削除">×</button></li>`).join('')
+    || '<li class="muted">なし</li>';
+  const ahead = occurrencesAhead(c, 8);
+  $('#cancelDate').innerHTML = ahead.length
+    ? ahead.map((d, k) => `<option value="${ymd(d)}">${md(d)}${k === 0 ? '（次回）' : ''}</option>`).join('')
+    : '<option value="">この先の授業が見つからない</option>';
+  $('#cancelAdd').disabled = !ahead.length;
+
+  // 欠席
+  const a = absInfo(c);
+  let sum = `${a.n}回`;
+  if (a.max != null) sum += a.left < 0 ? ` / 上限${a.max}回（超えてる）` : ` / 上限${a.max}回（あと${a.left}回）`;
+  $('#absSummary').textContent = sum;
+  $('#absSummary').className = a.left != null && a.left <= 1 ? 'alert' : '';
+  $('#absList').innerHTML = c.absences.slice().sort().map(d =>
+    `<li><span>${md(parseYmd(d))}</span><button class="x" data-adel="${d}" aria-label="削除">×</button></li>`).join('')
+    || '<li class="muted">なし</li>';
 }
 
 for (const [id, key] of [['cName', 'name'], ['cTeacher', 'teacher'], ['cRoom', 'room']]) {
@@ -633,35 +797,36 @@ for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
   });
 }
 
-// シラバス
-$('#cSyllabus').addEventListener('input', e => {
-  cur().syllabus = e.target.value.trim();
-  save(); renderSyllabusHint();
-});
-$('#cSyllabusOpen').onclick = () => {
-  const c = cur();
-  if (c.syllabus && !isHttp(c.syllabus)) return alert('URLは https:// から始まる形で入れてね');
-  const url = syllabusURL(c);
-  if (!url) return alert('シラバスのURLを貼るか、設定でシラバス検索のURLを入れてね');
-  window.open(url, '_blank', 'noopener');
-};
-
 // 持ち物
 $('#itemAdd').onclick = () => {
   const v = $('#itemInput').value.trim();
   if (!v) return;
-  const c = cur(), type = $('#itemType').value, now = Date.now();
-  c.items.push({ id: uid(), text: v, type, added: now, until: type === 'next' ? untilFor(c, term(), new Date(now)) : null });
+  const c = cur(), now = Date.now();
+  c.items.push({ id: uid(), text: v, type: 'next', added: now, until: untilFor(c, term(), new Date(now)) });
+  state.itemHistory = [v, ...state.itemHistory.filter(x => x !== v)].slice(0, HISTORY_MAX);
   $('#itemInput').value = '';
-  save(); renderDetail(); renderAll();
+  save(); renderItemSuggest(); renderDetail(); renderAll();
 };
 $('#itemInput').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.isComposing) $('#itemAdd').click();
 });
 $('#itemList').addEventListener('click', e => {
+  const c = cur();
+  const tg = e.target.dataset.toggle;
+  if (tg) {
+    const i = c.items.find(x => x.id === tg);
+    if (i.type === 'always') {
+      const now = Date.now();
+      i.type = 'next'; i.added = now; i.until = untilFor(c, term(), new Date(now));
+    } else {
+      i.type = 'always'; i.until = null;
+    }
+    save(); renderDetail(); renderAll();
+    return;
+  }
   const id = e.target.dataset.del;
   if (!id) return;
-  cur().items = cur().items.filter(i => i.id !== id);
+  c.items = c.items.filter(i => i.id !== id);
   save(); renderDetail(); renderAll();
 });
 
@@ -705,12 +870,77 @@ $('#memoList').addEventListener('click', e => {
   save(); renderDetail();
 });
 
+// この授業だけ休講
+$('#cancelAdd').onclick = () => {
+  const date = $('#cancelDate').value;
+  if (!date) return;
+  term().cancels.push({ id: uid(), courseId: cur().id, date });
+  scheduleChanged(); renderDetail();
+};
+$('#cancelList').addEventListener('click', e => {
+  const id = e.target.dataset.cdel;
+  if (!id) return;
+  term().cancels = term().cancels.filter(x => x.id !== id);
+  scheduleChanged(); renderDetail();
+});
+
+// 欠席
+$('#absAdd').onclick = () => {
+  const d = $('#absDate').value;
+  if (!d) return alert('欠席した日を選んでね');
+  const c = cur();
+  if (c.absences.includes(d)) return alert('その日はもう記録してあるよ');
+  c.absences.push(d);
+  save(); renderDetail(); renderGrid();
+};
+$('#absList').addEventListener('click', e => {
+  const d = e.target.dataset.adel;
+  if (!d) return;
+  cur().absences = cur().absences.filter(x => x !== d);
+  save(); renderDetail(); renderGrid();
+});
+$('#absMax').addEventListener('input', e => {
+  const v = e.target.value;
+  cur().maxAbsence = v === '' ? '' : Math.max(0, Math.floor(+v) || 0);
+  save(); renderDetail(); renderGrid();
+});
+
+// シラバス
+$('#cSyllabus').addEventListener('input', e => {
+  cur().syllabus = e.target.value.trim();
+  save(); renderSyllabusHint();
+});
+$('#cSyllabusOpen').onclick = () => {
+  const c = cur();
+  if (c.syllabus && !isHttp(c.syllabus)) return alert('URLは https:// から始まる形で入れてね');
+  const url = syllabusURL(c);
+  if (!url) return alert('シラバスのURLを貼るか、設定でシラバス検索のURLを入れてね');
+  window.open(url, '_blank', 'noopener');
+};
+
+function removeCourse(c) {
+  const t = term();
+  t.courses = t.courses.filter(x => x !== c);
+  t.cancels = t.cancels.filter(x => x.courseId !== c.id);
+}
+
 $('#cDelete').onclick = () => {
-  if (!confirm('この授業とメモ・課題を削除する？')) return;
-  term().courses = courses().filter(c => c.id !== currentId);
+  if (!confirm('この授業とメモ・課題・欠席の記録を削除する？')) return;
+  removeCourse(cur());
   save(); renderAll(); $('#courseDlg').close();
 };
 $('#cClose').onclick = () => $('#courseDlg').close();
+$('#cX').onclick = () => $('#courseDlg').close();
+
+// 何も入ってない授業は閉じたときに消す
+$('#courseDlg').addEventListener('close', () => {
+  const c = cur();
+  if (!c) return;
+  const empty = !c.name.trim() && !c.teacher.trim() && !c.room.trim() && !c.syllabus &&
+    !c.items.length && !c.memos.length && !c.tasks.length && !c.absences.length && c.maxAbsence === '';
+  if (empty) removeCourse(c);
+  save(); renderAll();
+});
 
 /* ===== 画像読み込み ===== */
 const PROMPT = `これは大学の時間割表の画像です。各授業を読み取り、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
@@ -841,6 +1071,13 @@ $('#imgFile').onchange = e => {
   p.style.display = 'block';
 };
 
+function friendlyError(err) {
+  if (err instanceof TypeError && /fetch|network|load failed/i.test(err.message))
+    return '通信できなかった。ネットにつながってるか確認してね';
+  if (err instanceof SyntaxError) return '結果がうまく読めなかった。もう一回試すか、別のモデルで試してみて';
+  return err.message;
+}
+
 let ocrRunning = false;
 $('#runOcr').onclick = async () => {
   if (ocrRunning) return;
@@ -857,7 +1094,7 @@ $('#runOcr').onclick = async () => {
     showRows(arr);
     $('#ocrStatus').textContent = `${arr.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
   } catch (err) {
-    $('#ocrStatus').textContent = 'エラー: ' + err.message;
+    $('#ocrStatus').textContent = 'エラー: ' + friendlyError(err);
   } finally {
     ocrRunning = false;
     $('#runOcr').disabled = false;
@@ -871,7 +1108,7 @@ function showRows(arr) {
     arr.map(c => {
       const d = Math.max(0, DAYS.indexOf(c.day));
       return `<tr class="r"><td><select class="d">${dayOpts(d)}</select></td>` +
-        `<td><input class="p" type="number" min="1" max="10" value="${+c.period || 1}" style="width:42px"></td>` +
+        `<td><input class="p" type="number" min="1" max="10" value="${+c.period || 1}" style="width:48px"></td>` +
         `<td><input class="n" value="${esc(c.name)}"></td>` +
         `<td><input class="t" value="${esc(c.teacher)}"></td>` +
         `<td><input class="rm" value="${esc(c.room)}"></td>` +
@@ -890,35 +1127,53 @@ function applyImport(replace) {
       room: tr.querySelector('.rm').value.trim()
     }));
   if (!rows.length) return alert('保存する授業がないよ');
-  if (replace && !confirm(`「${term().name}」の時間割を置き換える？（同じ名前の授業のメモ・持ち物・課題・シラバスは引き継ぐ）`)) return;
 
-  const old = courses();
-  const added = rows.map(r => {
-    const prev = old.find(c => c.name === r.name);
-    return {
-      id: uid(), ...r,
-      syllabus: prev ? prev.syllabus : '',
-      items: prev ? structuredClone(prev.items) : [],
-      memos: prev ? structuredClone(prev.memos) : [],
-      tasks: prev ? structuredClone(prev.tasks) : []
-    };
+  // 引き継ぐのは「授業名・曜日・時限」が全部同じ授業だけ（1対1）
+  const t = term(), old = courses(), used = new Set();
+  const pairs = rows.map(r => {
+    const prev = replace
+      ? old.find(c => !used.has(c) && c.name === r.name && c.day === r.day && c.period === r.period)
+      : null;
+    if (prev) used.add(prev);
+    return [r, prev];
   });
-  term().courses = replace ? added : old.concat(added);
+  let backup = null;
+  if (replace) {
+    const lost = old.filter(c => !used.has(c) &&
+      (c.items.length || c.memos.length || c.tasks.length || c.syllabus || c.absences.length));
+    const msg = `「${t.name}」の時間割を置き換える？` + (lost.length
+      ? `\n\n次の授業のメモ・持ち物・課題・欠席は消えるよ（授業名・曜日・時限が全部同じものだけ引き継ぐ）\n` +
+        lost.map(c => `・${DAYS[c.day]}${c.period} ${c.name}`).join('\n')
+      : '');
+    if (!confirm(msg)) return;
+    backup = { courses: structuredClone(old), cancels: structuredClone(t.cancels) };
+  }
+  const added = pairs.map(([r, prev]) => prev ? Object.assign(prev, r) : newCourse(r.day, r.period, r));
+  t.courses = replace ? added : old.concat(added);
+  if (replace) {
+    const ids = new Set(t.courses.map(c => c.id));
+    t.cancels = t.cancels.filter(x => ids.has(x.courseId));
+  }
   state.periods = Math.max(state.periods, ...rows.map(r => r.period));
   if (rows.some(r => r.day === 5)) state.showSat = true;
   scheduleChanged();
   $('#importDlg').close();
+  if (backup) toast('時間割を置き換えたよ', () => {
+    t.courses = backup.courses;
+    t.cancels = backup.cancels;
+    scheduleChanged();
+  });
 }
 $('#applyReplace').onclick = () => applyImport(true);
 $('#applyAdd').onclick = () => applyImport(false);
 
-/* ===== 学期・休み ===== */
+/* ===== カレンダー（学期・休み・振替） ===== */
 $('#swapDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('');
 
 function renderTermList() {
   $('#termList').innerHTML = state.terms.map(t =>
     `<li><div class="termBox">` +
-      `<div class="row"><input data-rename="${t.id}" value="${esc(t.name)}">` +
+      `<div class="row"><input data-rename="${t.id}" value="${esc(t.name)}" aria-label="学期の名前">` +
         (t.id === state.currentTermId ? '<span class="tag">表示中</span>' : '') +
         `<span class="from">${t.courses.length}件</span>` +
         `<button class="x" data-termdel="${t.id}">削除</button></div>` +
@@ -931,11 +1186,11 @@ function renderOffList() {
   const t = term();
   $('#offTitle').textContent = `「${t.name}」の授業がない日`;
   $('#offList').innerHTML = t.offDays.slice().sort((a, b) => a.from.localeCompare(b.from)).map(o =>
-    `<li><span>${esc(offLabel(o))}</span><button class="x" data-offdel="${o.id}">×</button></li>`).join('')
+    `<li><span>${esc(offLabel(o))}</span><button class="x" data-offdel="${o.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
   $('#swapList').innerHTML = t.swaps.slice().sort((a, b) => a.date.localeCompare(b.date)).map(x =>
     `<li><span>${md(parseYmd(x.date))} は${DAYS[x.asDay]}曜の授業</span>` +
-    `<button class="x" data-swapdel="${x.id}">×</button></li>`).join('')
+    `<button class="x" data-swapdel="${x.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
 }
 
@@ -960,9 +1215,14 @@ $('#termList').addEventListener('change', e => {
   const id = tstart || tend;
   if (!id) return;
   const t = state.terms.find(x => x.id === id);
-  if (tstart) t.start = e.target.value;
-  else t.end = e.target.value;
-  if (t.start && t.end && t.end < t.start) alert('終了日が開始日より前になってるよ');
+  const k = tstart ? 'start' : 'end', before = t[k];
+  t[k] = e.target.value;
+  if (t.start && t.end && t.end < t.start) {
+    alert('終了日が開始日より前になってるよ');
+    t[k] = before;
+    e.target.value = before;
+    return;
+  }
   scheduleChanged();
 });
 $('#termList').addEventListener('click', e => {
@@ -1015,11 +1275,9 @@ $('#termCreate').onclick = () => {
   const name = $('#newTermName').value.trim() || defaultTermName();
   const start = $('#newTermStart').value, end = $('#newTermEnd').value;
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
-  const copied = $('#newTermCopy').checked ? courses().map(c => ({
-    id: uid(), day: c.day, period: c.period, name: c.name, teacher: c.teacher, room: c.room,
-    syllabus: c.syllabus,
-    items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() })),
-    memos: [], tasks: []
+  const copied = $('#newTermCopy').checked ? courses().map(c => newCourse(c.day, c.period, {
+    name: c.name, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence,
+    items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() }))
   })) : [];
   const t = newTerm(name, start, end, copied);
   state.terms.push(t);
@@ -1032,32 +1290,50 @@ let tmp = null;      // 保存を押すまでの一時データ
 let snapshot = '';   // 開いたときの状態（変更があったかの判定用）
 
 $('#sProvider').innerHTML = Object.entries(PROVIDERS)
-  .map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
 
 function fillProviderFields(p) {
   tmp.provider = p;
   $('#sProvider').value = p;
   $('#sKey').value = tmp.keys[p] || '';
-  $('#sModel').value = tmp.models[p] || PROVIDERS[p].model;
+  const list = PROVIDERS[p].models, m = tmp.models[p] || PROVIDERS[p].model;
+  $('#sModelPick').innerHTML = list.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('') +
+    '<option value="">その他（直接入力）</option>';
+  const preset = list.includes(m);
+  $('#sModelPick').value = preset ? m : '';
+  $('#sModel').value = preset ? '' : m;
+  $('#sModel').hidden = preset;
   $('#sKeyLink').href = PROVIDERS[p].keyUrl;
   $('#sNote').textContent = PROVIDERS[p].note;
 }
 function stashProviderFields() {
   tmp.keys[tmp.provider] = $('#sKey').value.trim();
-  tmp.models[tmp.provider] = $('#sModel').value.trim();
+  tmp.models[tmp.provider] = $('#sModelPick').value || $('#sModel').value.trim();
 }
+$('#sModelPick').onchange = e => {
+  $('#sModel').hidden = !!e.target.value;
+  if (!e.target.value) $('#sModel').focus();
+};
 
 const clampPeriods = v => Math.min(10, Math.max(1, +v || 7));
 
 function renderTimes() {
   $('#sTimes').innerHTML = Array.from({ length: tmp.periods }, (_, i) =>
     `<tr data-p="${i + 1}"><td>${i + 1}限</td>` +
-    `<td><input type="time" class="ts" value="${esc(tmp.times[i].start)}"></td><td>〜</td>` +
-    `<td><input type="time" class="te" value="${esc(tmp.times[i].end)}"></td></tr>`).join('');
+    `<td><input type="time" class="ts" value="${esc(tmp.times[i].start)}" aria-label="${i + 1}限の開始"></td><td>〜</td>` +
+    `<td><input type="time" class="te" value="${esc(tmp.times[i].end)}" aria-label="${i + 1}限の終了"></td></tr>`).join('');
 }
 function stashTimes() {
   document.querySelectorAll('#sTimes tr[data-p]').forEach(tr => {
     tmp.times[+tr.dataset.p - 1] = { start: tr.querySelector('.ts').value, end: tr.querySelector('.te').value };
+  });
+}
+// 表は作り直さず、数字だけ書き換える
+function syncTimeInputs() {
+  document.querySelectorAll('#sTimes tr[data-p]').forEach(tr => {
+    const t = tmp.times[+tr.dataset.p - 1];
+    tr.querySelector('.ts').value = t.start;
+    tr.querySelector('.te').value = t.end;
   });
 }
 
@@ -1069,13 +1345,21 @@ function shiftTime(t, k, delta) {
   if (n >= 0 && n < 24 * 60) t[k] = fromMin(n);
 }
 
-$('#sTimes').addEventListener('change', e => {
-  const tr = e.target.closest('tr[data-p]');
-  if (!tr) return;
-  const i = +tr.dataset.p - 1;
-  const k = e.target.classList.contains('ts') ? 'start' : 'end';
-  const before = toMin(tmp.times[i][k]), after = toMin(e.target.value);
-  tmp.times[i][k] = e.target.value;
+// 入力を始めたときの値を覚えておく
+let editBefore = null;
+$('#sTimes').addEventListener('focusin', e => {
+  if (e.target.matches('.ts, .te')) editBefore = e.target.value;
+});
+
+// 入力欄から離れたときにだけ、後ろの時限をずらす
+$('#sTimes').addEventListener('focusout', e => {
+  const el = e.target;
+  if (!el.matches('.ts, .te')) return;
+  const i = +el.closest('tr[data-p]').dataset.p - 1;
+  const k = el.classList.contains('ts') ? 'start' : 'end';
+  const before = toMin(editBefore), after = toMin(el.value);
+  editBefore = null;
+  tmp.times[i][k] = el.value;
   if (!$('#sShift').checked || before == null || after == null || before === after) return;
 
   const delta = after - before;
@@ -1084,7 +1368,7 @@ $('#sTimes').addEventListener('change', e => {
     shiftTime(tmp.times[j], 'start', delta);
     shiftTime(tmp.times[j], 'end', delta);
   }
-  renderTimes();
+  syncTimeInputs();
 });
 
 // 画面の入力を一時データに集める
@@ -1095,6 +1379,13 @@ function collect() {
   tmp.showSat = $('#sSat').checked;
   tmp.shiftTimes = $('#sShift').checked;
   tmp.syllabusSearch = $('#sSyllabus').value.trim();
+}
+
+function renderLastExport() {
+  const t = state.lastExport;
+  $('#lastExport').textContent = t
+    ? `最後の書き出し：${md(new Date(t))}（${dayDiff(new Date(), new Date(t))}日前）`
+    : 'まだ書き出してないよ';
 }
 
 function openSettings() {
@@ -1117,6 +1408,8 @@ function openSettings() {
   renderTimes();
   collect();
   snapshot = JSON.stringify(tmp);
+  renderLastExport();
+  $('#aiBox').open = false;
   $('#settingsDlg').showModal();
   $('#settingsDlg').scrollTop = 0;
 }
@@ -1128,6 +1421,7 @@ function closeSettings() {
 }
 
 $('#settingsBtn').onclick = openSettings;
+$('#backupWarn').onclick = openSettings;
 $('#sX').onclick = closeSettings;
 $('#sCancel').onclick = closeSettings;
 $('#settingsDlg').addEventListener('cancel', e => { e.preventDefault(); closeSettings(); }); // Escキー
@@ -1160,12 +1454,25 @@ $('#sSave').onclick = () => {
 };
 
 /* ===== バックアップ ===== */
-$('#exportBtn').onclick = () => {
+$('#exportBtn').onclick = async () => {
   const { keys, ...rest } = state; // キーは書き出さない
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(rest, null, 2)], { type: 'application/json' }));
-  a.download = `jikanwari-${todayStr()}.json`;
-  a.click();
+  const name = `jikanwari-${todayStr()}.json`;
+  const blob = new Blob([JSON.stringify(rest, null, 2)], { type: 'application/json' });
+  const file = new File([blob], name, { type: 'application/json' });
+  let shared = false;
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); shared = true; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  if (!shared) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  state.lastExport = Date.now();
+  save(); renderLastExport(); renderBackupWarn();
 };
 
 $('#restoreFile').onchange = async e => {
@@ -1189,13 +1496,38 @@ $('#restoreFile').onchange = async e => {
   }
 };
 
+/* ===== 「元に戻す」表示 ===== */
+let toastTimer = null, toastUndo = null;
+function toast(msg, undo) {
+  $('#toastMsg').textContent = msg;
+  toastUndo = undo || null;
+  $('#toastUndo').hidden = !undo;
+  $('#toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000);
+}
+$('#toastUndo').onclick = () => {
+  toastUndo?.();
+  toastUndo = null;
+  $('#toast').hidden = true;
+};
+
 /* ===== 起動 ===== */
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
 recomputeUntil();
 prune();
 save();
 renderAll();
+if (brokenSaved) alert('保存データが壊れてて読めなかった。中身は消さずに別名で残してあるよ');
+navigator.storage?.persist?.().catch(() => {});
 
-function tick() { prune(); renderAll(); }
+// ダイアログが開いてるときと、タップした直後は自動更新しない
+let lastTouch = 0;
+document.addEventListener('pointerdown', () => { lastTouch = Date.now(); }, true);
+function tick() {
+  if (document.querySelector('dialog[open]')) return;
+  if (Date.now() - lastTouch < 3000) return;
+  prune(); renderAll();
+}
 setInterval(tick, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
