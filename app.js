@@ -27,6 +27,12 @@ const md = d => `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`;
 const hm = d => `${d.getHours()}:${pad(d.getMinutes())}`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isHttp = s => /^https?:\/\//i.test(s || '');
+// 金額を整数に（「12,345円」みたいな文字でもOK、読めなければ null）
+const toYen = v => {
+  if (v == null || v === '') return null;
+  const n = +String(v).replace(/[,，円¥\s]/g, '');
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : null;
+};
 
 const DEFAULT_TIMES = [
   ['08:50', '10:20'], ['10:30', '12:00'], ['13:00', '14:30'], ['14:40', '16:10'],
@@ -183,6 +189,17 @@ function normalize(s) {
         s.evPresets.push({ title: e.title, kind: e.kind, start: e.start, end: e.end });
     }
   }
+
+  // バイトの収入（支給日で集計）
+  s.incomes = Array.isArray(s.incomes) ? s.incomes.filter(x => x && isYmd(x.date)) : [];
+  for (const x of s.incomes) {
+    x.id = fixId(x.id);
+    x.job = typeof x.job === 'string' ? x.job : '';
+    x.month = typeof x.month === 'string' && /^\d{4}-\d{2}$/.test(x.month) ? x.month : '';
+    x.gross = toYen(x.gross);
+    x.net = toYen(x.net);
+  }
+  s.incomeLimit = toYen(s.incomeLimit) ?? '';
 
   delete s.icon;
   delete s.appName;
@@ -1452,7 +1469,7 @@ const isBusy = (status, msg) =>
   [500, 502, 503, 504, 529].includes(status) || /high demand|overloaded|unavailable/i.test(msg);
 
 // 1回だけリクエストを送る
-async function requestOnce(p, key, model, b64) {
+async function requestOnce(p, key, model, b64, prompt = PROMPT) {
   let r;
   if (p === 'claude') {
     r = await fetch(PROVIDERS.claude.url, {
@@ -1467,7 +1484,7 @@ async function requestOnce(p, key, model, b64) {
         model, max_tokens: 4096,
         messages: [{ role: 'user', content: [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
-          { type: 'text', text: PROMPT }
+          { type: 'text', text: prompt },
         ] }]
       })
     });
@@ -1479,7 +1496,7 @@ async function requestOnce(p, key, model, b64) {
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: [
-          { type: 'text', text: PROMPT },
+          { type: 'text', text: prompt },,
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }
         ] }]
       })
@@ -1496,14 +1513,13 @@ async function requestOnce(p, key, model, b64) {
 }
 
 // 混雑時は自動でやり直し、予備のモデルがあれば切り替える
-async function callVision(b64) {
+async function callVision(b64, prompt = PROMPT, st = $('#ocrStatus')) {
   const p = state.provider, key = state.keys[p], main = modelOf(p);
   if (!key) throw new Error('設定でAPIキーを入れてね');
   if (!main) throw new Error('設定でモデルIDを入れてね');
 
   const models = [main];
   if (FALLBACK_MODEL[p] && FALLBACK_MODEL[p] !== main) models.push(FALLBACK_MODEL[p]);
-  const st = $('#ocrStatus');
   let lastMsg = '';
 
   for (const [mi, model] of models.entries()) {
@@ -1515,7 +1531,7 @@ async function callVision(b64) {
         await sleep(w * 1000);
         st.textContent = `読み取り中…（${model}）`;
       }
-      const r = await requestOnce(p, key, model, b64);
+      const r = await requestOnce(p, key, model, b64, prompt);
       if (r.ok) return r.text;
       if (r.status === 429) throw new Error('回数制限に達したみたい。少し待ってからもう一回試してね');
       if (!isBusy(r.status, r.msg)) throw new Error(r.msg);
@@ -2210,6 +2226,320 @@ $('#shareAdd').onclick = () => {
   t.swaps.push(...sws.map(x => ({ id: uid(), ...x })));
   applyShareCommon(d);
   finishShare(`授業${fresh.length}件を追加したよ`);
+};
+
+/* ===== 収入 ===== */
+let inYear = new Date().getFullYear();
+let inEditId = null;
+const yen = n => `${Math.round(n).toLocaleString('ja-JP')}円`;
+const sumOf = (xs, k) => xs.reduce((a, x) => a + (x[k] || 0), 0);
+const incomesOf = y => state.incomes.filter(x => x.date.startsWith(`${y}-`))
+  .sort((a, b) => a.date.localeCompare(b.date));
+
+function renderIncome() {
+  const xs = incomesOf(inYear);
+  const g = sumOf(xs, 'gross'), n = sumOf(xs, 'net');
+  $('#inYear').textContent = `${inYear}年`;
+
+  // 上限ライン
+  let lim = '';
+  if (state.incomeLimit !== '') {
+    const L = state.incomeLimit, left = L - g;
+    const pct = L > 0 ? Math.min(100, g / L * 100) : (g > 0 ? 100 : 0);
+    const cls = left < 0 ? 'over' : pct >= 90 ? 'warn' : '';
+    lim = `<div class="bar ${cls}"><i style="width:${pct}%"></i></div>` + (left >= 0
+      ? `<p class="inLeft">上限まであと <b>${yen(left)}</b></p>`
+      : `<p class="inLeft over">上限を ${yen(-left)} こえてる</p>`);
+  }
+  // バイト先ごと
+  const jobs = new Map();
+  for (const x of xs) jobs.set(x.job || '未設定', (jobs.get(x.job || '未設定') || 0) + (x.gross || 0));
+  $('#inSummary').innerHTML =
+    `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(n)}</small></p>` + lim +
+    (jobs.size > 1 ? `<p class="hint">${[...jobs].map(([j, v]) => `${esc(j)} ${yen(v)}`).join('・')}</p>` : '');
+
+  // 月ごと（支給日の月）
+  $('#inMonths').innerHTML = '<tr><th>月</th><th>総支給</th><th>手取り</th></tr>' +
+    Array.from({ length: 12 }, (_, i) => {
+      const ms = xs.filter(x => +x.date.slice(5, 7) === i + 1);
+      const has = ms.length > 0;
+      return `<tr class="${has ? '' : 'empty'}"><td>${i + 1}月</td>` +
+        `<td>${has ? yen(sumOf(ms, 'gross')) : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>`;
+    }).join('');
+
+  // 記録（新しい順）
+  $('#inList').innerHTML = xs.slice().reverse().map(x =>
+    `<li class="${x.id === inEditId ? 'editing' : ''}">` +
+    `<button type="button" class="evText inRow" data-inedit="${x.id}">` +
+    `<span class="tag">${md(parseYmd(x.date))}</span>${esc(x.job || 'バイト')}` +
+    (x.month ? `<span class="from">${+x.month.slice(5)}月分</span>` : '') +
+    `<span class="inAmt">${x.gross != null ? yen(x.gross) : '-'}` +
+    (x.net != null ? ` <small>手取り${yen(x.net)}</small>` : '') + '</span></button>' +
+    `<button class="x" data-indel="${x.id}" aria-label="削除">×</button></li>`).join('')
+    || '<li class="muted">この年の記録はまだないよ</li>';
+}
+
+// バイト先の候補（過去の記録 → カレンダーのバイト予定）
+function renderJobChips() {
+  const names = [];
+  const add = v => { v = (v || '').trim(); if (v && !names.includes(v)) names.push(v); };
+  [...state.incomes].sort((a, b) => b.date.localeCompare(a.date)).forEach(x => add(x.job));
+  state.evPresets.filter(p => p.kind === 'job').forEach(p => add(p.title));
+  $('#inJobChips').innerHTML = names.slice(0, 8).map(v =>
+    `<button type="button" class="chip" data-job="${esc(v)}">${esc(v)}</button>`).join('');
+}
+$('#inJobChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-job]');
+  if (b) $('#inJob').value = b.dataset.job;
+});
+
+function syncInForm() {
+  $('#inHead').textContent = inEditId ? '記録を変更' : '収入を追加';
+  $('#inSave').textContent = inEditId ? '変更を保存' : '追加';
+  $('#inCancel').hidden = !inEditId;
+}
+function resetInForm() {
+  inEditId = null;
+  $('#inDate').value = todayStr();
+  for (const id of ['inMonth', 'inJob', 'inGross', 'inNet']) $('#' + id).value = '';
+  syncInForm();
+}
+
+$('#incomeBtn').onclick = () => {
+  inYear = new Date().getFullYear();
+  $('#inLimit').value = state.incomeLimit;
+  resetInForm(); resetScan(); renderJobChips(); renderIncome();
+  $('#inScan').open = false;
+  $('#incomeDlg').showModal();
+  $('#incomeDlg').scrollTop = 0;
+};
+$('#inX').onclick = () => $('#incomeDlg').close();
+$('#inPrev').onclick = () => { inYear--; renderIncome(); };
+$('#inNext').onclick = () => { inYear++; renderIncome(); };
+
+$('#inLimit').addEventListener('input', e => {
+  state.incomeLimit = toYen(e.target.value) ?? '';
+  save(); renderIncome();
+});
+
+$('#inSave').onclick = () => {
+  const date = $('#inDate').value;
+  if (!date) return alert('支給日を入れてね');
+  const gross = toYen($('#inGross').value), net = toYen($('#inNet').value);
+  if (gross == null && net == null) return alert('総支給か手取りのどっちかは入れてね');
+  if (gross != null && net != null && net > gross &&
+    !confirm('手取りが総支給より多くなってるけど、このまま保存する？')) return;
+  const m = $('#inMonth').value;
+  const v = { date, month: /^\d{4}-\d{2}$/.test(m) ? m : '', job: $('#inJob').value.trim(), gross, net };
+  const x = inEditId && state.incomes.find(k => k.id === inEditId);
+  if (x) Object.assign(x, v);
+  else state.incomes.push({ id: uid(), ...v });
+  inYear = +date.slice(0, 4);
+  save(); resetInForm(); renderJobChips(); renderIncome();
+  $('#scanStatus').textContent = '';
+  toast(x ? '変更したよ' : '追加したよ');
+};
+$('#inCancel').onclick = () => { resetInForm(); renderIncome(); };
+
+$('#inList').addEventListener('click', e => {
+  const ed = e.target.closest('[data-inedit]');
+  if (ed) {
+    const x = state.incomes.find(k => k.id === ed.dataset.inedit);
+    if (!x) return;
+    inEditId = x.id;
+    $('#inDate').value = x.date;
+    $('#inMonth').value = x.month;
+    $('#inJob').value = x.job;
+    $('#inGross').value = x.gross ?? '';
+    $('#inNet').value = x.net ?? '';
+    syncInForm(); renderIncome();
+    $('#inHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  const id = e.target.dataset.indel;
+  if (!id || !confirm('この記録を消す？')) return;
+  state.incomes = state.incomes.filter(k => k.id !== id);
+  if (id === inEditId) resetInForm();
+  save(); renderIncome();
+});
+
+/* ===== 給与明細の読み取り（範囲選択・塗りつぶし） ===== */
+const PAY_PROMPT = `これは給与明細の画像です（一部だけ切り取っていたり、黒く塗りつぶした部分があったりします）。読み取って、JSONオブジェクトだけを出力してください。説明文やコードブロック記号は書かないでください。
+形式: {"payDate":"2026-05-25","month":"2026-04","gross":123456,"net":110000}
+ルール:
+- payDateは支給日（YYYY-MM-DD）。monthは何月分の給与か（YYYY-MM）。
+- grossは総支給額（支給合計）。netは差引支給額（手取り・振込額）。どちらも円単位の整数で、カンマや「円」は付けない。
+- 和暦（令和8年など）は西暦に直す。
+- 書かれていない・読み取れない項目は、日付なら ""、金額なら null にする。推測で埋めない。
+- 名前・会社名など、上の4つ以外は出力しない。`;
+
+let scanImg = null, scanUrl = '', scanCrop = null, scanMasks = [], scanHist = [];
+let scanMode = 'crop', scanDrag = null, scanRunning = false;
+const scanCv = $('#scanCv');
+
+function setScanMode(m) {
+  scanMode = m;
+  $('#modeCrop').classList.toggle('on', m === 'crop');
+  $('#modeMask').classList.toggle('on', m === 'mask');
+  $('#scanHint').textContent = m === 'crop'
+    ? '送りたいところ（金額と日付）を指でなぞって四角で囲んでね。囲まなければ写真全体を送るよ'
+    : '隠したいところをなぞると黒く塗りつぶすよ。何か所でもOK';
+}
+$('#modeCrop').onclick = () => setScanMode('crop');
+$('#modeMask').onclick = () => setScanMode('mask');
+
+function resetScan() {
+  if (scanUrl) URL.revokeObjectURL(scanUrl);
+  scanImg = null; scanUrl = ''; scanCrop = null; scanMasks = []; scanHist = []; scanDrag = null;
+  $('#scanFile').value = '';
+  $('#scanBox').hidden = true;
+  $('#scanStatus').textContent = '';
+  const hasKey = !!state.keys[state.provider];
+  $('#scanFile').hidden = !hasKey;
+  $('#scanNote').textContent = hasKey
+    ? '名前・会社名・口座は、範囲の外に出すか塗りつぶしてから送るのがおすすめ。' +
+      (state.provider === 'gemini' ? 'Geminiの無料枠だと、送った画像がGoogleの製品改善に使われるよ' : '')
+    : '設定の「画像読み取り（AI）の設定」でAPIキーを入れると使えるよ。キーがなくても下の欄から手入力できる';
+  setScanMode('crop');
+}
+
+$('#scanFile').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (scanUrl) URL.revokeObjectURL(scanUrl);
+  scanUrl = URL.createObjectURL(f);
+  try {
+    scanImg = await loadImg(scanUrl);
+  } catch {
+    scanImg = null;
+    return alert('画像が読めなかった');
+  }
+  scanCrop = null; scanMasks = []; scanHist = [];
+  const s = Math.min(1, 1200 / Math.max(scanImg.width, scanImg.height));
+  scanCv.width = Math.round(scanImg.width * s);
+  scanCv.height = Math.round(scanImg.height * s);
+  $('#scanBox').hidden = false;
+  $('#scanStatus').textContent = '';
+  drawScan();
+};
+
+const rectOf = (a, b) =>
+  ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+
+// 画面上の位置 → 元の写真の位置
+function scanPt(e) {
+  const r = scanCv.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * scanImg.width;
+  const y = (e.clientY - r.top) / r.height * scanImg.height;
+  return { x: Math.max(0, Math.min(scanImg.width, x)), y: Math.max(0, Math.min(scanImg.height, y)) };
+}
+
+function drawScan() {
+  if (!scanImg) return;
+  const ctx = scanCv.getContext('2d'), k = scanCv.width / scanImg.width;
+  const R = r => [r.x * k, r.y * k, r.w * k, r.h * k];
+  ctx.drawImage(scanImg, 0, 0, scanCv.width, scanCv.height);
+  ctx.fillStyle = '#000';
+  for (const m of scanMasks) ctx.fillRect(...R(m));
+  const live = scanDrag && rectOf(scanDrag.a, scanDrag.b);
+  if (live && scanMode === 'mask') {
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    ctx.fillRect(...R(live));
+  }
+  const c = live && scanMode === 'crop' ? live : scanCrop;
+  if (c) {
+    const [x, y, w, h] = R(c), W = scanCv.width, H = scanCv.height;
+    ctx.fillStyle = 'rgba(0,0,0,.45)'; // 範囲の外を暗くする
+    ctx.fillRect(0, 0, W, y);
+    ctx.fillRect(0, y + h, W, H - y - h);
+    ctx.fillRect(0, y, x, h);
+    ctx.fillRect(x + w, y, W - x - w, h);
+    ctx.strokeStyle = '#ffd43b';
+    ctx.lineWidth = Math.max(2, W / 250);
+    ctx.strokeRect(x, y, w, h);
+  }
+}
+
+scanCv.addEventListener('pointerdown', e => {
+  if (!scanImg) return;
+  e.preventDefault();
+  scanCv.setPointerCapture(e.pointerId);
+  const p = scanPt(e);
+  scanDrag = { a: p, b: p };
+});
+scanCv.addEventListener('pointermove', e => {
+  if (!scanDrag) return;
+  scanDrag.b = scanPt(e);
+  drawScan();
+});
+scanCv.addEventListener('pointerup', () => {
+  if (!scanDrag) return;
+  const r = rectOf(scanDrag.a, scanDrag.b);
+  scanDrag = null;
+  const min = Math.max(scanImg.width, scanImg.height) / 40; // 小さすぎるのはタップの誤爆として無視
+  if (r.w >= min && r.h >= min) {
+    scanHist.push({ crop: scanCrop, masks: scanMasks.slice() });
+    if (scanMode === 'crop') scanCrop = r; else scanMasks.push(r);
+  }
+  drawScan();
+});
+scanCv.addEventListener('pointercancel', () => { scanDrag = null; drawScan(); });
+
+$('#scanUndo').onclick = () => {
+  const h = scanHist.pop();
+  if (!h) return;
+  scanCrop = h.crop; scanMasks = h.masks;
+  drawScan();
+};
+$('#scanReset').onclick = () => {
+  if (!scanCrop && !scanMasks.length) return;
+  scanHist.push({ crop: scanCrop, masks: scanMasks.slice() });
+  scanCrop = null; scanMasks = [];
+  drawScan();
+};
+
+// 選んだ範囲だけ切り出して、塗りつぶしを焼き込んだ画像にする
+function scanToBase64(max = 1568) {
+  const r = scanCrop || { x: 0, y: 0, w: scanImg.width, h: scanImg.height };
+  const s = Math.min(1, max / Math.max(r.w, r.h));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(r.w * s));
+  cv.height = Math.max(1, Math.round(r.h * s));
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(scanImg, r.x, r.y, r.w, r.h, 0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#000';
+  for (const m of scanMasks) ctx.fillRect((m.x - r.x) * s, (m.y - r.y) * s, m.w * s, m.h * s);
+  return cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+}
+
+$('#scanRun').onclick = async () => {
+  if (scanRunning || !scanImg) return;
+  const st = $('#scanStatus');
+  scanRunning = true;
+  $('#scanRun').disabled = true;
+  st.textContent = `読み取り中…（${PROVIDERS[state.provider].label}）`;
+  try {
+    const txt = await callVision(scanToBase64(), PAY_PROMPT, st);
+    const s = txt.indexOf('{'), e = txt.lastIndexOf('}');
+    if (s < 0 || e < s) throw new Error('結果がうまく読めなかった。範囲を広げるか、別のモデルで試してみて');
+    const d = JSON.parse(txt.slice(s, e + 1));
+    const got = [];
+    if (isYmd(d.payDate)) { $('#inDate').value = d.payDate; got.push('支給日'); }
+    if (typeof d.month === 'string' && /^\d{4}-\d{2}$/.test(d.month)) { $('#inMonth').value = d.month; got.push('何月分'); }
+    const g = toYen(d.gross), n = toYen(d.net);
+    if (g != null) { $('#inGross').value = g; got.push('総支給'); }
+    if (n != null) { $('#inNet').value = n; got.push('手取り'); }
+    st.textContent = got.length
+      ? `${got.join('・')}を読み取ったよ。下の欄を確認して「${$('#inSave').textContent}」を押してね`
+      : '金額が見つからなかった。範囲を変えてもう一回試してみて';
+  } catch (err) {
+    st.textContent = 'エラー: ' + friendlyError(err);
+  } finally {
+    scanRunning = false;
+    $('#scanRun').disabled = false;
+  }
 };
 
 /* ===== 「元に戻す」表示 ===== */

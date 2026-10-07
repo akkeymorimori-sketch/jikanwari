@@ -18,6 +18,7 @@
   <div class="hbtns">
     <button id="importBtn">画像読込</button>
     <button id="calBtn">カレンダー</button>
+    <button id="incomeBtn">収入</button>
     <button id="termBtn">学期</button>
     <button id="settingsBtn">設定</button>
   </div>
@@ -272,6 +273,80 @@
           <button id="evSave" class="primary">変更を保存</button>
         </div>
       </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 収入 -->
+<dialog id="incomeDlg">
+  <div class="dlg">
+    <div class="dlgHead">
+      <h2 tabindex="-1" autofocus>収入</h2>
+      <button id="inX" class="x big" aria-label="閉じる">×</button>
+    </div>
+    <div class="row calNav">
+      <button id="inPrev" aria-label="前の年">‹</button>
+      <b id="inYear"></b>
+      <button id="inNext" aria-label="次の年">›</button>
+    </div>
+    <div id="inSummary"></div>
+    <div class="row">
+      <span class="hint lbl">上限</span>
+      <input id="inLimit" type="number" min="0" inputmode="numeric" placeholder="空でもOK" aria-label="年収の上限ライン">
+      <span class="hint">円</span>
+    </div>
+    <p class="hint">扶養などのラインは人によって違うよ。親や学校に確認した金額を入れてね。年収は支給日の年で数えることが多いから、ここも支給日で集計してる</p>
+    <table id="inMonths" class="inTable"></table>
+
+    <h3>記録</h3>
+    <ul id="inList"></ul>
+
+    <h3 id="inHead">収入を追加</h3>
+    <details class="sec" id="inScan">
+      <summary>給与明細の写真から読み取る</summary>
+      <p class="hint" id="scanNote"></p>
+      <input type="file" id="scanFile" accept="image/*">
+      <div id="scanBox" hidden>
+        <div class="seg">
+          <button id="modeCrop">範囲を選ぶ</button>
+          <button id="modeMask">塗りつぶす</button>
+        </div>
+        <p class="hint" id="scanHint"></p>
+        <canvas id="scanCv"></canvas>
+        <div class="row end">
+          <button id="scanUndo">1つ戻す</button>
+          <button id="scanReset">やり直す</button>
+          <button id="scanRun" class="primary">読み取る</button>
+        </div>
+      </div>
+      <p class="hint" id="scanStatus"></p>
+    </details>
+    <div class="row">
+      <span class="hint lbl">支給日</span>
+      <input type="date" id="inDate" aria-label="支給日">
+    </div>
+    <div class="row">
+      <span class="hint lbl">何月分</span>
+      <input type="month" id="inMonth" aria-label="何月分（任意）">
+    </div>
+    <div class="row">
+      <span class="hint lbl">バイト先</span>
+      <input id="inJob" autocomplete="off" placeholder="例: カフェ" aria-label="バイト先">
+    </div>
+    <div id="inJobChips" class="chips"></div>
+    <div class="row">
+      <span class="hint lbl">総支給</span>
+      <input type="number" id="inGross" min="0" inputmode="numeric" aria-label="総支給額">
+      <span class="hint">円</span>
+    </div>
+    <div class="row">
+      <span class="hint lbl">手取り</span>
+      <input type="number" id="inNet" min="0" inputmode="numeric" aria-label="手取り（差引支給額）">
+      <span class="hint">円</span>
+    </div>
+    <div class="row end">
+      <button id="inCancel" hidden>やめる</button>
+      <button id="inSave" class="primary">追加</button>
     </div>
   </div>
 </dialog>

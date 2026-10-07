@@ -341,3 +341,40 @@ details.sec > a, #aiBox > a { display: block; }
   padding: 8px 8px 8px 14px; border-radius: 8px;
 }
 #toast button { background: none; border: none; color: var(--toast-link); font-weight: bold; }
+/* ===== 収入 ===== */
+@media (max-width: 480px) {
+  #termSelect { min-width: 7em; }      /* ボタンが増えても学期の欄がつぶれないように */
+  .hbtns button { padding: 6px 8px; }
+}
+.lbl { width: 4.5em; }
+.inTotal { margin: 0; font-size: 14px; }
+.inTotal b { font-size: 20px; margin: 0 4px; }
+.inTotal small { color: var(--sub); font-size: 13px; margin-left: 6px; }
+.inLeft { margin: 4px 0 0; font-size: 14px; }
+.inLeft.over { color: var(--over); font-weight: bold; }
+.bar { height: 8px; border-radius: 4px; background: var(--line-soft); overflow: hidden; margin-top: 6px; }
+.bar i { display: block; height: 100%; background: var(--ok); }
+.bar.warn i { background: var(--soon); }
+.bar.over i { background: var(--over); }
+.inTable { font-size: 13px; }
+.inTable th, .inTable td { padding: 3px 4px; text-align: right; border-bottom: 1px solid var(--line-soft); }
+.inTable th:first-child, .inTable td:first-child { text-align: left; }
+.inTable th { color: var(--sub); font-weight: normal; }
+.inTable tr.empty td { color: var(--muted); }
+.evText.inRow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.inAmt { margin-left: auto; white-space: nowrap; }
+.inAmt small { color: var(--sub); }
+#inList li.editing { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 6px; }
+
+/* 明細の範囲選択 */
+#scanBox { display: flex; flex-direction: column; gap: 8px; }
+.seg { display: flex; }
+.seg button { flex: 1; border-radius: 0; }
+.seg button:first-child { border-radius: 6px 0 0 6px; }
+.seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.seg button.on { background: var(--accent-strong); color: var(--on-accent); border-color: var(--accent-strong); }
+#scanCv {
+  display: block; margin: 0 auto; border-radius: 6px;
+  max-width: 100%; max-height: 60vh; width: auto; height: auto;
+  touch-action: none; /* なぞってる間に画面がスクロールしないように */
+}
