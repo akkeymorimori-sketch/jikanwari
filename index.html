@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=15">
+<link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
 <header>
@@ -139,7 +139,7 @@
   </div>
 </dialog>
 
-<!-- 学期・休み・振替 -->
+<!-- 学期・休み・振替・共有 -->
 <dialog id="termDlg">
   <div class="dlg">
     <div class="dlgHead">
@@ -194,6 +194,32 @@
         <button id="termCreate" class="primary">作成して切り替え</button>
       </div>
     </details>
+
+    <details class="sec" id="shareSec">
+      <summary>時間割を共有</summary>
+      <p class="hint" id="shareInfo"></p>
+      <label class="inline"><input type="checkbox" id="shareItems"> 「毎回」の持ち物も入れる</label>
+      <label class="inline"><input type="checkbox" id="shareOff"> 授業がない日・曜日の振替も入れる</label>
+      <p class="hint">先生の一言・課題・欠席・バイトなどの予定は送らないよ</p>
+      <div class="row end">
+        <button id="shareSend" class="primary">共有コードを送る</button>
+      </div>
+
+      <h3>受け取る</h3>
+      <textarea id="shareIn" rows="3" placeholder="もらったメッセージを丸ごと貼り付け" aria-label="共有コード"></textarea>
+      <div class="row end">
+        <button id="shareRead">読み込む</button>
+      </div>
+      <div id="sharePreview" hidden>
+        <p class="hint" id="shareSum"></p>
+        <ul id="shareList"></ul>
+        <label class="inline" id="shareTimesBox"><input type="checkbox" id="shareTimes"> 時限の時刻も送り主に合わせる</label>
+        <div class="row end">
+          <button id="shareAdd">今の学期に追加</button>
+          <button id="shareNew" class="primary">新しい学期として追加</button>
+        </div>
+      </div>
+    </details>
   </div>
 </dialog>
 
@@ -225,16 +251,28 @@
         <option value="job">バイト</option>
         <option value="other">その他</option>
       </select>
-      <input id="evTitle" list="evSuggest" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定の名前">
+      <input id="evTitle" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定のタイトル">
     </div>
+    <div id="evChips" class="chips"></div>
     <div class="row">
       <input type="time" id="evStart" aria-label="開始時刻">
       <span class="hint">〜</span>
       <input type="time" id="evEnd" aria-label="終了時刻">
       <button id="evAdd">追加</button>
     </div>
-    <label class="inline"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
-    <datalist id="evSuggest"></datalist>
+    <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
+    <div id="evEditBox" hidden>
+      <div class="row">
+        <select id="evScope" aria-label="変更する範囲"></select>
+      </div>
+      <div class="row split">
+        <button id="evDel" class="danger">削除</button>
+        <div class="row">
+          <button id="evCancel">やめる</button>
+          <button id="evSave" class="primary">変更を保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </dialog>
 
@@ -326,6 +364,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

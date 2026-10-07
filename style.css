@@ -252,6 +252,11 @@ details.sec > a, #aiBox > a { display: block; }
 .termBox { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .termBox .row > span, .termBox .row > button { flex: none; }
 
+/* 共有 */
+#sharePreview { display: flex; flex-direction: column; gap: 8px; }
+#shareList { max-height: 40vh; overflow-y: auto; border: 1px solid var(--line-soft); border-radius: 6px; padding: 0 8px; }
+#shareList li:last-child { border-bottom: none; }
+
 /* 復元ボタン（ファイル選択を隠してボタンに見せる） */
 .fileBtn {
   display: inline-block; flex: none; font-size: 14px; padding: 6px 10px;
@@ -305,6 +310,18 @@ details.sec > a, #aiBox > a { display: block; }
 .more { font-size: 10px; color: var(--sub); }
 .calLegend { display: flex; gap: 4px; flex-wrap: wrap; }
 .calLegend .ev { display: inline-block; padding: 0 5px; }
+
+/* 予定の候補ボタン・変更 */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips:empty { display: none; }
+.chip { padding: 4px 10px; border-radius: 999px; font-size: 14px; }
+.chip small { opacity: .75; }
+.evText {
+  flex: 1; text-align: left; background: none; border: 0;
+  padding: 4px 0; color: inherit; font: inherit;
+}
+#dayList li.editing { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 6px; }
+#evEditBox { display: flex; flex-direction: column; gap: 8px; }
 
 /* ===== アイコンの色リンク ===== */
 .iconLinks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }

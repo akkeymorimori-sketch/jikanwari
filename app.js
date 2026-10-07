@@ -487,7 +487,8 @@ function renderNow() {
   const el = $('#nowCard'), now = new Date(), t = term();
   if (!courses().length) {
     const ocr = state.keys[state.provider] ? '上の「画像読込」から時間割の画像を読み込むこともできるよ。' : '';
-    el.innerHTML = '<h2>はじめに</h2><p class="muted">下の時間割の空いてるマスをタップすると、授業を追加できるよ。' + ocr + '</p>';
+    el.innerHTML = '<h2>はじめに</h2><p class="muted">下の時間割の空いてるマスをタップすると、授業を追加できるよ。' + ocr +
+      '友達から共有コードをもらったら、「学期」→「時間割を共有」に貼り付けてね。</p>';
     return;
   }
 
@@ -1082,6 +1083,7 @@ let calMulti = false;          // 複数日選択モード
 const calPicks = new Set();    // 選んだ日（月をまたいでも残る）
 const EV_PRESET_MAX = 30;
 const EV_LABEL = { job: 'バイト', other: '予定' };
+let evEditId = null;           // 変更中の予定
 
 function eventsOn(k) {
   return state.events.filter(e => e.date === k)
@@ -1158,15 +1160,19 @@ function renderDay() {
     `<li><label><input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''}>` +
     `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span></label><span class="from">${esc(nm(c))}・締切</span></li>`);
   for (const e of eventsOn(k)) rows.push(
-    `<li><span><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</span>` +
+    `<li class="${e.id === evEditId ? 'editing' : ''}">` +
+    `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</button>` +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   $('#dayList').innerHTML = rows.join('') || '<li class="muted">なし</li>';
 }
 
 const EV_ADD_TEXT = $('#evAdd').textContent;
 
+// 予定の候補（タップすると名前・種類・時刻が入る）
 function renderEvSuggest() {
-  $('#evSuggest').innerHTML = state.evPresets.map(p => `<option value="${esc(p.title)}">`).join('');
+  $('#evChips').innerHTML = state.evPresets.slice(0, 10).map((p, i) =>
+    `<button type="button" class="chip" data-preset="${i}">${esc(p.title)}` +
+    (p.start ? ` <small>${esc(evTime(p))}</small>` : '') + '</button>').join('');
 }
 
 function renderPicks(msg = '') {
@@ -1181,6 +1187,7 @@ function renderPicks(msg = '') {
     ? `${ds.length}日選択中：${ds.map(k => md(parseYmd(k))).join('・')}`
     : 'カレンダーの日付をタップして選んでね';
   $('#calPickInfo').textContent = msg || info;
+  syncEvForm();
 }
 
 $('#calBtn').onclick = () => {
@@ -1190,6 +1197,7 @@ $('#calBtn').onclick = () => {
   for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
   $('#evWeekly').checked = false;
   calMulti = false; calPicks.clear();
+  evEditId = null;
   renderEvSuggest();
   renderCal(); renderDay(); renderPicks();
   $('#calDlg').showModal();
@@ -1214,6 +1222,7 @@ $('#calGrid').addEventListener('click', e => {
     return;
   }
   calSel = d.dataset.date;
+  if (evEditId) endEvEdit();
   const sd = parseYmd(calSel);
   if (sd.getMonth() !== calMonth.getMonth()) calMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
   renderCal(); renderDay();
@@ -1234,9 +1243,12 @@ $('#dayList').addEventListener('change', e => {
   save(); renderCal(); renderDay();
 });
 $('#dayList').addEventListener('click', e => {
+  const ed = e.target.closest('[data-evedit]');
+  if (ed) return startEvEdit(ed.dataset.evedit);
   const id = e.target.dataset.evdel;
   if (!id || !confirm('この予定を消す？')) return;
   state.events = state.events.filter(x => x.id !== id);
+  if (id === evEditId) endEvEdit();
   save(); renderCal(); renderDay();
 });
 
@@ -1248,6 +1260,11 @@ $('#evTitle').addEventListener('input', e => {
   $('#evStart').value = p.start;
   $('#evEnd').value = p.end;
 });
+
+function rememberPreset(p) {
+  if (!p.title) return;
+  state.evPresets = [p, ...state.evPresets.filter(x => x.title !== p.title)].slice(0, EV_PRESET_MAX);
+}
 
 $('#evAdd').onclick = () => {
   const kind = $('#evKind').value;
@@ -1271,10 +1288,7 @@ $('#evAdd').onclick = () => {
     state.events.push({ id: uid(), date, kind, title, start, end });
     added++;
   }
-  if (title) {
-    state.evPresets = [{ title, kind, start, end }, ...state.evPresets.filter(p => p.title !== title)]
-      .slice(0, EV_PRESET_MAX);
-  }
+  rememberPreset({ title, kind, start, end });
 
   const msg = skipped
     ? `${added}日に追加したよ（${skipped}日はもう入ってたので飛ばした）`
@@ -1284,6 +1298,99 @@ $('#evAdd').onclick = () => {
   calMulti = false; calPicks.clear();
   save(); renderEvSuggest(); renderCal(); renderDay(); renderPicks(msg);
 };
+
+/* ===== 予定の候補・変更 ===== */
+$('#evChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-preset]');
+  const p = b && state.evPresets[+b.dataset.preset];
+  if (!p) return;
+  $('#evKind').value = p.kind;
+  $('#evTitle').value = p.title;
+  $('#evStart').value = p.start;
+  $('#evEnd').value = p.end;
+});
+
+// 種類・名前・時刻が全部同じなら「同じ予定」
+const sameEv = (a, b) =>
+  a.kind === b.kind && a.title === b.title && a.start === b.start && a.end === b.end;
+
+function evTargets(scope) {
+  const base = state.events.find(x => x.id === evEditId);
+  if (!base) return [];
+  if (scope === 'one') return [base];
+  return state.events.filter(e => sameEv(e, base) && (
+    scope === 'all' ||
+    (scope === 'after' && e.date >= base.date) ||
+    (scope === 'picks' && (calPicks.has(e.date) || e.id === base.id))));
+}
+
+function renderEvScope() {
+  const sel = $('#evScope'), v = sel.value;
+  const opts = [['one', 'この日だけ'], ['after', 'この日以降の同じ予定'], ['all', '同じ予定ぜんぶ']];
+  if (calMulti && calPicks.size) opts.push(['picks', '選んだ日の同じ予定']);
+  sel.innerHTML = opts.map(([k, l]) =>
+    `<option value="${k}">${l}（${evTargets(k).length}件）</option>`).join('');
+  sel.value = opts.some(o => o[0] === v) ? v : 'one';
+}
+
+function syncEvForm() {
+  const ed = !!evEditId;
+  $('#evAdd').hidden = ed;
+  $('#evWeeklyBox').hidden = ed;
+  $('#evEditBox').hidden = !ed;
+  if (ed) {
+    $('#evHead').textContent = '予定を変更';
+    renderEvScope();
+  }
+}
+
+function startEvEdit(id) {
+  const e = state.events.find(x => x.id === id);
+  if (!e) return;
+  evEditId = id;
+  $('#evKind').value = e.kind;
+  $('#evTitle').value = e.title;
+  $('#evStart').value = e.start;
+  $('#evEnd').value = e.end;
+  $('#evScope').value = 'one';
+  renderDay(); renderPicks();
+  $('#evHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function endEvEdit() {
+  evEditId = null;
+  for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
+  renderDay(); renderPicks();
+}
+
+$('#evSave').onclick = () => {
+  const ts = evTargets($('#evScope').value);
+  if (!ts.length) return endEvEdit();
+  const v = {
+    kind: $('#evKind').value,
+    title: $('#evTitle').value.trim(),
+    start: $('#evStart').value,
+    end: $('#evEnd').value
+  };
+  for (const e of ts) Object.assign(e, v);
+  rememberPreset(v);
+  save(); renderEvSuggest(); renderCal();
+  endEvEdit();
+  if (ts.length > 1) renderPicks(`${ts.length}件まとめて変更したよ`);
+};
+
+$('#evDel').onclick = () => {
+  const ts = evTargets($('#evScope').value);
+  if (!ts.length) return endEvEdit();
+  if (!confirm(ts.length > 1 ? `${ts.length}件の予定をまとめて消す？` : 'この予定を消す？')) return;
+  const ids = new Set(ts.map(e => e.id));
+  state.events = state.events.filter(e => !ids.has(e.id));
+  save(); renderCal();
+  endEvEdit();
+  if (ts.length > 1) renderPicks(`${ts.length}件消したよ`);
+};
+
+$('#evCancel').onclick = endEvEdit;
 
 /* ===== ダイアログ中は後ろの画面を止める ===== */
 let lockY = 0;
@@ -1563,6 +1670,12 @@ function openTermDlg(toNew = false) {
   for (const id of ['offFrom', 'offTo', 'offNote', 'swapDate', 'newTermStart', 'newTermEnd']) $('#' + id).value = '';
   $('#newTermName').value = nextTermName(term().name);
   $('#newTermCopy').checked = false;
+  // 共有
+  $('#shareItems').checked = false;
+  $('#shareOff').checked = true;
+  $('#shareIn').value = '';
+  shareData = null;
+  renderSharePreview();
   document.querySelectorAll('#termDlg details').forEach(d => { d.open = false; });
   $('#termDlg').showModal();
   $('#termDlg').scrollTop = 0;
@@ -1880,6 +1993,225 @@ $('#restoreFile').onchange = async e => {
   }
 };
 
+/* ===== 時間割の共有 ===== */
+const SHARE_TAG = 'JKWR1';
+let shareCode = '';   // 送る用のコード（先に作っておく）
+let shareData = null; // 受け取って読み込んだ中身
+let shareSeq = 0;
+
+const b64u = bytes => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const unb64u = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+
+// 圧縮できれば z、できなければそのまま p
+async function packText(str) {
+  const bytes = new TextEncoder().encode(str);
+  if (typeof CompressionStream === 'function') {
+    try {
+      const st = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+      return 'z.' + b64u(new Uint8Array(await new Response(st).arrayBuffer()));
+    } catch {}
+  }
+  return 'p.' + b64u(bytes);
+}
+async function unpackText(mode, body) {
+  const bytes = unb64u(body);
+  if (mode === 'p') return new TextDecoder().decode(bytes);
+  if (typeof DecompressionStream !== 'function') throw new Error('old');
+  const st = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return await new Response(st).text();
+}
+
+// 送る中身（メモ・課題・欠席・予定は入れない）
+function shareJSON() {
+  const t = term(), withItems = $('#shareItems').checked;
+  const d = {
+    v: 1, name: t.name, start: t.start, end: t.end, p: state.periods,
+    times: state.times.map(x => [x.start, x.end]),
+    c: t.courses.filter(c => c.name.trim()).map(c => [
+      c.day, c.period, c.name, c.short, c.teacher, c.room, c.syllabus, c.from, c.to,
+      withItems ? c.items.filter(i => i.type === 'always').map(i => i.text) : []
+    ])
+  };
+  if ($('#shareOff').checked) {
+    d.off = t.offDays.map(o => [o.from, o.to, o.note]);
+    d.sw = t.swaps.map(x => [x.date, x.asDay]);
+  }
+  return JSON.stringify(d);
+}
+
+// iPhoneは押した瞬間に共有シートを出さないと止められるので、コードは先に作っておく
+async function renderShareCode() {
+  const n = courses().filter(c => c.name.trim()).length;
+  const seq = ++shareSeq;
+  $('#shareSend').disabled = true;
+  shareCode = '';
+  $('#shareInfo').textContent = n ? `「${term().name}」の授業${n}件を送るよ` : '送れる授業がまだないよ';
+  if (!n) return;
+  const code = await packText(shareJSON());
+  if (seq !== shareSeq) return;
+  shareCode = code;
+  $('#shareSend').disabled = false;
+}
+
+function shareText() {
+  const url = location.origin + location.pathname;
+  return `時間割メモの共有コード（${term().name}）\n` +
+    `アプリの「学期」→「時間割を共有」に、このメッセージを丸ごと貼り付けてね\n${url}\n\n` +
+    `${SHARE_TAG}.${shareCode}`;
+}
+
+function copyShare(text) {
+  const manual = () => prompt('これをコピーして送ってね', text);
+  if (!navigator.clipboard) return manual();
+  navigator.clipboard.writeText(text).then(
+    () => { $('#shareInfo').textContent = 'コピーしたよ。LINEなどに貼り付けて送ってね'; },
+    manual);
+}
+
+$('#shareSec').addEventListener('toggle', e => { if (e.target.open) renderShareCode(); });
+$('#shareItems').onchange = renderShareCode;
+$('#shareOff').onchange = renderShareCode;
+
+$('#shareSend').onclick = () => {
+  if (!shareCode) return;
+  const text = shareText();
+  if (navigator.share) {
+    navigator.share({ text }).catch(e => { if (e.name !== 'AbortError') copyShare(text); });
+  } else {
+    copyShare(text);
+  }
+};
+
+// 受け取ったデータの中身を確かめる
+function parseShare(d) {
+  if (!d || d.v !== 1 || !Array.isArray(d.c)) throw new Error('bad');
+  const str = v => typeof v === 'string' ? v.slice(0, 300) : '';
+  const hhmm = v => typeof v === 'string' && /^\d{2}:\d{2}$/.test(v) ? v : '';
+  const okDay = v => Number.isInteger(v) && v >= -1 && v <= 5;
+  const okPeriod = v => Number.isInteger(v) && v >= 1 && v <= 10;
+
+  const cs = d.c.slice(0, 200).filter(Array.isArray).map(
+    ([day, period, name, short, teacher, room, syllabus, from, to, items]) => ({
+      day: okDay(day) ? day : 0,
+      period: okPeriod(period) ? period : 1,
+      name: str(name).trim(), short: str(short), teacher: str(teacher), room: str(room),
+      syllabus: isHttp(syllabus) ? str(syllabus) : '',
+      from: isYmd(from) ? from : '', to: isYmd(to) ? to : '',
+      items: Array.isArray(items) ? items.map(str).map(s => s.trim()).filter(Boolean).slice(0, 30) : []
+    })).filter(c => c.name);
+  if (!cs.length) throw new Error('bad');
+
+  return {
+    name: str(d.name).trim() || defaultTermName(),
+    start: isYmd(d.start) ? d.start : '',
+    end: isYmd(d.end) ? d.end : '',
+    periods: clampPeriods(d.p),
+    times: Array.isArray(d.times) && d.times.length === 10
+      ? d.times.map(x => ({ start: hhmm(x?.[0]), end: hhmm(x?.[1]) })) : null,
+    courses: cs,
+    off: Array.isArray(d.off)
+      ? d.off.filter(o => Array.isArray(o) && isYmd(o[0]))
+          .map(([from, to, note]) => ({ from, to: isYmd(to) && to > from ? to : '', note: str(note) }))
+      : [],
+    swaps: Array.isArray(d.sw)
+      ? d.sw.filter(x => Array.isArray(x) && isYmd(x[0]) && Number.isInteger(x[1]) && x[1] >= 0 && x[1] <= 5)
+          .map(([date, asDay]) => ({ date, asDay }))
+      : []
+  };
+}
+
+$('#shareRead').onclick = async () => {
+  const raw = $('#shareIn').value.replace(/\s+/g, '');
+  const m = raw.match(new RegExp(`${SHARE_TAG}\\.([zp])\\.([A-Za-z0-9_-]+)`));
+  if (!m) return alert('共有コードが見つからなかった。もらったメッセージを丸ごと貼り付けてね');
+  try {
+    shareData = parseShare(JSON.parse(await unpackText(m[1], m[2])));
+  } catch (e) {
+    shareData = null;
+    alert(e.message === 'old'
+      ? 'このブラウザだと読めなかった。iOSを新しくしてみて'
+      : 'コードが途中で切れてるか、壊れてるみたい。もう一回送ってもらってね');
+  }
+  renderSharePreview();
+};
+
+function renderSharePreview() {
+  const d = shareData;
+  $('#sharePreview').hidden = !d;
+  if (!d) return;
+  const list = d.courses.slice().sort((a, b) =>
+    (a.day < 0) - (b.day < 0) || a.day - b.day || a.period - b.period);
+  const nItems = d.courses.reduce((n, c) => n + c.items.length, 0);
+  $('#shareSum').textContent = `「${d.name}」の授業${d.courses.length}件` +
+    (d.off.length ? `・休み${d.off.length}件` : '') +
+    (d.swaps.length ? `・振替${d.swaps.length}件` : '') +
+    (nItems ? `・持ち物${nItems}件` : '');
+  $('#shareList').innerHTML = list.map(c =>
+    `<li><span><span class="tag">${c.day < 0 ? '集中' : DAYS[c.day] + c.period}</span>${esc(c.short.trim() || c.name)}</span>` +
+    `<span class="from">${esc([c.teacher, c.room].filter(Boolean).join('・'))}</span></li>`).join('');
+  const diff = !!d.times && d.times.some((x, i) =>
+    x.start !== state.times[i].start || x.end !== state.times[i].end);
+  $('#shareTimesBox').hidden = !diff;
+  $('#shareTimes').checked = false;
+}
+
+const fromShare = c => newCourse(c.day, c.period, {
+  name: c.name, short: c.short, teacher: c.teacher, room: c.room,
+  syllabus: c.syllabus, from: c.from, to: c.to,
+  items: c.items.map(text => ({ id: uid(), text, type: 'always', added: Date.now(), until: null }))
+});
+
+function applyShareCommon(d) {
+  if (!$('#shareTimesBox').hidden && $('#shareTimes').checked) state.times = structuredClone(d.times);
+  state.periods = Math.max(state.periods, d.periods, ...d.courses.filter(c => c.day >= 0).map(c => c.period));
+  if (d.courses.some(c => c.day === 5)) state.showSat = true;
+}
+
+function finishShare(msg) {
+  shareData = null;
+  $('#shareIn').value = '';
+  scheduleChanged();
+  $('#termDlg').close();
+  toast(msg);
+}
+
+$('#shareNew').onclick = () => {
+  const d = shareData;
+  if (!d) return;
+  if (!confirm(`「${d.name}」を新しい学期として追加して、切り替える？`)) return;
+  const t = newTerm(d.name, d.start, d.end, d.courses.map(fromShare));
+  t.offDays = d.off.map(o => ({ id: uid(), ...o }));
+  t.swaps = d.swaps.map(x => ({ id: uid(), ...x }));
+  state.terms.push(t);
+  state.currentTermId = t.id;
+  applyShareCommon(d);
+  finishShare(`「${d.name}」を追加したよ`);
+};
+
+$('#shareAdd').onclick = () => {
+  const d = shareData;
+  if (!d) return;
+  const t = term();
+  // 授業名・曜日・時限が同じ授業は飛ばす
+  const fresh = d.courses.filter(c =>
+    !t.courses.some(x => x.name === c.name && x.day === c.day && x.period === c.period));
+  const offs = d.off.filter(o => !t.offDays.some(x => x.from === o.from && (x.to || '') === o.to));
+  const sws = d.swaps.filter(x => !t.swaps.some(y => y.date === x.date));
+  if (!fresh.length && !offs.length && !sws.length) return alert('全部もう入ってたよ');
+  const skip = d.courses.length - fresh.length;
+  if (!confirm(`「${t.name}」に授業${fresh.length}件を追加する？` +
+    (skip ? `\n（同じ授業${skip}件は飛ばすよ）` : ''))) return;
+  t.courses.push(...fresh.map(fromShare));
+  t.offDays.push(...offs.map(o => ({ id: uid(), ...o })));
+  t.swaps.push(...sws.map(x => ({ id: uid(), ...x })));
+  applyShareCommon(d);
+  finishShare(`授業${fresh.length}件を追加したよ`);
+};
+
 /* ===== 「元に戻す」表示 ===== */
 let toastTimer = null, toastUndo = null;
 function toast(msg, undo) {
@@ -1888,31 +2220,9 @@ function toast(msg, undo) {
   $('#toastUndo').hidden = !undo;
   $('#toast').hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000);
-}
-$('#toastUndo').onclick = () => {
-  toastUndo?.();
-  toastUndo = null;
-  $('#toast').hidden = true;
-};
+  toast
+Timer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000); } $('#toastUndo').onclick = () => { toastUndo?.(); toastUndo = null; $('#toast').hidden = true; };
 
-/* ===== 起動 ===== */
-state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
-applyTheme(state.theme);
-recomputeUntil();
-prune();
-save();
-renderAll();
-if (brokenSaved) alert('保存データが壊れてて読めなかった。中身は消さずに別名で残してあるよ');
-navigator.storage?.persist?.().catch(() => {});
+/* ===== 起動 ===== */ state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY))); applyTheme(state.theme); recomputeUntil(); prune(); save(); renderAll(); if (brokenSaved) alert('保存データが壊れてて読めなかった。中身は消さずに別名で残してあるよ'); navigator.storage?.persist?.().catch(() => {});
 
-// ダイアログが開いてるときと、タップした直後は自動更新しない
-let lastTouch = 0;
-document.addEventListener('pointerdown', () => { lastTouch = Date.now(); }, true);
-function tick() {
-  if (document.querySelector('dialog[open]')) return;
-  if (Date.now() - lastTouch < 3000) return;
-  prune(); renderAll();
-}
-setInterval(tick, 30000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+// ダイアログが開いてるときと、タップした直後は自動更新しない let lastTouch = 0; document.addEventListener('pointerdown', () => { lastTouch = Date.now(); }, true); function tick() { if (document.querySelector('dialog[open]')) return; if (Date.now() - lastTouch < 3000) return; prune(); renderAll(); } setInterval(tick, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
