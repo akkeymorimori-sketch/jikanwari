@@ -92,6 +92,9 @@ body {
   background: var(--bg);
   color: var(--text);
 }
+/* ダイアログ中は後ろの画面を固定 */
+body.lock { position: fixed; left: 0; right: 0; overflow: hidden; }
+
 header {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line);
@@ -200,9 +203,12 @@ li.soon .due { color: var(--soon); font-weight: bold; }
 dialog {
   border: none; border-radius: 10px; width: min(600px, 94vw); padding: 0;
   background: var(--surface); color: var(--text);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 dialog::backdrop { background: var(--backdrop); }
-.dlg { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.dlg { padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > * { flex: 1; }
 .row > button, .row > .narrow, .row > .inline, .row > .hint { flex: none; }
@@ -230,6 +236,12 @@ td input, td select { padding: 3px; font-size: 16px; }
 .dlgHead h2 { margin: 0; }
 .x.big { font-size: 22px; line-height: 1; padding: 4px 10px; }
 
+/* 授業詳細 */
+.row > input.short { flex: none; width: 7.5em; }
+/* 幅の狭いスマホでボタンが入りきらなければ2段にする */
+#cBtns { flex-wrap: wrap; gap: 6px; }
+#cBtns > .row { margin-left: auto; }
+
 /* 折りたたみ */
 details.sec, #aiBox { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 details.sec > summary, #aiBox > summary { font-weight: bold; font-size: 14px; cursor: pointer; }
@@ -239,6 +251,17 @@ details.sec > a, #aiBox > a { display: block; }
 /* 学期 */
 .termBox { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .termBox .row > span, .termBox .row > button { flex: none; }
+
+/* 復元ボタン（ファイル選択を隠してボタンに見せる） */
+.fileBtn {
+  display: inline-block; flex: none; font-size: 14px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.vh {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; overflow: hidden; pointer-events: none;
+}
 
 /* ===== カレンダー ===== */
 .calNav { justify-content: space-between; }
@@ -256,6 +279,13 @@ details.sec > a, #aiBox > a { display: block; }
 .cd.sel { background: var(--accent-soft); }
 .cd.today { outline: 2px solid var(--accent-strong); outline-offset: -2px; }
 .cd.due { box-shadow: inset 0 3px 0 var(--badge-task); }
+/* 複数日選択 */
+.cd.pick {
+  background: var(--accent-soft);
+  outline: 2px solid var(--accent-strong); outline-offset: -2px;
+}
+.cd.pick .dn::after { content: ' ✓'; color: var(--accent); }
+#calPickBox { margin-top: 4px; }
 .dn { font-size: 12px; font-weight: bold; }
 .dueMark {
   display: inline-block; margin-left: 2px; min-width: 14px; height: 14px;

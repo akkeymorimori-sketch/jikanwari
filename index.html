@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
 <header>
@@ -38,7 +38,10 @@
       <h2 tabindex="-1" autofocus>授業の詳細</h2>
       <button id="cX" class="x big" aria-label="閉じる">×</button>
     </div>
-    <input id="cName" placeholder="授業名" aria-label="授業名">
+    <div class="row">
+      <input id="cName" placeholder="授業名" aria-label="授業名">
+      <input id="cShort" class="short" placeholder="略名（任意）" aria-label="略名">
+    </div>
     <div class="row">
       <select id="cDay" aria-label="曜日"></select>
       <select id="cPeriod" aria-label="時限"></select>
@@ -106,9 +109,12 @@
     </div>
     <p class="hint" id="cSyllabusHint"></p>
 
-    <div class="row split">
+    <div class="row split" id="cBtns">
       <button id="cDelete" class="danger">授業を削除</button>
-      <button id="cClose" class="primary">閉じる</button>
+      <div class="row">
+        <button id="cCancel">キャンセル</button>
+        <button id="cClose" class="primary">保存して閉じる</button>
+      </div>
     </div>
   </div>
 </dialog>
@@ -207,17 +213,19 @@
     <p class="hint calLegend">
       <span class="ev task">課題</span><span class="ev job">バイト</span><span class="ev other">予定</span><span class="ev int">集中講義</span><span class="ev off">休み</span>
     </p>
+    <label class="inline" id="calPickBox"><input type="checkbox" id="calMulti"> 日付を複数選ぶ</label>
+    <p class="hint" id="calPickInfo"></p>
 
     <h3 id="dayTitle"></h3>
     <ul id="dayList"></ul>
 
-    <h3>この日に予定を追加</h3>
+    <h3 id="evHead">この日に予定を追加</h3>
     <div class="row">
       <select id="evKind" class="narrow" aria-label="種類">
         <option value="job">バイト</option>
         <option value="other">その他</option>
       </select>
-      <input id="evTitle" placeholder="例: カフェ（空でもOK）" aria-label="予定の名前">
+      <input id="evTitle" list="evSuggest" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定の名前">
     </div>
     <div class="row">
       <input type="time" id="evStart" aria-label="開始時刻">
@@ -226,6 +234,7 @@
       <button id="evAdd">追加</button>
     </div>
     <label class="inline"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
+    <datalist id="evSuggest"></datalist>
   </div>
 </dialog>
 
@@ -305,7 +314,7 @@
     <h3>バックアップ</h3>
     <div class="row">
       <button id="exportBtn">書き出し</button>
-      <label class="inline">復元 <input type="file" id="restoreFile" accept=".json"></label>
+      <label class="fileBtn">復元<input type="file" id="restoreFile" accept=".json" class="vh"></label>
     </div>
     <p class="hint" id="lastExport"></p>
 
@@ -317,6 +326,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

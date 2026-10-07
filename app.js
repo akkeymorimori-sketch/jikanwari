@@ -104,7 +104,7 @@ const newTerm = (name, start = '', end = '', courses = []) =>
 
 // day = -1 は集中講義
 const newCourse = (day, period, extra = {}) => ({
-  id: uid(), day, period, name: '', teacher: '', room: '', syllabus: '', from: '', to: '',
+  id: uid(), day, period, name: '', short: '', teacher: '', room: '', syllabus: '', from: '', to: '',
   items: [], memos: [], tasks: [], absences: [], maxAbsence: '', ...extra
 });
 
@@ -170,6 +170,19 @@ function normalize(s) {
     e.kind = e.kind === 'other' ? 'other' : 'job';
     e.title ??= ''; e.start ??= ''; e.end ??= '';
   }
+  // 予定の入力候補（名前・種類・時刻を覚える）
+  s.evPresets = Array.isArray(s.evPresets)
+    ? s.evPresets.filter(p => p && typeof p.title === 'string' && p.title).map(p => ({
+        title: p.title, kind: p.kind === 'other' ? 'other' : 'job', start: p.start || '', end: p.end || ''
+      }))
+    : [];
+  // 前から入ってる予定があれば、そこから候補を作る（初回だけ）
+  if (!s.evPresets.length) {
+    for (const e of [...s.events].sort((a, b) => b.date.localeCompare(a.date))) {
+      if (e.title && !s.evPresets.some(p => p.title === e.title))
+        s.evPresets.push({ title: e.title, kind: e.kind, start: e.start, end: e.end });
+    }
+  }
 
   delete s.icon;
   delete s.appName;
@@ -186,7 +199,7 @@ function normalize(s) {
     for (const x of t.swaps) x.id = fixId(x.id);
     for (const c of t.courses) {
       c.id = fixId(c.id);
-      c.name ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
+      c.name ??= ''; c.short ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
       c.from ??= ''; c.to ??= '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
       c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
@@ -222,6 +235,8 @@ function save() {
 const term = () => state.terms.find(t => t.id === state.currentTermId);
 const courses = () => term().courses;
 const modelOf = p => state.models[p] || PROVIDERS[p].model;
+// 一覧で使う名前（略名があれば略名）
+const nm = c => (c.short || '').trim() || c.name;
 
 /* ===== 日付・時刻の計算 ===== */
 function toMin(v) {
@@ -456,7 +471,7 @@ function upcoming(now) {
 function courseLine(x) {
   const its = itemsFor(x.c, x.start);
   return `<div class="nc" data-id="${x.c.id}">` +
-    `<b>${esc(x.c.name)}</b> <small>${esc(x.c.room)}</small>` +
+    `<b>${esc(nm(x.c))}</b> <small>${esc(x.c.room)}</small>` +
     (its.length ? `<div class="nc-items">持ち物：${its.map(i => esc(i.text)).join('、')}</div>` : '') +
     `</div>`;
 }
@@ -496,7 +511,7 @@ function renderNow() {
     } else {
       if (effDay(now, t) !== dayIndex(now)) h += `<p class="start">今日は${DAYS[effDay(now, t)]}曜の授業をやる日</p>`;
       const cc = cancelledOn(now, t);
-      if (cc.length) h += `<p class="start">今日休講：${cc.map(c => esc(c.name)).join('、')}</p>`;
+      if (cc.length) h += `<p class="start">今日休講：${cc.map(c => esc(nm(c))).join('、')}</p>`;
     }
   }
 
@@ -543,7 +558,7 @@ function packTarget(now) {
       continue;
     }
     const isToday = dayDiff(date, now) === 0;
-    for (const c of cancelledOn(date, t)) note(`${c.id}@${ymd(date)}`, `休講：${md(date)} ${c.name}`);
+    for (const c of cancelledOn(date, t)) note(`${c.id}@${ymd(date)}`, `休講：${md(date)} ${nm(c)}`);
     const cs = coursesOn(date, t).filter(c => !isToday || occurrence(c, date)?.start > now);
     if (cs.length) {
       const ed = effDay(date, t);
@@ -577,7 +592,7 @@ function renderPack() {
       const k = i.text.trim();
       if (!map.has(k)) map.set(k, { text: k, always: false, from: [] });
       const e = map.get(k);
-      if (!e.from.includes(c.name)) e.from.push(c.name);
+      if (!e.from.includes(nm(c))) e.from.push(nm(c));
       if (i.type === 'always') e.always = true;
     }
   }
@@ -588,7 +603,7 @@ function renderPack() {
   let title = diff === 0 ? `今日 ${md(t.date)}` : diff === 1 ? `明日 ${md(t.date)}` : md(t.date);
   if (t.swapped != null) title += `（${DAYS[t.swapped]}曜授業）`;
   if (t.first) title += '（授業初日）';
-  const names = t.cs.map(c => `${c.period}限 ${esc(c.name)}`).join('／');
+  const names = t.cs.map(c => `${c.period}限 ${esc(nm(c))}`).join('／');
   const noteHint = t.notes.length ? `<p class="hint">${t.notes.map(esc).join('、')}</p>` : '';
 
   el.innerHTML =
@@ -619,7 +634,7 @@ function renderTasks() {
     const st = dueState(t.due);
     return `<li class="${st.cls}"><label><input type="checkbox" data-task="${t.id}" data-cid="${c.id}">` +
       `<span>${esc(t.title)}</span></label>` +
-      `<span class="due" data-id="${c.id}">${esc(c.name)}・${st.label}</span></li>`;
+      `<span class="due" data-id="${c.id}">${esc(nm(c))}・${st.label}</span></li>`;
   }).join('') + '</ul>';
 }
 
@@ -642,7 +657,7 @@ function renderGrid() {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
           const a = absInfo(c);
-          return `<div class="course" data-id="${c.id}"><b>${esc(c.name)}</b><small>${esc(c.room)}</small><div>` +
+          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b><small>${esc(c.room)}</small><div>` +
             (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
             (nt ? `<span class="badge task">課題${nt}</span>` : '') +
             (a.left != null && a.left <= 1 ? `<span class="badge abs">欠席${a.n}/${a.max}</span>` : '') +
@@ -674,7 +689,7 @@ function renderIntensive() {
       ? '<div class="intList">' + list.map(c => {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
-          return `<div class="course" data-id="${c.id}"><b>${esc(c.name)}</b>` +
+          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b>` +
             `<span class="when">${rangeLabel(c)}</span><small>${esc(c.room)}</small><div>` +
             (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
             (nt ? `<span class="badge task">課題${nt}</span>` : '') +
@@ -764,6 +779,12 @@ $('#termSelect').onchange = e => {
 let currentId = null;
 const cur = () => courses().find(c => c.id === currentId);
 
+// キャンセル用：開いたときの授業と休講
+let courseBackup = null;
+function courseSnap(c, t = term()) {
+  return JSON.stringify({ c, cancels: t.cancels.filter(x => x.courseId === c.id) });
+}
+
 $('#cDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('') +
   '<option value="-1">集中講義</option>';
 $('#cPeriod').innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}限</option>`).join('');
@@ -786,7 +807,9 @@ function openCourse(id) {
   currentId = id;
   const c = cur();
   if (!c) return;
+  courseBackup = courseSnap(c);
   $('#cName').value = c.name;
+  $('#cShort').value = c.short;
   $('#cTeacher').value = c.teacher;
   $('#cRoom').value = c.room;
   $('#cSyllabus').value = c.syllabus;
@@ -859,7 +882,7 @@ function renderDetail() {
     || '<li class="muted">なし</li>';
 }
 
-for (const [id, key] of [['cName', 'name'], ['cTeacher', 'teacher'], ['cRoom', 'room']]) {
+for (const [id, key] of [['cName', 'name'], ['cShort', 'short'], ['cTeacher', 'teacher'], ['cRoom', 'room']]) {
   $('#' + id).addEventListener('input', e => {
     cur()[key] = e.target.value;
     save(); renderAll();
@@ -1023,14 +1046,31 @@ $('#cDelete').onclick = () => {
   removeCourse(cur());
   save(); renderAll(); $('#courseDlg').close();
 };
+
+// 変更があれば確認して、開く前の状態に戻す
+function closeCourse() {
+  const c = cur();
+  if (c && courseBackup && courseSnap(c) !== courseBackup) {
+    if (!confirm('変更を保存せずに閉じる？')) return;
+    const t = term(), b = JSON.parse(courseBackup);
+    const idx = t.courses.indexOf(c);
+    if (idx >= 0) t.courses[idx] = b.c;
+    t.cancels = t.cancels.filter(x => x.courseId !== c.id).concat(b.cancels);
+    scheduleChanged();
+  }
+  $('#courseDlg').close();
+}
+
 $('#cClose').onclick = () => $('#courseDlg').close();
-$('#cX').onclick = () => $('#courseDlg').close();
+$('#cX').onclick = closeCourse;
+$('#cCancel').onclick = closeCourse;
+$('#courseDlg').addEventListener('cancel', e => { e.preventDefault(); closeCourse(); }); // Escキー
 
 // 何も入ってない授業は閉じたときに消す
 $('#courseDlg').addEventListener('close', () => {
   const c = cur();
   if (!c) return;
-  const empty = !c.name.trim() && !c.teacher.trim() && !c.room.trim() && !c.syllabus && !c.from && !c.to &&
+  const empty = !c.name.trim() && !c.short.trim() && !c.teacher.trim() && !c.room.trim() && !c.syllabus && !c.from && !c.to &&
     !c.items.length && !c.memos.length && !c.tasks.length && !c.absences.length && c.maxAbsence === '';
   if (empty) removeCourse(c);
   save(); renderAll();
@@ -1038,6 +1078,9 @@ $('#courseDlg').addEventListener('close', () => {
 
 /* ===== カレンダー（月表示） ===== */
 let calMonth = null, calSel = '';
+let calMulti = false;          // 複数日選択モード
+const calPicks = new Set();    // 選んだ日（月をまたいでも残る）
+const EV_PRESET_MAX = 30;
 const EV_LABEL = { job: 'バイト', other: '予定' };
 
 function eventsOn(k) {
@@ -1086,12 +1129,12 @@ function renderCal() {
     // 課題をいちばん先に並べて、「+1」に隠れないようにする
     for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
-    for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(c.name || '集中講義')}</span>`);
+    for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
     for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
 
     const cls = ['cd', pending.length && 'due',
       date.getMonth() !== m && 'out', off && 'offday',
-      k === calSel && 'sel', k === today && 'today',
+      (calMulti ? calPicks.has(k) && 'pick' : k === calSel && 'sel'), k === today && 'today',
       n % 7 === 5 && 'sat', n % 7 === 6 && 'sun'].filter(Boolean).join(' ');
     h += `<div class="${cls}" data-date="${k}"><span class="dn">${date.getDate()}` +
       (pending.length ? `<i class="dueMark">${pending.length}</i>` : '') + '</span>' +
@@ -1108,16 +1151,36 @@ function renderDay() {
   if (off) rows.push(`<li><span>休み：${esc(offLabel(off))}</span></li>`);
   else {
     const cs = coursesOn(date, t);
-    if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${c.period}限 ${esc(c.name)}`).join('／')}</span></li>`);
+    if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${c.period}限 ${esc(nm(c))}`).join('／')}</span></li>`);
   }
-  for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(c.name)}</span></li>`);
+  for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(nm(c))}</span></li>`);
   for (const { c, x } of tasksDue(k)) rows.push(
     `<li><label><input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''}>` +
-    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span></label><span class="from">${esc(c.name)}・締切</span></li>`);
+    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span></label><span class="from">${esc(nm(c))}・締切</span></li>`);
   for (const e of eventsOn(k)) rows.push(
     `<li><span><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</span>` +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   $('#dayList').innerHTML = rows.join('') || '<li class="muted">なし</li>';
+}
+
+const EV_ADD_TEXT = $('#evAdd').textContent;
+
+function renderEvSuggest() {
+  $('#evSuggest').innerHTML = state.evPresets.map(p => `<option value="${esc(p.title)}">`).join('');
+}
+
+function renderPicks(msg = '') {
+  const ds = [...calPicks].sort();
+  $('#calMulti').checked = calMulti;
+  $('#evWeekly').disabled = calMulti;   // 複数選択中は「4週分」は使わない
+  if (calMulti) $('#evWeekly').checked = false;
+  $('#evHead').textContent = calMulti ? '選んだ日に予定を追加' : 'この日に予定を追加';
+  $('#evAdd').textContent = calMulti ? `${ds.length}日に追加` : EV_ADD_TEXT;
+  let info = '';
+  if (calMulti) info = ds.length
+    ? `${ds.length}日選択中：${ds.map(k => md(parseYmd(k))).join('・')}`
+    : 'カレンダーの日付をタップして選んでね';
+  $('#calPickInfo').textContent = msg || info;
 }
 
 $('#calBtn').onclick = () => {
@@ -1126,7 +1189,9 @@ $('#calBtn').onclick = () => {
   calSel = todayStr();
   for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
   $('#evWeekly').checked = false;
-  renderCal(); renderDay();
+  calMulti = false; calPicks.clear();
+  renderEvSuggest();
+  renderCal(); renderDay(); renderPicks();
   $('#calDlg').showModal();
 };
 $('#calX').onclick = () => $('#calDlg').close();
@@ -1142,11 +1207,23 @@ $('#calNext').onclick = () => moveMonth(1);
 $('#calGrid').addEventListener('click', e => {
   const d = e.target.closest('.cd');
   if (!d) return;
+  if (calMulti) {
+    const k = d.dataset.date;
+    if (calPicks.has(k)) calPicks.delete(k); else calPicks.add(k);
+    renderCal(); renderPicks();
+    return;
+  }
   calSel = d.dataset.date;
   const sd = parseYmd(calSel);
   if (sd.getMonth() !== calMonth.getMonth()) calMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
   renderCal(); renderDay();
 });
+
+$('#calMulti').onchange = e => {
+  calMulti = e.target.checked;
+  if (!calMulti) calPicks.clear();
+  renderCal(); renderPicks();
+};
 
 $('#dayList').addEventListener('change', e => {
   const id = e.target.dataset.caltask;
@@ -1163,20 +1240,69 @@ $('#dayList').addEventListener('click', e => {
   save(); renderCal(); renderDay();
 });
 
+// 候補と同じ名前を入れたら、時刻が空のときだけ前回の時刻と種類を入れる
+$('#evTitle').addEventListener('input', e => {
+  const p = state.evPresets.find(x => x.title === e.target.value.trim());
+  if (!p || $('#evStart').value || $('#evEnd').value) return;
+  $('#evKind').value = p.kind;
+  $('#evStart').value = p.start;
+  $('#evEnd').value = p.end;
+});
+
 $('#evAdd').onclick = () => {
   const kind = $('#evKind').value;
-  const base = parseYmd(calSel);
-  const n = $('#evWeekly').checked ? 4 : 1;
-  for (let k = 0; k < n; k++) {
-    state.events.push({
-      id: uid(), date: ymd(addDays(base, 7 * k)), kind,
-      title: $('#evTitle').value.trim(), start: $('#evStart').value, end: $('#evEnd').value
-    });
+  const title = $('#evTitle').value.trim();
+  const start = $('#evStart').value, end = $('#evEnd').value;
+  let dates;
+  if (calMulti) {
+    dates = [...calPicks].sort();
+    if (!dates.length) return alert('カレンダーで日付を選んでね');
+  } else {
+    const n = $('#evWeekly').checked ? 4 : 1;
+    dates = Array.from({ length: n }, (_, k) => ymd(addDays(parseYmd(calSel), 7 * k)));
   }
+
+  // 同じ日・同じ種類・同じ名前・同じ時刻の予定は二重に入れない
+  let added = 0, skipped = 0;
+  for (const date of dates) {
+    const dup = state.events.some(e => e.date === date && e.kind === kind &&
+      e.title === title && e.start === start && e.end === end);
+    if (dup) { skipped++; continue; }
+    state.events.push({ id: uid(), date, kind, title, start, end });
+    added++;
+  }
+  if (title) {
+    state.evPresets = [{ title, kind, start, end }, ...state.evPresets.filter(p => p.title !== title)]
+      .slice(0, EV_PRESET_MAX);
+  }
+
+  const msg = skipped
+    ? `${added}日に追加したよ（${skipped}日はもう入ってたので飛ばした）`
+    : dates.length > 1 ? `${added}日に追加したよ` : '';
   $('#evTitle').value = '';
   $('#evWeekly').checked = false;
-  save(); renderCal(); renderDay();
+  calMulti = false; calPicks.clear();
+  save(); renderEvSuggest(); renderCal(); renderDay(); renderPicks(msg);
 };
+
+/* ===== ダイアログ中は後ろの画面を止める ===== */
+let lockY = 0;
+function syncScrollLock() {
+  const open = !!document.querySelector('dialog[open]');
+  const b = document.body;
+  if (open && !b.classList.contains('lock')) {
+    lockY = window.scrollY;
+    b.style.top = `-${lockY}px`;
+    b.classList.add('lock');
+  } else if (!open && b.classList.contains('lock')) {
+    b.classList.remove('lock');
+    b.style.top = '';
+    window.scrollTo(0, lockY);
+  }
+}
+const dlgWatch = new MutationObserver(syncScrollLock);
+document.querySelectorAll('dialog').forEach(d =>
+  dlgWatch.observe(d, { attributes: true, attributeFilter: ['open'] }));
 
 /* ===== 画像読み込み ===== */
 const PROMPT = `これは大学の時間割表の画像です。各授業を読み取り、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
@@ -1379,7 +1505,7 @@ function applyImport(replace) {
       (c.items.length || c.memos.length || c.tasks.length || c.syllabus || c.absences.length));
     const msg = `「${t.name}」の時間割を置き換える？` + (lost.length
       ? `\n\n次の授業のメモ・持ち物・課題・欠席は消えるよ（授業名・曜日・時限が全部同じものだけ引き継ぐ）\n` +
-        lost.map(c => `・${DAYS[c.day]}${c.period} ${c.name}`).join('\n')
+        lost.map(c => `・${DAYS[c.day]}${c.period} ${nm(c)}`).join('\n')
       : '');
     if (!confirm(msg)) return;
     backup = { courses: structuredClone(old), cancels: structuredClone(t.cancels) };
@@ -1520,7 +1646,7 @@ $('#termCreate').onclick = () => {
   const start = $('#newTermStart').value, end = $('#newTermEnd').value;
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
   const copied = $('#newTermCopy').checked ? courses().filter(c => c.day !== -1).map(c => newCourse(c.day, c.period, {
-    name: c.name, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence,
+    name: c.name, short: c.short, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence,
     items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() }))
   })) : [];
   const t = newTerm(name, start, end, copied);
