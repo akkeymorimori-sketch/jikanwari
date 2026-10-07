@@ -37,8 +37,8 @@ const PROVIDERS = {
   gemini: {
     label: 'Gemini（Google AI Studio・無料枠あり）',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    model: 'gemini-3.8-flash',
-    models: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
+    model: 'gemini-3.5-flash-lite',
+    models: ['gemini-3.5-flash-lite', 'gemini-3.8-flash'],
     keyUrl: 'https://aistudio.google.com/apikey',
     note: '無料枠では送った画像が Google の製品改善に使われる。'
   },
@@ -60,8 +60,17 @@ const PROVIDERS = {
   }
 };
 
-// 混雑時に切り替える予備のモデル
-const FALLBACK_MODEL = { gemini: 'gemini-3.5-flash-lite' };
+// 混雑時に切り替える予備のモデル（今はなし）
+const FALLBACK_MODEL = {};
+
+/* ===== テーマ ===== */
+const COLORS = ['blue', 'green', 'pink', 'red', 'purple', 'yellow', 'gray'];
+const FONTS = ['system', 'maru', 'mincho'];
+function applyTheme(th) {
+  const r = document.documentElement;
+  if (th.color === 'blue') delete r.dataset.color; else r.dataset.color = th.color;
+  if (th.font === 'system') delete r.dataset.font; else r.dataset.font = th.font;
+}
 
 /* ===== データ ===== */
 let state;
@@ -93,8 +102,9 @@ function nextTermName(name) {
 const newTerm = (name, start = '', end = '', courses = []) =>
   ({ id: uid(), name, start, end, offDays: [], swaps: [], cancels: [], courses });
 
+// day = -1 は集中講義
 const newCourse = (day, period, extra = {}) => ({
-  id: uid(), day, period, name: '', teacher: '', room: '', syllabus: '',
+  id: uid(), day, period, name: '', teacher: '', room: '', syllabus: '', from: '', to: '',
   items: [], memos: [], tasks: [], absences: [], maxAbsence: '', ...extra
 });
 
@@ -141,6 +151,26 @@ function normalize(s) {
   s.keys ??= {};
   s.models ??= {};
   s.packChecks ??= {};
+
+  // 前に3.8を保存してたら、1回だけ3.5に戻す
+  if (!s.geminiDefault35) {
+    if (s.models.gemini === 'gemini-3.8-flash') delete s.models.gemini;
+    s.geminiDefault35 = true;
+  }
+
+  // テーマ
+  s.theme ??= {};
+  if (!COLORS.includes(s.theme.color)) s.theme.color = 'blue';
+  if (!FONTS.includes(s.theme.font)) s.theme.font = 'system';
+
+  // バイトなどの予定（学期をまたいで共通）
+  s.events = Array.isArray(s.events) ? s.events.filter(e => e && isYmd(e.date)) : [];
+  for (const e of s.events) {
+    e.id = fixId(e.id);
+    e.kind = e.kind === 'other' ? 'other' : 'job';
+    e.title ??= ''; e.start ??= ''; e.end ??= '';
+  }
+
   delete s.icon;
   delete s.appName;
   if (!Array.isArray(s.terms) || !s.terms.length) s.terms = [newTerm(defaultTermName())];
@@ -157,6 +187,7 @@ function normalize(s) {
     for (const c of t.courses) {
       c.id = fixId(c.id);
       c.name ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
+      c.from ??= ''; c.to ??= '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
       c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
       c.maxAbsence ??= '';
@@ -385,7 +416,7 @@ function absInfo(c) {
 }
 
 /* ===== シラバス ===== */
-// 開くURL（授業ごとのURL → なければ検索URL）
+// 開くURL（授業ごとのURL → なければ検索ページ）
 function syllabusURL(c) {
   if (isHttp(c.syllabus)) return c.syllabus.trim();
   const tpl = state.syllabusSearch.trim();
@@ -400,8 +431,10 @@ function renderSyllabusHint() {
   let msg;
   if (v && !isHttp(v)) msg = 'URLは https:// から始まる形で入れてね';
   else if (v) msg = '登録したURLを開くよ';
-  else if (isHttp(state.syllabusSearch)) msg = `URLがないから、シラバス検索で「${c.name}」を開くよ`;
-  else msg = '設定でシラバス検索のURLを入れておくと、URLを貼らなくても開けるよ';
+  else if (isHttp(state.syllabusSearch)) msg = state.syllabusSearch.includes('{授業名}')
+    ? `シラバス検索で「${c.name}」を開くよ`
+    : '「開く」で授業名をコピーして検索ページを開くよ。検索欄に貼り付けてね';
+  else msg = '設定の「シラバス検索」にページのURLを入れておくと、ここから開けるよ';
   $('#cSyllabusHint').textContent = msg;
 }
 
@@ -448,7 +481,7 @@ function renderNow() {
     el.innerHTML = `<h2>この学期は終わったよ</h2>` +
       `<p class="muted">${esc(t.name)}は${md(parseYmd(t.end))}で終了</p>` +
       (nt ? `<button data-switch="${nt.id}">「${esc(nt.name)}」に切り替える</button>`
-          : '<p class="muted">「カレンダー」から次の学期を作ってね</p>');
+          : '<p class="muted">上の「学期」から次の学期を作ってね</p>');
     return;
   }
 
@@ -466,6 +499,9 @@ function renderNow() {
       if (cc.length) h += `<p class="start">今日休講：${cc.map(c => esc(c.name)).join('、')}</p>`;
     }
   }
+
+  const evs = eventsOn(todayStr());
+  if (evs.length) h += `<p class="start">今日の予定：${evs.map(evLabel).join('、')}</p>`;
 
   const list = upcoming(now);
   const curList = list.filter(x => x.start <= now);
@@ -590,7 +626,7 @@ function renderTasks() {
 /* ===== 画面：時間割 ===== */
 function renderGrid() {
   const days = state.showSat || courses().some(c => c.day === 5) ? 6 : 5;
-  const periods = Math.max(state.periods, ...courses().map(c => c.period));
+  const periods = Math.max(state.periods, ...courses().filter(c => c.day >= 0).map(c => c.period));
   const today = effDay(new Date());
   const g = $('#grid');
   g.style.gridTemplateColumns = `34px repeat(${days},1fr)`;
@@ -619,28 +655,43 @@ function renderGrid() {
 
 function renderTermSelect() {
   $('#termSelect').innerHTML = state.terms.map(t =>
-    `<option value="${t.id}" ${t.id === state.currentTermId ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+    `<option value="${t.id}" ${t.id === state.currentTermId ? 'selected' : ''}>${esc(t.name)}</option>`).join('') +
+    '<option value="__new">＋ 新しい学期を作る</option>';
 }
 
-function renderBackupWarn() {
-  const el = $('#backupWarn');
-  const has = state.terms.some(t => t.courses.length);
-  const days = state.lastExport ? dayDiff(new Date(), new Date(state.lastExport)) : null;
-  if (!has || (days != null && days < 14)) { el.hidden = true; return; }
-  el.hidden = false;
-  el.textContent = days == null
-    ? 'まだ一度もバックアップしてないよ。ここを押して設定の「書き出し」へ'
-    : `最後のバックアップから${days}日たったよ。ここを押して書き出しておこう`;
+/* ===== 画面：集中講義 ===== */
+function rangeLabel(c) {
+  if (!c.from) return '日程未定';
+  return c.to && c.to !== c.from ? `${md(parseYmd(c.from))}〜${md(parseYmd(c.to))}` : md(parseYmd(c.from));
+}
+
+function renderIntensive() {
+  const list = courses().filter(c => c.day === -1)
+    .sort((a, b) => (a.from || '9999').localeCompare(b.from || '9999'));
+  $('#intCard').innerHTML =
+    `<h2>集中講義${list.length ? ` <small>${list.length}件</small>` : ''}</h2>` +
+    (list.length
+      ? '<div class="intList">' + list.map(c => {
+          const ni = c.items.filter(i => i.type === 'next').length;
+          const nt = c.tasks.filter(t => !t.done).length;
+          return `<div class="course" data-id="${c.id}"><b>${esc(c.name)}</b>` +
+            `<span class="when">${rangeLabel(c)}</span><small>${esc(c.room)}</small><div>` +
+            (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
+            (nt ? `<span class="badge task">課題${nt}</span>` : '') +
+            `</div></div>`;
+        }).join('') + '</div>'
+      : '<p class="muted">曜日・時限が決まってない授業はここに追加してね</p>') +
+    '<button id="intAdd">＋ 集中講義を追加</button>';
 }
 
 function renderAll() {
   $('#importBtn').hidden = !state.keys[state.provider];
-  renderBackupWarn();
   renderTermSelect();
   renderNow();
   renderPack();
   renderTasks();
   renderGrid();
+  renderIntensive();
 }
 
 /* ===== メイン画面の操作 ===== */
@@ -690,7 +741,21 @@ $('#grid').addEventListener('click', e => {
   renderAll(); openCourse(c.id);
 });
 
+$('#intCard').addEventListener('click', e => {
+  const co = e.target.closest('.course');
+  if (co) return openCourse(co.dataset.id);
+  if (e.target.id !== 'intAdd') return;
+  const c = newCourse(-1, 1);
+  courses().push(c);
+  renderAll(); openCourse(c.id);
+});
+
 $('#termSelect').onchange = e => {
+  if (e.target.value === '__new') {
+    e.target.value = state.currentTermId;
+    openTermDlg(true);
+    return;
+  }
   state.currentTermId = e.target.value;
   save(); renderAll();
 };
@@ -699,13 +764,22 @@ $('#termSelect').onchange = e => {
 let currentId = null;
 const cur = () => courses().find(c => c.id === currentId);
 
-$('#cDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('');
+$('#cDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('') +
+  '<option value="-1">集中講義</option>';
 $('#cPeriod').innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}限</option>`).join('');
 
 function renderItemSuggest() {
   const set = new Set(state.itemHistory);
   for (const t of state.terms) for (const c of t.courses) for (const i of c.items) set.add(i.text.trim());
   $('#itemSuggest').innerHTML = [...set].filter(Boolean).map(v => `<option value="${esc(v)}">`).join('');
+}
+
+// 集中講義なら時限・休講を隠して日程を出す
+function syncIntUI() {
+  const isInt = cur()?.day === -1;
+  $('#cPeriod').hidden = isInt;
+  $('#cIntRow').hidden = !isInt;
+  $('#cCancelSec').hidden = isInt;
 }
 
 function openCourse(id) {
@@ -718,6 +792,9 @@ function openCourse(id) {
   $('#cSyllabus').value = c.syllabus;
   $('#cDay').value = c.day;
   $('#cPeriod').value = c.period;
+  $('#cFrom').value = c.from;
+  $('#cTo').value = c.to;
+  syncIntUI();
   $('#taskDue').value = '';
   $('#absDate').value = lastClassDate(c);
   $('#absMax').value = c.maxAbsence;
@@ -794,6 +871,21 @@ for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
     cur()[key] = +e.target.value;
     scheduleChanged();
     renderDetail();
+    syncIntUI();
+  });
+}
+// 集中講義の日程
+for (const [id, key] of [['cFrom', 'from'], ['cTo', 'to']]) {
+  $('#' + id).addEventListener('change', e => {
+    const c = cur(), before = c[key];
+    c[key] = e.target.value;
+    if (c.from && c.to && c.to < c.from) {
+      alert('終わりの日が始まりの日より前になってるよ');
+      c[key] = before;
+      e.target.value = before;
+      return;
+    }
+    save(); renderAll();
   });
 }
 
@@ -914,7 +1006,9 @@ $('#cSyllabusOpen').onclick = () => {
   const c = cur();
   if (c.syllabus && !isHttp(c.syllabus)) return alert('URLは https:// から始まる形で入れてね');
   const url = syllabusURL(c);
-  if (!url) return alert('シラバスのURLを貼るか、設定でシラバス検索のURLを入れてね');
+  if (!url) return alert('設定の「シラバス検索」に、検索ページのURLを入れてね');
+  // 授業ごとのURLがないときは授業名をコピー（開く前にやらないとiPhoneで止められる）
+  if (!isHttp(c.syllabus) && c.name.trim()) navigator.clipboard?.writeText(c.name.trim()).catch(() => {});
   window.open(url, '_blank', 'noopener');
 };
 
@@ -936,11 +1030,153 @@ $('#cX').onclick = () => $('#courseDlg').close();
 $('#courseDlg').addEventListener('close', () => {
   const c = cur();
   if (!c) return;
-  const empty = !c.name.trim() && !c.teacher.trim() && !c.room.trim() && !c.syllabus &&
+  const empty = !c.name.trim() && !c.teacher.trim() && !c.room.trim() && !c.syllabus && !c.from && !c.to &&
     !c.items.length && !c.memos.length && !c.tasks.length && !c.absences.length && c.maxAbsence === '';
   if (empty) removeCourse(c);
   save(); renderAll();
 });
+
+/* ===== カレンダー（月表示） ===== */
+let calMonth = null, calSel = '';
+const EV_LABEL = { job: 'バイト', other: '予定' };
+
+function eventsOn(k) {
+  return state.events.filter(e => e.date === k)
+    .sort((a, b) => (a.start || '99').localeCompare(b.start || '99'));
+}
+function evTime(e) {
+  if (!e.start) return '';
+  const end = e.end ? `〜${toMin(e.end) <= toMin(e.start) ? '翌' : ''}${e.end}` : '〜';
+  return `${e.start}${end}`;
+}
+function evLabel(e) {
+  return esc(`${e.title || EV_LABEL[e.kind]}${e.start ? ' ' + evTime(e) : ''}`);
+}
+function tasksDue(k) {
+  const out = [];
+  for (const t of state.terms) for (const c of t.courses) for (const x of c.tasks)
+    if (x.due === k) out.push({ c, x });
+  return out;
+}
+function intensiveOn(k) {
+  return courses().filter(c => c.day === -1 && c.from && k >= c.from && k <= (c.to || c.from));
+}
+function findCourse(id) {
+  for (const t of state.terms) {
+    const c = t.courses.find(x => x.id === id);
+    if (c) return c;
+  }
+  return null;
+}
+
+function renderCal() {
+  const y = calMonth.getFullYear(), m = calMonth.getMonth(), t = term(), today = todayStr();
+  $('#calTitle').textContent = `${y}年${m + 1}月`;
+  const first = new Date(y, m, 1);
+  const start = addDays(first, -dayIndex(first)); // 月曜はじまり
+  let h = ['月', '火', '水', '木', '金', '土', '日'].map((d, i) =>
+    `<div class="cw ${i === 5 ? 'sat' : i === 6 ? 'sun' : ''}">${d}</div>`).join('');
+
+  for (let n = 0; n < 42; n++) {
+    const date = addDays(start, n), k = ymd(date);
+    if (n === 35 && date.getMonth() !== m) break; // 5週で収まる月
+    const off = inTerm(date, t) ? offInfo(date, t) : null;
+    const pending = tasksDue(k).filter(({ x }) => !x.done);
+    const labels = [];
+    // 課題をいちばん先に並べて、「+1」に隠れないようにする
+    for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
+    if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
+    for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(c.name || '集中講義')}</span>`);
+    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
+
+    const cls = ['cd', pending.length && 'due',
+      date.getMonth() !== m && 'out', off && 'offday',
+      k === calSel && 'sel', k === today && 'today',
+      n % 7 === 5 && 'sat', n % 7 === 6 && 'sun'].filter(Boolean).join(' ');
+    h += `<div class="${cls}" data-date="${k}"><span class="dn">${date.getDate()}` +
+      (pending.length ? `<i class="dueMark">${pending.length}</i>` : '') + '</span>' +
+      labels.slice(0, 3).join('') +
+      (labels.length > 3 ? `<span class="more">+${labels.length - 3}</span>` : '') + '</div>';
+  }
+  $('#calGrid').innerHTML = h;
+}
+
+function renderDay() {
+  const date = parseYmd(calSel), k = calSel, t = term(), rows = [];
+  $('#dayTitle').textContent = `${md(date)}の予定`;
+  const off = inTerm(date, t) ? offInfo(date, t) : null;
+  if (off) rows.push(`<li><span>休み：${esc(offLabel(off))}</span></li>`);
+  else {
+    const cs = coursesOn(date, t);
+    if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${c.period}限 ${esc(c.name)}`).join('／')}</span></li>`);
+  }
+  for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(c.name)}</span></li>`);
+  for (const { c, x } of tasksDue(k)) rows.push(
+    `<li><label><input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''}>` +
+    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span></label><span class="from">${esc(c.name)}・締切</span></li>`);
+  for (const e of eventsOn(k)) rows.push(
+    `<li><span><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</span>` +
+    `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
+  $('#dayList').innerHTML = rows.join('') || '<li class="muted">なし</li>';
+}
+
+$('#calBtn').onclick = () => {
+  const now = new Date();
+  calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  calSel = todayStr();
+  for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
+  $('#evWeekly').checked = false;
+  renderCal(); renderDay();
+  $('#calDlg').showModal();
+};
+$('#calX').onclick = () => $('#calDlg').close();
+$('#calDlg').addEventListener('close', () => renderAll());
+
+const moveMonth = k => {
+  calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + k, 1);
+  renderCal();
+};
+$('#calPrev').onclick = () => moveMonth(-1);
+$('#calNext').onclick = () => moveMonth(1);
+
+$('#calGrid').addEventListener('click', e => {
+  const d = e.target.closest('.cd');
+  if (!d) return;
+  calSel = d.dataset.date;
+  const sd = parseYmd(calSel);
+  if (sd.getMonth() !== calMonth.getMonth()) calMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
+  renderCal(); renderDay();
+});
+
+$('#dayList').addEventListener('change', e => {
+  const id = e.target.dataset.caltask;
+  if (!id) return;
+  const x = findCourse(e.target.dataset.cid)?.tasks.find(k => k.id === id);
+  if (!x) return;
+  x.done = e.target.checked;
+  save(); renderCal(); renderDay();
+});
+$('#dayList').addEventListener('click', e => {
+  const id = e.target.dataset.evdel;
+  if (!id || !confirm('この予定を消す？')) return;
+  state.events = state.events.filter(x => x.id !== id);
+  save(); renderCal(); renderDay();
+});
+
+$('#evAdd').onclick = () => {
+  const kind = $('#evKind').value;
+  const base = parseYmd(calSel);
+  const n = $('#evWeekly').checked ? 4 : 1;
+  for (let k = 0; k < n; k++) {
+    state.events.push({
+      id: uid(), date: ymd(addDays(base, 7 * k)), kind,
+      title: $('#evTitle').value.trim(), start: $('#evStart').value, end: $('#evEnd').value
+    });
+  }
+  $('#evTitle').value = '';
+  $('#evWeekly').checked = false;
+  save(); renderCal(); renderDay();
+};
 
 /* ===== 画像読み込み ===== */
 const PROMPT = `これは大学の時間割表の画像です。各授業を読み取り、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
@@ -1026,7 +1262,7 @@ async function requestOnce(p, key, model, b64) {
   return { ok: true, text: Array.isArray(c) ? c.map(x => x.text || '').join('') : (c || '') };
 }
 
-// 混雑時は自動でやり直し、それでもダメなら予備のモデルに切り替える
+// 混雑時は自動でやり直し、予備のモデルがあれば切り替える
 async function callVision(b64) {
   const p = state.provider, key = state.keys[p], main = modelOf(p);
   if (!key) throw new Error('設定でAPIキーを入れてね');
@@ -1139,7 +1375,7 @@ function applyImport(replace) {
   });
   let backup = null;
   if (replace) {
-    const lost = old.filter(c => !used.has(c) &&
+    const lost = old.filter(c => c.day !== -1 && !used.has(c) &&
       (c.items.length || c.memos.length || c.tasks.length || c.syllabus || c.absences.length));
     const msg = `「${t.name}」の時間割を置き換える？` + (lost.length
       ? `\n\n次の授業のメモ・持ち物・課題・欠席は消えるよ（授業名・曜日・時限が全部同じものだけ引き継ぐ）\n` +
@@ -1149,7 +1385,8 @@ function applyImport(replace) {
     backup = { courses: structuredClone(old), cancels: structuredClone(t.cancels) };
   }
   const added = pairs.map(([r, prev]) => prev ? Object.assign(prev, r) : newCourse(r.day, r.period, r));
-  t.courses = replace ? added : old.concat(added);
+  // 置き換えても集中講義は残す
+  t.courses = replace ? added.concat(old.filter(c => c.day === -1)) : old.concat(added);
   if (replace) {
     const ids = new Set(t.courses.map(c => c.id));
     t.cancels = t.cancels.filter(x => ids.has(x.courseId));
@@ -1167,7 +1404,7 @@ function applyImport(replace) {
 $('#applyReplace').onclick = () => applyImport(true);
 $('#applyAdd').onclick = () => applyImport(false);
 
-/* ===== カレンダー（学期・休み・振替） ===== */
+/* ===== 学期・休み・振替 ===== */
 $('#swapDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('');
 
 function renderTermList() {
@@ -1194,14 +1431,21 @@ function renderOffList() {
     || '<li class="muted">なし</li>';
 }
 
-$('#termBtn').onclick = () => {
+function openTermDlg(toNew = false) {
   renderTermList();
   renderOffList();
   for (const id of ['offFrom', 'offTo', 'offNote', 'swapDate', 'newTermStart', 'newTermEnd']) $('#' + id).value = '';
   $('#newTermName').value = nextTermName(term().name);
   $('#newTermCopy').checked = false;
+  document.querySelectorAll('#termDlg details').forEach(d => { d.open = false; });
   $('#termDlg').showModal();
-};
+  $('#termDlg').scrollTop = 0;
+  if (toNew) {
+    $('#newTermSec').open = true;
+    $('#newTermSec').scrollIntoView({ block: 'nearest' });
+  }
+}
+$('#termBtn').onclick = () => openTermDlg();
 $('#termClose').onclick = () => $('#termDlg').close();
 
 $('#termList').addEventListener('input', e => {
@@ -1275,7 +1519,7 @@ $('#termCreate').onclick = () => {
   const name = $('#newTermName').value.trim() || defaultTermName();
   const start = $('#newTermStart').value, end = $('#newTermEnd').value;
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
-  const copied = $('#newTermCopy').checked ? courses().map(c => newCourse(c.day, c.period, {
+  const copied = $('#newTermCopy').checked ? courses().filter(c => c.day !== -1).map(c => newCourse(c.day, c.period, {
     name: c.name, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence,
     items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() }))
   })) : [];
@@ -1379,6 +1623,7 @@ function collect() {
   tmp.showSat = $('#sSat').checked;
   tmp.shiftTimes = $('#sShift').checked;
   tmp.syllabusSearch = $('#sSyllabus').value.trim();
+  tmp.theme = { color: $('#sColor').value, font: $('#sFont').value };
 }
 
 function renderLastExport() {
@@ -1397,19 +1642,23 @@ function openSettings() {
     periods: state.periods,
     showSat: state.showSat,
     shiftTimes: state.shiftTimes,
-    syllabusSearch: state.syllabusSearch
+    syllabusSearch: state.syllabusSearch,
+    theme: { ...state.theme }
   };
   fillProviderFields(state.provider);
   $('#sPeriods').value = tmp.periods;
   $('#sSat').checked = tmp.showSat;
   $('#sShift').checked = tmp.shiftTimes;
   $('#sSyllabus').value = tmp.syllabusSearch;
+  $('#sColor').value = tmp.theme.color;
+  $('#sFont').value = tmp.theme.font;
   $('#restoreFile').value = '';
   renderTimes();
   collect();
   snapshot = JSON.stringify(tmp);
   renderLastExport();
   $('#aiBox').open = false;
+  $('#iconBox').open = false;
   $('#settingsDlg').showModal();
   $('#settingsDlg').scrollTop = 0;
 }
@@ -1417,14 +1666,20 @@ function openSettings() {
 function closeSettings() {
   collect();
   if (JSON.stringify(tmp) !== snapshot && !confirm('変更を保存せずに閉じる？')) return;
+  applyTheme(state.theme); // 試した色や文字を元に戻す
   $('#settingsDlg').close();
 }
 
 $('#settingsBtn').onclick = openSettings;
-$('#backupWarn').onclick = openSettings;
 $('#sX').onclick = closeSettings;
 $('#sCancel').onclick = closeSettings;
 $('#settingsDlg').addEventListener('cancel', e => { e.preventDefault(); closeSettings(); }); // Escキー
+
+// 選んだ時点で見た目を試せるように
+for (const id of ['sColor', 'sFont']) {
+  $('#' + id).addEventListener('change', () =>
+    applyTheme({ color: $('#sColor').value, font: $('#sFont').value }));
+}
 
 $('#sProvider').onchange = e => { stashProviderFields(); fillProviderFields(e.target.value); };
 $('#sPeriods').addEventListener('input', e => {
@@ -1449,6 +1704,8 @@ $('#sSave').onclick = () => {
   state.showSat = tmp.showSat;
   state.shiftTimes = tmp.shiftTimes;
   state.syllabusSearch = tmp.syllabusSearch;
+  state.theme = tmp.theme;
+  applyTheme(state.theme);
   scheduleChanged();
   $('#settingsDlg').close();
 };
@@ -1472,7 +1729,7 @@ $('#exportBtn').onclick = async () => {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }
   state.lastExport = Date.now();
-  save(); renderLastExport(); renderBackupWarn();
+  save(); renderLastExport();
 };
 
 $('#restoreFile').onchange = async e => {
@@ -1486,6 +1743,7 @@ $('#restoreFile').onchange = async e => {
     else throw 0;
     if (!confirm('今のデータを置き換えて復元する？')) return;
     state = normalize({ ...s, keys: state.keys, models: state.models, provider: state.provider });
+    applyTheme(state.theme);
     scheduleChanged();
     $('#settingsDlg').close();
     alert('復元したよ');
@@ -1514,6 +1772,7 @@ $('#toastUndo').onclick = () => {
 
 /* ===== 起動 ===== */
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
+applyTheme(state.theme);
 recomputeUntil();
 prune();
 save();

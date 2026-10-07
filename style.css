@@ -4,6 +4,7 @@
 /* ===== 色 ===== */
 :root {
   color-scheme: light dark;
+  --font: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --bg: #f4f5f7; --surface: #fff; --text: #222; --sub: #555; --muted: #666;
   --line: #ddd; --line-soft: #eee; --border: #bbb;
   --accent: #2f6fde; --accent-strong: #2f6fde; --on-accent: #fff;
@@ -11,7 +12,6 @@
   --danger: #c33; --ok: #2b8a3e; --over: #c92a2a; --soon: #d9480f;
   --tag-bg: #e7f5ff; --tag-fg: #1864ab; --tagn-bg: #fff4e6; --tagn-fg: #c2410c;
   --item-fg: #8a3b00; --badge-item: #e8590c; --badge-task: #7048e8;
-  --warn-bg: #fff4e6; --warn-fg: #a33b00;
   --toast-bg: #333; --toast-fg: #fff; --toast-link: #8fb8ff;
   --backdrop: rgba(0, 0, 0, .45);
 }
@@ -24,16 +24,71 @@
     --danger: #ff6b6b; --ok: #51cf66; --over: #ff6b6b; --soon: #ffa94d;
     --tag-bg: #1c3550; --tag-fg: #a5d8ff; --tagn-bg: #3d2a14; --tagn-fg: #ffc078;
     --item-fg: #ffc078; --badge-item: #d9480f; --badge-task: #6741d9;
-    --warn-bg: #3d2a14; --warn-fg: #ffc078;
     --toast-bg: #2c2f36; --toast-fg: #e8e8ea; --toast-link: #8fb8ff;
     --backdrop: rgba(0, 0, 0, .6);
+  }
+}
+
+/* ===== テーマ：文字 ===== */
+:root[data-font="maru"] { --font: "Hiragino Maru Gothic ProN", "Zen Maru Gothic", system-ui, sans-serif; }
+:root[data-font="mincho"] { --font: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; }
+
+/* ===== テーマ：色 ===== */
+:root[data-color="green"] {
+  --accent: #2b8a3e; --accent-strong: #2b8a3e; --accent-soft: #ebfbee;
+  --course: #d3f9d8; --today: #ebfbee; --tag-bg: #ebfbee; --tag-fg: #2b8a3e;
+}
+:root[data-color="pink"] {
+  --accent: #d6336c; --accent-strong: #d6336c; --accent-soft: #fff0f6;
+  --course: #ffdeeb; --today: #fff0f6; --tag-bg: #fff0f6; --tag-fg: #c2255c;
+}
+:root[data-color="red"] {
+  --accent: #e03131; --accent-strong: #e03131; --accent-soft: #fff5f5;
+  --course: #ffe3e3; --today: #fff5f5; --tag-bg: #fff5f5; --tag-fg: #c92a2a;
+}
+:root[data-color="purple"] {
+  --accent: #7048e8; --accent-strong: #7048e8; --accent-soft: #f3f0ff;
+  --course: #e5dbff; --today: #f3f0ff; --tag-bg: #f3f0ff; --tag-fg: #5f3dc4;
+}
+:root[data-color="yellow"] {
+  --accent: #b35c00; --accent-strong: #fab005; --on-accent: #222; --accent-soft: #fff9db;
+  --course: #fff3bf; --today: #fff9db; --tag-bg: #fff9db; --tag-fg: #b35c00;
+}
+:root[data-color="gray"] {
+  --accent: #495057; --accent-strong: #495057; --accent-soft: #f1f3f5;
+  --course: #e9ecef; --today: #f1f3f5; --tag-bg: #f1f3f5; --tag-fg: #343a40;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-color="green"] {
+    --accent: #69db7c; --accent-strong: #2f9e44; --accent-soft: #1b2e20;
+    --course: #1f3a26; --today: #17241b; --tag-bg: #1f3a26; --tag-fg: #b2f2bb;
+  }
+  :root[data-color="pink"] {
+    --accent: #faa2c1; --accent-strong: #c2255c; --accent-soft: #3a1d2a;
+    --course: #4a2235; --today: #2a1820; --tag-bg: #4a2235; --tag-fg: #fcc2d7;
+  }
+  :root[data-color="red"] {
+    --accent: #ff8787; --accent-strong: #e03131; --accent-soft: #3a1b1b;
+    --course: #4a2222; --today: #2a1616; --tag-bg: #4a2222; --tag-fg: #ffc9c9;
+  }
+  :root[data-color="purple"] {
+    --accent: #b197fc; --accent-strong: #7048e8; --accent-soft: #26203d;
+    --course: #33295a; --today: #1e1a30; --tag-bg: #33295a; --tag-fg: #d0bfff;
+  }
+  :root[data-color="yellow"] {
+    --accent: #ffd43b; --accent-strong: #fab005; --on-accent: #222; --accent-soft: #3a3214;
+    --course: #4a3f12; --today: #2a2510; --tag-bg: #4a3f12; --tag-fg: #ffec99;
+  }
+  :root[data-color="gray"] {
+    --accent: #ced4da; --accent-strong: #5c636a; --accent-soft: #2a2d33;
+    --course: #343a40; --today: #212429; --tag-bg: #343a40; --tag-fg: #dee2e6;
   }
 }
 
 /* ===== 基本 ===== */
 body {
   margin: 0;
-  font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-family: var(--font);
   background: var(--bg);
   color: var(--text);
 }
@@ -73,16 +128,12 @@ input[type=checkbox] { width: auto; accent-color: var(--accent-strong); }
 input[type=date] { min-width: 0; }
 a { color: var(--accent); }
 
-main { max-width: 900px; margin: 0 auto; padding: 8px; }
+main { max-width: 900px; margin: 0 auto; padding: 8px 8px 45vh; }
 .card { background: var(--surface); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: 13px; margin: 0; }
 .hint { color: var(--muted); font-size: 13px; margin: 0; }
 .ok { color: var(--ok); font-weight: bold; margin: 4px 0 0; font-size: 13px; }
 .start { margin: 0 0 6px; font-size: 14px; color: var(--accent); }
-.warn {
-  background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px;
-  padding: 8px 12px; margin: 0 0 8px; font-size: 13px; cursor: pointer;
-}
 
 /* ===== 次の授業 ===== */
 .nc {
@@ -135,6 +186,16 @@ li.soon .due { color: var(--soon); font-weight: bold; }
 .badge.task { background: var(--badge-task); }
 .badge.abs { background: var(--over); }
 
+/* ===== 集中講義 ===== */
+.contents { display: contents; }
+#intCard { margin-top: 8px; }
+.intList {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 4px; margin-bottom: 8px;
+}
+.intList .course { cursor: pointer; }
+.course .when { display: block; font-size: 11px; color: var(--sub); }
+
 /* ===== ダイアログ ===== */
 dialog {
   border: none; border-radius: 10px; width: min(600px, 94vw); padding: 0;
@@ -178,6 +239,51 @@ details.sec > a, #aiBox > a { display: block; }
 /* 学期 */
 .termBox { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .termBox .row > span, .termBox .row > button { flex: none; }
+
+/* ===== カレンダー ===== */
+.calNav { justify-content: space-between; }
+.calNav > b { flex: none; font-size: 16px; }
+#calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cw { text-align: center; font-size: 12px; font-weight: bold; color: var(--sub); padding: 2px 0; }
+.cw.sat, .cd.sat .dn { color: var(--accent); }
+.cw.sun, .cd.sun .dn { color: var(--over); }
+.cd {
+  min-height: 58px; min-width: 0; padding: 2px; border-radius: 4px; cursor: pointer;
+  background: var(--bg); display: flex; flex-direction: column; gap: 1px; overflow: hidden;
+}
+.cd.out { opacity: .4; }
+.cd.offday { background: var(--line-soft); }
+.cd.sel { background: var(--accent-soft); }
+.cd.today { outline: 2px solid var(--accent-strong); outline-offset: -2px; }
+.cd.due { box-shadow: inset 0 3px 0 var(--badge-task); }
+.dn { font-size: 12px; font-weight: bold; }
+.dueMark {
+  display: inline-block; margin-left: 2px; min-width: 14px; height: 14px;
+  line-height: 14px; border-radius: 7px; padding: 0 3px;
+  background: var(--badge-task); color: #fff;
+  font-size: 9px; font-style: normal; text-align: center; vertical-align: 1px;
+}
+.ev {
+  display: block; font-size: 10px; line-height: 1.35; border-radius: 3px; padding: 0 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff;
+}
+.ev.task { background: var(--badge-task); }
+.ev.job { background: var(--ok); }
+.ev.other { background: var(--accent-strong); color: var(--on-accent); }
+.ev.int { background: var(--badge-item); }
+.ev.off { background: var(--muted); }
+.more { font-size: 10px; color: var(--sub); }
+.calLegend { display: flex; gap: 4px; flex-wrap: wrap; }
+.calLegend .ev { display: inline-block; padding: 0 5px; }
+
+/* ===== アイコンの色リンク ===== */
+.iconLinks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.iconLinks a {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 2px; font-size: 12px; text-decoration: none;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.iconLinks img { width: 44px; height: 44px; border-radius: 10px; }
 
 /* 「元に戻す」 */
 #toast {

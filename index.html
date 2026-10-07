@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=12">
 </head>
 <body>
 <header>
@@ -17,17 +17,18 @@
   <select id="termSelect" aria-label="学期"></select>
   <div class="hbtns">
     <button id="importBtn">画像読込</button>
-    <button id="termBtn">カレンダー</button>
+    <button id="calBtn">カレンダー</button>
+    <button id="termBtn">学期</button>
     <button id="settingsBtn">設定</button>
   </div>
 </header>
 
 <main>
-  <p id="backupWarn" class="warn" hidden></p>
   <section class="card" id="nowCard"></section>
   <section class="card" id="packCard"></section>
   <section class="card" id="taskCard"></section>
   <div id="grid"></div>
+  <section class="card" id="intCard"></section>
 </main>
 
 <!-- 授業詳細 -->
@@ -45,6 +46,12 @@
     <div class="row">
       <input id="cTeacher" placeholder="教員" aria-label="教員">
       <input id="cRoom" placeholder="教室" aria-label="教室">
+    </div>
+    <div class="row" id="cIntRow" hidden>
+      <span class="hint">日程</span>
+      <input type="date" id="cFrom" aria-label="集中講義の開始日">
+      <span class="hint">〜</span>
+      <input type="date" id="cTo" aria-label="集中講義の終了日">
     </div>
 
     <h3>持ち物</h3>
@@ -71,6 +78,7 @@
     </div>
     <ul id="memoList"></ul>
 
+    <div id="cCancelSec" class="contents">
     <h3>休講</h3>
     <ul id="cancelList"></ul>
     <div class="row">
@@ -78,6 +86,7 @@
       <button id="cancelAdd">休講にする</button>
     </div>
     <p class="hint">休講の回は飛ばすよ。「次回だけ」の持ち物は次の回に持ち越し</p>
+    </div>
 
     <h3>欠席 <small id="absSummary"></small></h3>
     <ul id="absList"></ul>
@@ -92,7 +101,7 @@
 
     <h3>シラバス</h3>
     <div class="row">
-      <input id="cSyllabus" type="url" inputmode="url" placeholder="シラバスのURLを貼り付け" aria-label="シラバスのURL">
+      <input id="cSyllabus" type="url" inputmode="url" placeholder="URL（なくてもOK）" aria-label="シラバスのURL">
       <button id="cSyllabusOpen">開く</button>
     </div>
     <p class="hint" id="cSyllabusHint"></p>
@@ -124,21 +133,21 @@
   </div>
 </dialog>
 
-<!-- カレンダー（学期・休み・振替） -->
+<!-- 学期・休み・振替 -->
 <dialog id="termDlg">
   <div class="dlg">
     <div class="dlgHead">
-      <h2 tabindex="-1" autofocus>カレンダー</h2>
+      <h2 tabindex="-1" autofocus>学期・休み</h2>
       <button id="termClose" class="x big" aria-label="閉じる">×</button>
     </div>
 
-    <details class="sec" open>
+    <details class="sec">
       <summary>学期</summary>
       <ul id="termList"></ul>
       <p class="hint">開始日より前は授業がない扱いになるよ。終了日は空でもOK</p>
     </details>
 
-    <details class="sec" open>
+    <details class="sec">
       <summary id="offTitle">授業がない日</summary>
       <ul id="offList"></ul>
       <div class="row">
@@ -167,18 +176,56 @@
       </div>
     </details>
 
-    <details class="sec">
+    <details class="sec" id="newTermSec">
       <summary>新しい学期を作る</summary>
       <input id="newTermName" aria-label="新しい学期の名前">
       <div class="row">
         <span class="hint">開始</span><input type="date" id="newTermStart">
         <span class="hint">終了</span><input type="date" id="newTermEnd">
       </div>
-      <label class="inline"><input type="checkbox" id="newTermCopy"> 今の学期の授業をコピーする（メモ・課題・欠席はコピーしない）</label>
+      <label class="inline"><input type="checkbox" id="newTermCopy"> 今の学期の授業をコピーする（メモ・課題・欠席・集中講義はコピーしない）</label>
       <div class="row end">
         <button id="termCreate" class="primary">作成して切り替え</button>
       </div>
     </details>
+  </div>
+</dialog>
+
+<!-- カレンダー（月表示） -->
+<dialog id="calDlg">
+  <div class="dlg">
+    <div class="dlgHead">
+      <h2 tabindex="-1" autofocus>カレンダー</h2>
+      <button id="calX" class="x big" aria-label="閉じる">×</button>
+    </div>
+    <div class="row calNav">
+      <button id="calPrev" aria-label="前の月">‹</button>
+      <b id="calTitle"></b>
+      <button id="calNext" aria-label="次の月">›</button>
+    </div>
+    <div id="calGrid"></div>
+    <p class="hint calLegend">
+      <span class="ev task">課題</span><span class="ev job">バイト</span><span class="ev other">予定</span><span class="ev int">集中講義</span><span class="ev off">休み</span>
+    </p>
+
+    <h3 id="dayTitle"></h3>
+    <ul id="dayList"></ul>
+
+    <h3>この日に予定を追加</h3>
+    <div class="row">
+      <select id="evKind" class="narrow" aria-label="種類">
+        <option value="job">バイト</option>
+        <option value="other">その他</option>
+      </select>
+      <input id="evTitle" placeholder="例: カフェ（空でもOK）" aria-label="予定の名前">
+    </div>
+    <div class="row">
+      <input type="time" id="evStart" aria-label="開始時刻">
+      <span class="hint">〜</span>
+      <input type="time" id="evEnd" aria-label="終了時刻">
+      <button id="evAdd">追加</button>
+    </div>
+    <label class="inline"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
   </div>
 </dialog>
 
@@ -196,13 +243,51 @@
       <label class="inline"><input type="checkbox" id="sSat"> 土曜を表示</label>
     </div>
 
+    <h3>テーマ</h3>
+    <div class="row">
+      <label class="inline">色
+        <select id="sColor" class="narrow" aria-label="テーマの色">
+          <option value="blue">青</option>
+          <option value="green">緑</option>
+          <option value="pink">ピンク</option>
+          <option value="red">赤</option>
+          <option value="purple">紫</option>
+          <option value="yellow">黄</option>
+          <option value="gray">グレー</option>
+        </select>
+      </label>
+      <label class="inline">文字
+        <select id="sFont" class="narrow" aria-label="文字の種類">
+          <option value="system">ふつう</option>
+          <option value="maru">丸ゴシック</option>
+          <option value="mincho">明朝</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint">選ぶとすぐ見た目が変わるよ。キャンセルすれば元に戻る</p>
+
+    <details class="sec" id="iconBox">
+      <summary>アプリアイコンの色</summary>
+      <p class="hint">使いたい色のページを開いて、共有→「ホーム画面に追加」。今あるアイコンは変わらないから、古いほうは消してね</p>
+      <div class="iconLinks">
+        <a href="./" target="_blank" rel="noopener"><img src="apple-touch-icon.png" alt="" loading="lazy">青</a>
+        <a href="green.html" target="_blank" rel="noopener"><img src="icon-green.png" alt="" loading="lazy">緑</a>
+        <a href="pink.html" target="_blank" rel="noopener"><img src="icon-pink.png" alt="" loading="lazy">ピンク</a>
+        <a href="red.html" target="_blank" rel="noopener"><img src="icon-red.png" alt="" loading="lazy">赤</a>
+        <a href="purple.html" target="_blank" rel="noopener"><img src="icon-purple.png" alt="" loading="lazy">紫</a>
+        <a href="yellow.html" target="_blank" rel="noopener"><img src="icon-yellow.png" alt="" loading="lazy">黄</a>
+        <a href="gray.html" target="_blank" rel="noopener"><img src="icon-gray.png" alt="" loading="lazy">グレー</a>
+      </div>
+      <p class="hint">アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
+    </details>
+
     <h3>各時限の時刻</h3>
     <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
     <table id="sTimes"></table>
 
     <h3>シラバス検索</h3>
-    <input id="sSyllabus" type="url" inputmode="url" placeholder="例: https://syllabus.example.ac.jp/search?q={授業名}" aria-label="シラバス検索のURL">
-    <p class="hint">{授業名} のところに授業名が入るよ。URLを登録してない授業は、ここで開く</p>
+    <input id="sSyllabus" type="url" inputmode="url" placeholder="シラバス検索ページのURL" aria-label="シラバス検索のURL">
+    <p class="hint">いつもシラバスを検索してるページのURLを入れてね。授業の「開く」を押すと、授業名をコピーしてこのページを開くよ。検索欄に貼り付ければOK</p>
 
     <details id="aiBox">
       <summary>画像読み取り（AI）の設定</summary>
@@ -232,6 +317,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
