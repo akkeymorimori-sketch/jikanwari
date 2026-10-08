@@ -382,7 +382,24 @@ function lastClassDate(c, t = term(), now = new Date()) {
   return todayStr();
 }
 
-const untilFor = (c, t = term(), from = new Date()) => nextOccurrence(c, t, from)?.end.getTime() ?? null;
+// 集中講義：from〜to の日が授業日
+function intOn(c, date) {
+  if (c.day !== -1 || !c.from) return false;
+  const k = ymd(date);
+  return k >= c.from && k <= (c.to || c.from);
+}
+const intsOn = (date, t = term()) => t.courses.filter(c => intOn(c, date));
+
+// 集中講義の「次回だけ」は最終日の終わりで消える
+const untilFor = (c, t = term(), from = new Date()) => {
+  if (c.day === -1) {
+    const last = parseYmd(c.to || c.from);
+    if (!last) return null;
+    last.setHours(23, 59, 59, 999);
+    return last > from ? last.getTime() : null;
+  }
+  return nextOccurrence(c, t, from)?.end.getTime() ?? null;
+};
 
 // 「次回だけ」は「登録した後の最初の授業」の終了時刻で消える
 function recomputeUntil() {
@@ -577,6 +594,11 @@ function renderNow() {
 function todayFlow(now, t = term()) {
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const rows = [];
+  const today = ymd(now);
+  const absBtn = c => {
+    const on = c.absences.includes(today);
+    return ` <button type="button" class="flowAbs${on ? ' on' : ''}" data-abs="${c.id}">${on ? '欠席済' : '欠席'}</button>`;
+  };
   for (const c of coursesOn(now, t)) {
     const o = occurrence(c, now);
     const a = absInfo(c);
@@ -584,58 +606,51 @@ function todayFlow(now, t = term()) {
       min: o ? o.start.getHours() * 60 + o.start.getMinutes() : 2000 + c.period,
       time: o ? hm(o.start) : `${c.period}限`,
       label: `${c.period}限 ${esc(nm(c))}` + (c.room ? ` <small>${esc(c.room)}</small>` : '') +
-        (a.left != null && a.left <= 1 ? ` <span class="absWarn">⚠欠席${a.n}/${a.max}</span>` : ''),
+        (a.left != null && a.left <= 1 ? ` <span class="absWarn">⚠欠席${a.n}/${a.max}</span>` : '') + absBtn(c),
       past: !!o && o.end <= now, id: c.id, cls: 'f-cls'
     });
   }
-  for (const e of eventsOn(ymd(now))) {
-    const s = toMin(e.start), en = toMin(e.end);
-    const end = e.end ? `〜${en != null && s != null && en <= s ? '翌' : ''}${e.end}` : '';
+  for (const c of intsOn(now, t)) {
     rows.push({
-      min: s ?? -1, time: e.start || '',
-      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : ''),
-      past: s != null && en != null && en > s && en <= nowMin, id: '', cls: `f-${e.kind}`
+      min: -2, time: '集中',
+      label: esc(nm(c)) + (c.room ? ` <small>${esc(c.room)}</small>` : '') + absBtn(c),
+      past: false, id: c.id, cls: 'f-cls f-int'
     });
   }
-  const left = rows.filter(r => !r.past);
-  if (!left.length) return '';
-  // 残りが授業1つだけなら「次の授業」と同じなので出さない
-  if (left.length === 1 && rows.every(r => r.cls === 'f-cls')) return '';
-  rows.sort((a, b) => a.min - b.min);
-  return '<h3 class="flowH">今日の流れ</h3><ul class="flow">' + rows.map(r =>
-    `<li class="${r.cls}${r.past ? ' past' : ''}"${r.id ? ` data-id="${r.id}"` : ''}>` +
-    `<span class="ft">${esc(r.time)}</span><span class="fl">${r.label}</span></li>`).join('') + '</ul>';
-}
 
 /* ===== 画面：今日・明日の持ち物 ===== */
 let packList = [], packKey = '';
 
-// 今日まだ始まってない授業があれば今日、なければ次の授業日
+// 今日まだ始まってない授業があれば今日、なければ次の授業日（集中講義も含む）
 function packTarget(now) {
   const t = term(), s = parseYmd(t.start);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const pending = coursesOn(today, t).some(c => occurrence(c, today)?.start > now);
-  const base = searchBase(pending ? today : addDays(today, 1), t);
+  const later = (c, date) => occurrence(c, date)?.start > now;
+  const pending = coursesOn(today, t).concat(intsOn(today, t)).some(c => later(c, today));
+  const from = pending ? today : addDays(today, 1);
+  const span = SEARCH_DAYS + Math.max(0, dayDiff(searchBase(from, t), from));
   const notes = [], seen = new Set();
   const note = (key, text) => { if (!seen.has(key)) { seen.add(key); notes.push(text); } };
 
-  for (let k = 0; k < SEARCH_DAYS; k++) {
-    const date = addDays(base, k);
-    if (pastEnd(date, t)) break;
-    if (!inTerm(date, t)) continue;
-    const off = offInfo(date, t);
-    if (off) {
-      if (t.courses.some(c => c.day === effDay(date, t))) note(off.id, `休み：${offLabel(off)}`);
-      continue;
-    }
+  for (let k = 0; k < span; k++) {
+    const date = addDays(from, k);
     const isToday = dayDiff(date, now) === 0;
-    for (const c of cancelledOn(date, t)) note(`${c.id}@${ymd(date)}`, `休講：${md(date)} ${nm(c)}`);
-    const cs = coursesOn(date, t).filter(c => !isToday || occurrence(c, date)?.start > now);
+    let cs = [];
+    if (inTerm(date, t)) {
+      const off = offInfo(date, t);
+      if (off) {
+        if (t.courses.some(c => c.day === effDay(date, t))) note(off.id, `休み：${offLabel(off)}`);
+      } else {
+        for (const c of cancelledOn(date, t)) note(`${c.id}@${ymd(date)}`, `休講：${md(date)} ${nm(c)}`);
+        cs = coursesOn(date, t).filter(c => !isToday || later(c, date));
+      }
+    }
+    cs = cs.concat(intsOn(date, t).filter(c => !isToday || later(c, date)));
     if (cs.length) {
       const ed = effDay(date, t);
       return {
         date, cs, notes, isToday,
-        first: !!s && dayDiff(s, now) > 0,
+        first: !!s && dayDiff(s, now) > 0 && inTerm(date, t),
         swapped: ed !== dayIndex(date) ? ed : null
       };
     }
@@ -674,7 +689,7 @@ function renderPack() {
   let title = diff === 0 ? `今日 ${md(t.date)}` : diff === 1 ? `明日 ${md(t.date)}` : md(t.date);
   if (t.swapped != null) title += `（${DAYS[t.swapped]}曜授業）`;
   if (t.first) title += '（授業初日）';
-  const names = t.cs.map(c => `${c.period}限 ${esc(nm(c))}`).join('／');
+  const names = t.cs.map(c => `${c.day === -1 ? '集中' : c.period + '限'} ${esc(nm(c))}`).join('／');
   const noteHint = t.notes.length ? `<p class="hint">${t.notes.map(esc).join('、')}</p>` : '';
 
   el.innerHTML =
@@ -747,6 +762,7 @@ function renderGrid() {
     }
   }
   g.innerHTML = h;
+  syncGridBar();
 }
 
 function renderTermSelect() {
@@ -802,6 +818,17 @@ $('#nowCard').addEventListener('click', e => {
   if (sw) {
     state.currentTermId = sw;
     save(); renderAll();
+    return;
+  }
+  const ab = e.target.closest('[data-abs]');
+  if (ab) {
+    const c = findCourse(ab.dataset.abs);
+    if (!c) return;
+    const d = ymd(new Date());
+    const on = c.absences.includes(d);
+    withUndo(on ? `「${nm(c)}」の欠席を取り消したよ` : `「${nm(c)}」を欠席にしたよ`, () => {
+      c.absences = on ? c.absences.filter(x => x !== d) : c.absences.concat(d);
+    });
     return;
   }
   const n = e.target.closest('.nc, .flow li[data-id]');
@@ -927,7 +954,7 @@ function renderDetail() {
     `<li><span>` +
     (i.type === 'always'
       ? `<button class="tag" data-toggle="${i.id}">毎回</button>`
-      : `<button class="tag next" data-toggle="${i.id}">次回${i.until ? '・' + md(new Date(i.until)) : ''}</button>`) +
+      : `<button class="tag next" data-toggle="${i.id}">${c.day === -1 ? '期間中' : '次回'}${i.until ? '・' + md(new Date(i.until)) :
     `${esc(i.text)}</span><button class="x" data-del="${i.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
 
@@ -1140,8 +1167,9 @@ function removeCourse(c) {
 
 $('#cDelete').onclick = () => {
   if (!confirm('この授業とメモ・課題・欠席の記録を削除する？')) return;
-  removeCourse(cur());
-  save(); renderAll(); $('#courseDlg').close();
+  const c = cur();
+  withUndo(`「${nm(c)}」を削除したよ`, () => removeCourse(c));
+  $('#courseDlg').close();
 };
 
 // 変更があれば確認して、開く前の状態に戻す
@@ -1201,7 +1229,6 @@ function tasksDue(k) {
   for (const t of state.terms) for (const c of t.courses) for (const x of c.tasks)
     if (x.due === k) out.push({ c, x });
   for (const x of state.myTasks) if (x.due === k) out.push({ c: selfCourse, x });
-  return out;
   return out;
 }
 function intensiveOn(k) {
@@ -1812,7 +1839,14 @@ function applyImport(replace) {
 
   // 引き継ぐのは「授業名・曜日・時限」が全部同じ授業だけ（1対1）
   const t = term(), old = courses(), used = new Set();
-  const pairs = rows.map(r => {
+  let skipped = 0;
+  const list = replace ? rows : rows.filter(r => {
+    const dup = old.some(c => c.name === r.name && c.day === r.day && c.period === r.period);
+    if (dup) skipped++;
+    return !dup;
+  });
+  if (!list.length) return alert('全部もう登録されてるよ');
+  const pairs = list.map(r => {
     const prev = replace
       ? old.find(c => !used.has(c) && c.name === r.name && c.day === r.day && c.period === r.period)
       : null;
@@ -1841,6 +1875,7 @@ function applyImport(replace) {
   if (rows.some(r => r.day === 5)) state.showSat = true;
   scheduleChanged();
   $('#importDlg').close();
+  if (!backup && skipped) toast(`もう登録してある${skipped}件は飛ばしたよ`);
   if (backup) toast('時間割を置き換えたよ', () => {
     t.courses = backup.courses;
     t.cancels = backup.cancels;
@@ -1927,9 +1962,11 @@ $('#termList').addEventListener('click', e => {
   if (state.terms.length === 1) return alert('学期は最低1つ必要だよ');
   const t = state.terms.find(x => x.id === id);
   if (!confirm(`「${t.name}」を削除する？授業・メモ・課題も全部消えるよ`)) return;
-  state.terms = state.terms.filter(x => x.id !== id);
-  if (state.currentTermId === id) state.currentTermId = state.terms[0].id;
-  save(); renderTermList(); renderOffList(); renderAll();
+  withUndo(`「${t.name}」を削除したよ`, () => {
+    state.terms = state.terms.filter(x => x.id !== id);
+    if (state.currentTermId === id) state.currentTermId = state.terms[0].id;
+  });
+  renderTermList(); renderOffList();
 });
 
 // 授業がない日
@@ -2194,11 +2231,11 @@ $('#restoreFile').onchange = async e => {
     else if (Array.isArray(d.courses)) s = fromV1(d);
     else throw 0;
     if (!confirm('今のデータを置き換えて復元する？')) return;
-    state = normalize({ ...s, keys: state.keys, models: state.models, provider: state.provider });
-    applyTheme(state.theme);
-    scheduleChanged();
+    withUndo('復元したよ', () => {
+      state = normalize({ ...s, keys: state.keys, models: state.models, provider: state.provider });
+      applyTheme(state.theme);
+    });
     $('#settingsDlg').close();
-    alert('復元したよ');
   } catch {
     alert('ファイルが読めなかった');
   } finally {
@@ -2272,8 +2309,8 @@ async function renderShareCode() {
 
 function shareText() {
   const url = location.origin + location.pathname;
-  return `時間割メモの共有コード（${term().name}）\n` +
-    `アプリの「学期」→「時間割を共有」に、このメッセージを丸ごと貼り付けてね\n${url}\n\n` +
+  return `がくログの共有コード（${term().name}）\n` +
+    `アプリの「その他」→「時間割を共有」に、このメッセージを丸ごと貼り付けてね\n${url}\n\n` +
     `${SHARE_TAG}.${shareCode}`;
 }
 
@@ -2450,7 +2487,8 @@ function renderIncome() {
     const cls = left < 0 ? 'over' : pct >= 90 ? 'warn' : '';
     lim = `<div class="bar ${cls}"><i style="width:${pct}%"></i></div>` + (left >= 0
       ? `<p class="inLeft">上限まであと <b>${yen(left)}</b></p>`
-      : `<p class="inLeft over">上限を ${yen(-left)} こえてる</p>`);
+      : `<p class="inLeft over">上限を ${yen(-left)} こえてる</p>`) +
+      '<p class="hint">通勤手当が入ってる・扶養が気になるときは、親か勤務先に確認してね</p>';
   }
   // バイト先ごと
   const jobs = new Map();
@@ -2676,9 +2714,11 @@ $('#inList').addEventListener('click', e => {
   }
   const id = e.target.dataset.indel;
   if (!id || !confirm('この記録を消す？')) return;
-  state.incomes = state.incomes.filter(k => k.id !== id);
   if (id === inEditId) resetInForm();
-  save(); renderIncome();
+  withUndo('記録を消したよ', () => {
+    state.incomes = state.incomes.filter(k => k.id !== id);
+  });
+  renderIncome();
 });
 
 /* ===== 給与明細の読み取り（範囲選択・塗りつぶし） ===== */
@@ -2861,22 +2901,228 @@ $('#scanRun').onclick = async () => {
 };
 
 /* ===== 「元に戻す」表示 ===== */
+// ダイアログの上にも出るように popover にする（使えない端末は今まで通り）
+const toastEl = $('#toast');
+const canPop = typeof toastEl.showPopover === 'function';
+if (canPop) toastEl.popover = 'manual';
+function showToastEl() {
+  toastEl.hidden = false;
+  if (!canPop) return;
+  if (toastEl.matches(':popover-open')) toastEl.hidePopover();
+  toastEl.showPopover();
+}
+function hideToastEl() {
+  toastEl.hidden = true;
+  if (canPop && toastEl.matches(':popover-open')) toastEl.hidePopover();
+}
+
 let toastTimer = null, toastUndo = null;
 function toast(msg, undo) {
   $('#toastMsg').textContent = msg;
   toastUndo = undo || null;
   $('#toastUndo').hidden = !undo;
-  $('#toast').hidden = false;
+  showToastEl();
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000);
+  toastTimer = setTimeout(() => { hideToastEl(); toastUndo = null; }, 6000);
 }
+
+// 消す・置き換える操作を6秒だけ取り消せるようにする
+function withUndo(msg, action) {
+  const snap = JSON.stringify(state);
+  action();
+  scheduleChanged();
+  toast(msg, () => {
+    state = normalize(JSON.parse(snap));
+    applyTheme(state.theme);
+    scheduleChanged();
+    if ($('#termDlg')?.open) { renderTermList(); renderOffList(); }
+    if ($('#incomeDlg')?.open) { resetInForm(); renderJobChips(); renderIncome(); }
+  });
+}
+
+// 集中講義の日程を変えたら「期間中」の持ち物を付け直す
+$('#courseDlg').addEventListener('close', () => scheduleChanged());
 $('#toastUndo').onclick = () => {
   toastUndo?.();
   toastUndo = null;
-  $('#toast').hidden = true;
+  hideToastEl();
+};
+
+/* ===== カレンダー書き出し（.ics） ===== */
+const ICS_DAYS = 14; // 持ち物は今日から2週間分
+const icsDate = d => ymd(d).replace(/-/g, '');
+const icsEsc = s => String(s)
+  .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+
+// 1行75バイトまでのルールに合わせて折り返す
+function icsFold(line) {
+  const enc = new TextEncoder(), out = [];
+  let cur = '', size = 0;
+  for (const ch of line) {
+    const n = enc.encode(ch).length;
+    if (size + n > (out.length ? 74 : 75)) { out.push(cur); cur = ''; size = 0; }
+    cur += ch; size += n;
+  }
+  out.push(cur);
+  return out.join('\r\n ');
+}
+
+// 終日の予定。通知は前日21時（当日0時の3時間前）
+function icsEvent(uid, date, title, desc, stamp, seq) {
+  return [
+    'BEGIN:VEVENT',
+    `UID:${uid}@gakulog`,
+    `DTSTAMP:${stamp}`,
+    `SEQUENCE:${seq}`,
+    `DTSTART;VALUE=DATE:${icsDate(date)}`,
+    `DTEND;VALUE=DATE:${icsDate(addDays(date, 1))}`,
+    `SUMMARY:${icsEsc(title)}`,
+    desc ? `DESCRIPTION:${icsEsc(desc)}` : '',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    `DESCRIPTION:${icsEsc(title)}`,
+    'TRIGGER:-PT3H',
+    'END:VALARM',
+    'END:VEVENT'
+  ].filter(Boolean);
+}
+
+function buildIcs() {
+  const t = term(), lines = [];
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const seq = Math.floor(Date.now() / 60000);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let nTask = 0, nPack = 0;
+
+  // 課題の締切（終わってないもの・今日以降）
+  for (const c of [...courses(), selfCourse]) for (const k of c.tasks) {
+    if (k.done || !k.due) continue;
+    const d = parseYmd(k.due);
+    if (!d || d < today) continue;
+    const from = c === selfCourse ? '' : `授業：${nm(c)}`;
+    lines.push(...icsEvent(`task-${k.id}`, d, `〆 ${k.title}`, from, stamp, seq));
+    nTask++;
+  }
+
+  // 持ち物（授業がある日ごとに1件）
+  for (let i = 0; i < ICS_DAYS; i++) {
+    const date = addDays(today, i);
+    const cs = coursesOn(date, t).concat(intsOn(date, t));
+    const all = [], desc = [];
+    for (const c of cs) {
+      const o = c.day === -1 ? null : occurrence(c, date);
+      const its = itemsFor(c, o ? o.start : date).map(x => x.text.trim()).filter(Boolean);
+      if (!its.length) continue;
+      for (const x of its) if (!all.includes(x)) all.push(x);
+      desc.push(`${c.day === -1 ? '集中' : c.period + '限'} ${nm(c)}：${its.join('、')}`);
+    }
+    if (!all.length) continue;
+    lines.push(...icsEvent(`pack-${ymd(date)}`, date, `持ち物：${all.join('、')}`, desc.join('\n'), stamp, seq));
+    nPack++;
+  }
+
+  const text = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//gakulog//JP',
+    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:がくログ',
+    ...lines, 'END:VCALENDAR'
+  ].map(icsFold).join('\r\n') + '\r\n';
+  return { text, nTask, nPack };
+}
+
+const icsBox = document.createElement('div');
+icsBox.className = 'icsBox';
+icsBox.innerHTML =
+  '<button type="button" id="icsBtn">📅 カレンダーに書き出す</button>' +
+  '<p class="hint">課題の締切と、2週間分の持ち物を書き出すよ。通知は前日21時。内容を変えたら書き出し直してね</p>';
+$('#exportBtn').parentElement.after(icsBox);
+
+$('#icsBtn').onclick = async () => {
+  const { text, nTask, nPack } = buildIcs();
+  if (!nTask && !nPack) return alert('書き出す課題も持ち物もまだないよ');
+  const name = `gakulog-${todayStr()}.ics`;
+  const blob = new Blob([text], { type: 'text/calendar' });
+  const file = new File([blob], name, { type: 'text/calendar' });
+  let shared = false;
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); shared = true; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  if (!shared) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  toast(`課題${nTask}件・持ち物${nPack}日分を書き出したよ`);
 };
 
 /* ===== 起動 ===== */
+/* ===== 時間割タブの画像読み込み ===== */
+const gridBar = document.createElement('div');
+gridBar.id = 'gridBar';
+gridBar.className = 'gridBar';
+gridBar.innerHTML = '<button type="button" id="gridImport">📷 画像から読み込む</button>';
+$('#grid').before(gridBar);
+$('#gridImport').onclick = () => $('#importBtn').click();
+function syncGridBar() {
+  const bar = document.getElementById('gridBar');
+  if (bar) bar.hidden = !state.keys[state.provider];
+}
+
+/* ===== ＋ボタン ===== */
+const fab = document.createElement('div');
+fab.id = 'fab';
+fab.innerHTML =
+  '<div id="fabMenu" hidden>' +
+  '<button type="button" data-fab="task">📝 課題</button>' +
+  '<button type="button" data-fab="other">📅 予定</button>' +
+  '<button type="button" data-fab="job">💼 バイト</button>' +
+  '<button type="button" data-fab="note">🗒 メモ</button>' +
+  '<button type="button" data-fab="course">📚 授業</button>' +
+  '</div>' +
+  '<button type="button" id="fabBtn" class="primary" aria-label="追加">＋</button>';
+document.body.append(fab);
+
+function closeFab() {
+  $('#fabMenu').hidden = true;
+  $('#fabBtn').classList.remove('open');
+}
+$('#fabBtn').onclick = () => {
+  const m = $('#fabMenu');
+  m.hidden = !m.hidden;
+  $('#fabBtn').classList.toggle('open', !m.hidden);
+};
+document.addEventListener('click', e => {
+  if (!$('#fabMenu').hidden && !e.target.closest('#fab')) closeFab();
+});
+function goField(head, input) {
+  setTimeout(() => {
+    $(head)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    $(input)?.focus({ preventScroll: true });
+  }, 60);
+}
+$('#fabMenu').addEventListener('click', e => {
+  const k = e.target.closest('[data-fab]')?.dataset.fab;
+  if (!k) return;
+  closeFab();
+  if (k === 'task') {
+    showTab('cal');
+    goField('#ctHead', '#ctTitle');
+  } else if (k === 'other' || k === 'job') {
+    showTab('cal');
+    $('#evKind').value = k;
+    $('#evKind').dispatchEvent(new Event('change'));
+    goField('#evHead', '#evTitle');
+  } else if (k === 'note') {
+    showTab('today');
+    goField('#noteCard', '#noteInput');
+  } else if (k === 'course') {
+    showTab('grid');
+    toast('空いてるマスをタップすると授業を追加できるよ');
+  }
+});
+
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
 applyTheme(state.theme);
 recomputeUntil();

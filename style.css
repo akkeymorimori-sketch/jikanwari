@@ -446,3 +446,39 @@ details.sec > a, #aiBox > a { display: block; }
 /* 長押しで文字選択やメニューが出ないように */
 .chip { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .chips:empty + .hint { display: none; }
+/* 時間割タブの画像読み込み */
+.gridBar { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+.gridBar[hidden] { display: none; }
+
+/* ＋ボタン */
+#fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+#fabBtn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 28px;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .25);
+  transition: transform .15s;
+}
+#fabBtn.open { transform: rotate(45deg); }
+#fabMenu { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+#fabMenu[hidden] { display: none; }
+#fabMenu button { box-shadow: 0 2px 8px rgba(0, 0, 0, .2); white-space: nowrap; }
+/* トーストを popover にしたときのブラウザ標準の見た目を消す */
+:where(#toast)[popover] { inset: auto; margin: 0; border: 0; padding: 0; overflow: visible; color: inherit; background: none; }
+
+/* 今日の流れの欠席ボタン */
+.flow .flowAbs { margin-left: 6px; padding: 2px 8px; font-size: 12px; min-height: 0; }
+.flow .flowAbs.on { background: #d33; color: #fff; border-color: transparent; }
+.icsBox { margin-top: 12px; }
