@@ -5,15 +5,15 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1d1f24" media="(prefers-color-scheme: dark)">
-<meta name="apple-mobile-web-app-title" content="時間割メモ">
+<meta name="apple-mobile-web-app-title" content="がくログ">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
-<title>時間割メモ</title>
+<title>がくログ</title>
 <link rel="stylesheet" href="style.css?V=25">
 </head>
 <body>
 <header>
-  <h1>時間割メモ</h1>
+  <h1>がくログ</h1>
   <select id="termSelect" aria-label="学期"></select>
 </header>
 
@@ -511,7 +511,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script>window.addEventListener('error', e => alert('エラー: ' + e.message + '（' + (e.lineno || '?') + '行目）'));</script>
 <script src="app.js?V=25"></script>
 </body>
 </html>

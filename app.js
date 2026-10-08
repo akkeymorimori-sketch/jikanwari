@@ -2520,7 +2520,7 @@ longPress($('#inJobChips'), '[data-job]', b => {
 });
 
 /* ===== メモ・一言日記・意見箱 ===== */
-const FEEDBACK_URL = ''; // GoogleフォームのURLを入れるとボタンが出る
+const FEEDBACK_URL = 'https://forms.gle/MxiKc1onLaKgThGGA'; // GoogleフォームのURLを入れるとボタンが出る
 
 function renderNotes() {
   const today = todayStr();
