@@ -617,6 +617,24 @@ function todayFlow(now, t = term()) {
       past: false, id: c.id, cls: 'f-cls f-int'
     });
   }
+  for (const e of eventsOn(ymd(now))) {
+    const s = toMin(e.start), en = toMin(e.end);
+    const end = e.end ? `〜${en != null && s != null && en <= s ? '翌' : ''}${e.end}` : '';
+    rows.push({
+      min: s ?? -1, time: e.start || '',
+      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : ''),
+      past: s != null && en != null && en > s && en <= nowMin, id: '', cls: `f-${e.kind}`
+    });
+  }
+  const left = rows.filter(r => !r.past);
+  if (!left.length) return '';
+  // 残りが授業1つだけなら「次の授業」と同じなので出さない
+  if (left.length === 1 && rows.every(r => r.cls === 'f-cls')) return '';
+  rows.sort((a, b) => a.min - b.min);
+  return '<h3 class="flowH">今日の流れ</h3><ul class="flow">' + rows.map(r =>
+    `<li class="${r.cls}${r.past ? ' past' : ''}"${r.id ? ` data-id="${r.id}"` : ''}>` +
+    `<span class="ft">${esc(r.time)}</span><span class="fl">${r.label}</span></li>`).join('') + '</ul>';
+}
 
 /* ===== 画面：今日・明日の持ち物 ===== */
 let packList = [], packKey = '';
@@ -954,7 +972,7 @@ function renderDetail() {
     `<li><span>` +
     (i.type === 'always'
       ? `<button class="tag" data-toggle="${i.id}">毎回</button>`
-      : `<button class="tag next" data-toggle="${i.id}">${c.day === -1 ? '期間中' : '次回'}${i.until ? '・' + md(new Date(i.until)) :
+      : `<button class="tag next" data-toggle="${i.id}">${c.day === -1 ? '期間中' : '次回'}${i.until ? '・' + md(new Date(i.until)) : ''}</button>`) +
     `${esc(i.text)}</span><button class="x" data-del="${i.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
 
