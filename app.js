@@ -541,7 +541,7 @@ function renderNow() {
   if (!courses().length) {
     el.innerHTML = '<h2>はじめに</h2><p class="muted">まずは時間割を作ろう</p><div class="startBtns">' +
       '<button data-go="grid" class="primary">手入力で作る</button>' +
-      (state.keys[state.provider] ? '<button data-go="import">画像から読み込む</button>' : '') +
+      '<button data-go="import">📷 写真から読み込む</button>' +
       '<button data-go="share">共有コードから読み込む</button></div>';
     return;
   }
@@ -815,7 +815,7 @@ function renderIntensive() {
 }
 
 function renderAll() {
-  $('#importBtn').hidden = !state.keys[state.provider];
+  $('#importBtn').hidden = false;
   renderTermSelect();
   renderNow();
   renderPack();
@@ -2965,6 +2965,345 @@ $('#toastUndo').onclick = () => {
   toastUndo = null;
   hideToastEl();
 };
+/* ===== 写真から追加（AI読み取りの入口） ===== */
+const hasKey = () => !!state.keys[state.provider];
+
+const photoDlg = document.createElement('dialog');
+photoDlg.id = 'photoDlg';
+photoDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2 id="phTitle">写真から追加</h2>' +
+  '<button type="button" class="x" id="phX" aria-label="閉じる">×</button></div>' +
+  '<div id="phPick">' +
+  '<p class="hint">何の写真か選んでね。AIが読み取って、確認してから保存するよ</p>' +
+  '<button type="button" class="phOpt" data-ph="grid"><b>📚 時間割</b><small>時間割の画像から授業をまとめて登録</small></button>' +
+  '<button type="button" class="phOpt" data-ph="pay"><b>💴 給与明細</b><small>支給日と金額を読み取って収入に記録</small></button>' +
+  '<button type="button" class="phOpt" data-ph="shift"><b>💼 シフト表</b><small>PDFや写真から自分の勤務をカレンダーに追加</small></button>' +
+  '</div>' +
+  '<div id="phGuide" hidden>' +
+  '<p>読み取りには、AIの「APIキー」が1回だけ必要。GoogleのAI Studioなら無料で取れるよ</p>' +
+  '<ol class="phSteps">' +
+  '<li>「キーを取りに行く」を押して、Googleアカウントでログイン</li>' +
+  '<li>APIキーを作るボタンを押して、出てきたキーをコピー</li>' +
+  '<li>このアプリに戻って「設定を開く」→ AIの欄に貼り付けて保存</li>' +
+  '</ol>' +
+  '<p class="hint">キーはこのスマホの中にだけ保存されて、書き出しにも入らないよ。Geminiの無料枠だと、送った画像がGoogleの製品改善に使われる</p>' +
+  '<div class="row split">' +
+  '<a id="phKey" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">キーを取りに行く</a>' +
+  '<button type="button" class="primary" id="phSet">設定を開く</button>' +
+  '</div></div></div>';
+document.body.append(photoDlg);
+
+function openPhoto(view = 'pick') {
+  $('#phPick').hidden = view !== 'pick';
+  $('#phGuide').hidden = view !== 'guide';
+  $('#phTitle').textContent = view === 'guide' ? 'AIの準備' : '写真から追加';
+  if (!photoDlg.open) photoDlg.showModal();
+  photoDlg.scrollTop = 0;
+}
+
+// 時間割の読み込み・収入は、キーがないときは案内を出す
+const importOpen = $('#importBtn').onclick;
+$('#importBtn').onclick = () => hasKey() ? importOpen() : openPhoto('guide');
+const incomeOpen = $('#incomeBtn').onclick;
+$('#incomeBtn').onclick = () => { incomeOpen(); syncScanGuide(); };
+
+function goPhoto(kind) {
+  if (photoDlg.open) photoDlg.close();
+  if (kind === 'shift') return openShift();
+  if (kind === 'grid') return importOpen();
+  $('#incomeBtn').click();
+  $('#inScan').open = true;
+  setTimeout(() => $('#inScan').scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+}
+function startPhoto(kind) {
+  if (!hasKey()) return openPhoto('guide');
+  goPhoto(kind);
+}
+
+// 収入の画面：キーがなければ「AIの準備」ボタンを出す
+function syncScanGuide() {
+  let b = $('#scanGuide');
+  if (!b) {
+    b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'scanGuide';
+    b.textContent = '📷 AIの準備をする';
+    b.onclick = () => openPhoto('guide');
+    $('#scanNote').after(b);
+  }
+  b.hidden = hasKey();
+}
+
+photoDlg.addEventListener('click', e => {
+  const o = e.target.closest('[data-ph]');
+  if (o) startPhoto(o.dataset.ph);
+});
+$('#phX').onclick = () => photoDlg.close();
+$('#phSet').onclick = () => {
+  photoDlg.close();
+  openSettings();
+  $('#aiBox').open = true;
+  setTimeout(() => $('#aiBox').scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+};
+
+/* ===== シフト表の読み取り ===== */
+// PDFを画像にするライブラリ（使うときだけ読み込む）
+const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/';
+let pdfLib = null;
+async function loadPdfLib() {
+  if (pdfLib) return pdfLib;
+  const lib = await import(PDFJS + 'pdf.min.mjs');
+  lib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.mjs';
+  return (pdfLib = lib);
+}
+
+const shiftPrompt = name => `これはアルバイトのシフト表の画像です（1日分の表のことも、1か月分の表のこともあります）。「${name}」さんの勤務だけを探して、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
+形式: [{"month":10,"day":17,"start":"09:30","end":"15:00"}]
+ルール:
+- 名前の欄が「${name}」と完全に同じものだけを使う。名字だけ同じ別の人（例：「鈴木」と「鈴木大介」）や、似た字の名前は使わない。
+- 1日に2回入っている場合（午前と午後の両方など）は、それぞれ別の要素にする。
+- monthとdayは、その勤務の日付（表の上の日付や、日付の列）を数字で。年は書かない。
+- startとendは勤務の入り・退きの時刻で、24時間表記のHH:MM。休憩や時間数（h）の欄は使わない。
+- 「公休」「休み」などの欄に名前があるだけで、時刻がない日は出力しない。
+- 見つからなければ [] だけを出力する。読み取れない部分を推測で埋めない。
+- ほかの人の名前や、行事・メモの欄の内容は出力しない。`;
+
+const shiftDlg = document.createElement('dialog');
+shiftDlg.id = 'shiftDlg';
+shiftDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2>シフト表から追加</h2>' +
+  '<button type="button" class="x" id="shX" aria-label="閉じる">×</button></div>' +
+  '<label>表の中の自分の名前（表に書いてあるとおりに）<input id="shName" placeholder="例：山田" autocomplete="off"></label>' +
+  '<label>カレンダーに入れる名前<input id="shJob" placeholder="例：バイト先の名前" list="shJobList" autocomplete="off"></label>' +
+  '<datalist id="shJobList"></datalist>' +
+  '<label class="fileBtn">PDF・写真を選ぶ<input type="file" id="shFile" accept="application/pdf,image/*" multiple class="vh"></label>' +
+  '<p class="hint">PDFは全ページ、写真は何枚でもまとめて選べるよ</p>' +
+  '<div id="shPages" class="shPages"></div>' +
+  '<p class="hint">チェックしたページは丸ごとAIに送られる（ほかの人の名前も入る）。いらないページはチェックを外してね</p>' +
+  '<button type="button" class="primary" id="shRun" disabled>読み取る</button>' +
+  '<p id="shStatus" class="hint" aria-live="polite"></p>' +
+  '<div id="shResult"></div>' +
+  '</div>';
+document.body.append(shiftDlg);
+
+let shDoc = null, shSrc = [], shRunning = false, shDoneName = '', shRows = [];
+const shDone = new Map(); // ページ番号 → 読み取り結果
+
+function openShift() {
+  $('#shName').value = state.shiftName || '';
+  $('#shJob').value = state.shiftJob || '';
+  const jobs = new Set();
+  for (const p of state.evPresets) if (p.kind === 'job' && p.title) jobs.add(p.title);
+  for (const x of state.incomes) if (x.job) jobs.add(x.job);
+  $('#shJobList').innerHTML = [...jobs].map(v => `<option value="${esc(v)}">`).join('');
+  if (!shiftDlg.open) shiftDlg.showModal();
+}
+$('#shX').onclick = () => shiftDlg.close();
+
+function shReset() {
+  shDoc?.destroy?.();
+  shDoc = null; shSrc = []; shRows = [];
+  shDone.clear();
+  $('#shPages').innerHTML = '';
+  $('#shResult').innerHTML = '';
+  $('#shStatus').textContent = '';
+  $('#shRun').disabled = true;
+  $('#shRun').textContent = '読み取る';
+}
+
+function shLoadImg(url) {
+  return new Promise((ok, ng) => {
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = ng;
+    img.src = url;
+  });
+}
+
+// 1ページ分を画像にする（長い辺が max px）
+async function shCanvas(src, max) {
+  const cv = document.createElement('canvas');
+  if (src.n) {
+    const page = await shDoc.getPage(src.n);
+    const v1 = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: max / Math.max(v1.width, v1.height) });
+    cv.width = Math.round(vp.width);
+    cv.height = Math.round(vp.height);
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  } else {
+    const url = URL.createObjectURL(src.file);
+    try {
+      const img = await shLoadImg(url);
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      cv.width = Math.round(img.width * s);
+      cv.height = Math.round(img.height * s);
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  return cv;
+}
+
+async function renderShPages() {
+  const box = $('#shPages');
+  box.innerHTML = shSrc.map((_, i) =>
+    `<label class="shPage"><input type="checkbox" data-shp="${i}" checked><span>${i + 1}</span></label>`).join('');
+  for (const [i, s] of shSrc.entries()) {
+    const cv = await shCanvas(s, 160);
+    box.children[i]?.prepend(cv);
+  }
+}
+
+$('#shFile').onchange = async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  shReset();
+  const st = $('#shStatus');
+  try {
+    const pdf = files.find(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (pdf) {
+      st.textContent = 'PDFを開いてる…';
+      const lib = await loadPdfLib();
+      shDoc = await lib.getDocument({ data: await pdf.arrayBuffer() }).promise;
+      for (let n = 1; n <= shDoc.numPages; n++) shSrc.push({ n });
+    } else {
+      for (const f of files) shSrc.push({ file: f });
+    }
+    st.textContent = '準備中…';
+    await renderShPages();
+    st.textContent = `${shSrc.length}ページ。読み取るページにチェックを入れてね`;
+    $('#shRun').disabled = false;
+  } catch (err) {
+    shReset();
+    st.textContent = 'ファイルが開けなかった：' + (err?.message || err);
+  }
+};
+
+// 年は書いてないので、今日にいちばん近い年にする
+function shYmd(m, d) {
+  m = +m; d = +d;
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return '';
+  const now = new Date(), y0 = now.getFullYear();
+  let best = null;
+  for (const y of [y0 - 1, y0, y0 + 1]) {
+    const dt = new Date(y, m - 1, d);
+    if (dt.getMonth() !== m - 1) continue;
+    if (!best || Math.abs(dt - now) < Math.abs(best - now)) best = dt;
+  }
+  return best ? ymd(best) : '';
+}
+// 「9:30」「25:00」なども HH:MM に
+function shTime(v) {
+  const m = String(v || '').trim().match(/^(\d{1,2})[:：](\d{2})$/);
+  if (!m || +m[1] > 47 || +m[2] > 59) return '';
+  return `${pad(+m[1] % 24)}:${m[2]}`;
+}
+
+$('#shRun').onclick = async () => {
+  if (shRunning) return;
+  const name = $('#shName').value.trim();
+  if (!name) return alert('表の中の自分の名前を入れてね');
+  if (!hasKey()) return openPhoto('guide');
+  state.shiftName = name;
+  state.shiftJob = $('#shJob').value.trim();
+  save();
+  if (name !== shDoneName) { shDone.clear(); shDoneName = name; }
+
+  const todo = [...document.querySelectorAll('#shPages [data-shp]:checked')]
+    .map(x => +x.dataset.shp).filter(i => !shDone.has(i));
+  if (!todo.length) return showShRows();
+
+  const st = $('#shStatus');
+  shRunning = true;
+  $('#shRun').disabled = true;
+  try {
+    for (const [k, i] of todo.entries()) {
+      if (k > 0) await sleep(4000); // 回数制限にかからないように間をあける
+      st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
+      const cv = await shCanvas(shSrc[i], 1800);
+      const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+      cv.width = cv.height = 0;
+      const txt = await callVision(b64, shiftPrompt(name), st);
+      const s = txt.indexOf('['), e = txt.lastIndexOf(']');
+      if (s < 0 || e < s) throw new Error(`${i + 1}ページ目の結果がうまく読めなかった`);
+      shDone.set(i, JSON.parse(txt.slice(s, e + 1)));
+      showShRows();
+    }
+    st.textContent = '読み取り終わったよ。下を確認して追加してね';
+    $('#shRun').textContent = '読み取る';
+  } catch (err) {
+    st.textContent = `エラー: ${friendlyError(err)}（${shDone.size}ページ分は読めてる。もう一回押すと続きから）`;
+    $('#shRun').textContent = '続きから読み取る';
+  } finally {
+    shRunning = false;
+    $('#shRun').disabled = false;
+    showShRows();
+  }
+};
+
+function showShRows() {
+  const map = new Map();
+  for (const arr of shDone.values()) for (const r of Array.isArray(arr) ? arr : []) {
+    const date = shYmd(r?.month, r?.day), start = shTime(r?.start), end = shTime(r?.end);
+    if (!date || !start) continue;
+    const k = `${date} ${start}`;
+    if (!map.has(k)) map.set(k, { date, start, end });
+  }
+  // 同じ日で、終わりと次の始まりがつながってる勤務は1つにする
+  const list = [...map.values()].sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  shRows = [];
+  for (const r of list) {
+    const p = shRows[shRows.length - 1];
+    if (p && p.date === r.date && p.end && p.end === r.start) p.end = r.end;
+    else shRows.push({ ...r, on: true });
+  }
+  $('#shResult').innerHTML = shRows.length
+    ? '<ul class="shList">' + shRows.map((r, i) =>
+        `<li><label><input type="checkbox" data-shr="${i}" checked>${md(parseYmd(r.date))}</label>` +
+        `<input type="time" data-sht="${i}" data-k="start" value="${r.start}" aria-label="入り">〜` +
+        `<input type="time" data-sht="${i}" data-k="end" value="${r.end}" aria-label="退き"></li>`).join('') +
+      '</ul>' +
+      `<button type="button" class="primary" id="shAdd">${shRows.length}件をカレンダーに追加</button>`
+    : shDone.size
+      ? '<p class="muted">勤務が見つからなかった。名前が表の書き方と同じか確認してね</p>'
+      : '';
+}
+
+$('#shResult').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.shr != null) shRows[+t.dataset.shr].on = t.checked;
+  if (t.dataset.sht != null) shRows[+t.dataset.sht][t.dataset.k] = t.value;
+  const n = shRows.filter(r => r.on && r.start).length;
+  if ($('#shAdd')) $('#shAdd').textContent = `${n}件をカレンダーに追加`;
+});
+
+$('#shResult').addEventListener('click', e => {
+  if (e.target.id !== 'shAdd') return;
+  const title = $('#shJob').value.trim();
+  state.shiftJob = title;
+  const picks = shRows.filter(r => r.on && r.start);
+  if (!picks.length) return alert('追加する勤務を選んでね');
+  // 同じ日・同じ名前・同じ時刻のバイトは二重に入れない
+  const isDup = r => state.events.some(x => x.date === r.date && x.kind === 'job' &&
+    x.title === title && x.start === r.start && x.end === r.end);
+  const add = picks.filter(r => !isDup(r)), skipped = picks.length - add.length;
+  if (!add.length) return alert('全部もうカレンダーに入ってるよ');
+  shiftDlg.close();
+  withUndo(`${add.length}件のシフトを追加したよ` + (skipped ? `（${skipped}件は入ってたので飛ばした）` : ''), () => {
+    for (const r of add) state.events.push({ id: uid(), date: r.date, kind: 'job', title, start: r.start, end: r.end });
+    if (title) rememberPreset({ title, kind: 'job', start: '', end: '' });
+  });
+});
 
 /* ===== カレンダー書き出し（.ics） ===== */
 const ICS_DAYS = 14; // 持ち物は今日から2週間分
@@ -3082,10 +3421,10 @@ gridBar.id = 'gridBar';
 gridBar.className = 'gridBar';
 gridBar.innerHTML = '<button type="button" id="gridImport">📷 画像から読み込む</button>';
 $('#grid').before(gridBar);
-$('#gridImport').onclick = () => $('#importBtn').click();
+$('#gridImport').onclick = () => startPhoto('grid');
 function syncGridBar() {
   const bar = document.getElementById('gridBar');
-  if (bar) bar.hidden = !state.keys[state.provider];
+  if (bar) bar.hidden = false;
 }
 
 /* ===== ＋ボタン ===== */
@@ -3093,6 +3432,7 @@ const fab = document.createElement('div');
 fab.id = 'fab';
 fab.innerHTML =
   '<div id="fabMenu" hidden>' +
+  '<button type="button" data-fab="photo" class="fabPhoto">📷 写真から追加</button>' +
   '<button type="button" data-fab="task">📝 課題</button>' +
   '<button type="button" data-fab="other">📅 予定</button>' +
   '<button type="button" data-fab="job">💼 バイト</button>' +
@@ -3124,6 +3464,7 @@ $('#fabMenu').addEventListener('click', e => {
   const k = e.target.closest('[data-fab]')?.dataset.fab;
   if (!k) return;
   closeFab();
+  if (k === 'photo') return openPhoto('pick');
   if (k === 'task') {
     showTab('cal');
     goField('#ctHead', '#ctTitle');
