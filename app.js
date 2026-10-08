@@ -2453,7 +2453,7 @@ function renderIncome() {
       const ms = xs.filter(x => +x.date.slice(5, 7) === i + 1);
       const has = ms.length > 0;
       return `<tr class="${has ? '' : 'empty'}"><td>${i + 1}月</td>` +
-        `<td>${has ? yen(sumGross(ms)) + (netOnly(ms) ? '*' : '') : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>
+      `<td>${has ? yen(sumGross(ms)) + (netOnly(ms) ? '*' : '') : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>`;
     }).join('');
 
   // 記録（新しい順）
@@ -2854,9 +2854,32 @@ function toast(msg, undo) {
   $('#toastUndo').hidden = !undo;
   $('#toast').hidden = false;
   clearTimeout(toastTimer);
-  toast
-Timer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000); } $('#toastUndo').onclick = () => { toastUndo?.(); toastUndo = null; $('#toast').hidden = true; };
+  toastTimer = setTimeout(() => { $('#toast').hidden = true; toastUndo = null; }, 6000);
+}
+$('#toastUndo').onclick = () => {
+  toastUndo?.();
+  toastUndo = null;
+  $('#toast').hidden = true;
+};
 
-/* ===== 起動 ===== */ state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY))); applyTheme(state.theme); recomputeUntil(); prune(); save(); renderAll(); if (brokenSaved) alert('保存データが壊れてて読めなかった。中身は消さずに別名で残してあるよ'); navigator.storage?.persist?.().catch(() => {});
+/* ===== 起動 ===== */
+state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
+applyTheme(state.theme);
+recomputeUntil();
+prune();
+save();
+renderAll();
+if (brokenSaved) alert('保存データが壊れてて読めなかった。中身は消さずに別名で残してあるよ');
+navigator.storage?.persist?.().catch(() => {});
 
-// ダイアログが開いてるときと、タップした直後は自動更新しない let lastTouch = 0; document.addEventListener('pointerdown', () => { lastTouch = Date.now(); }, true); function tick() { if (document.querySelector('dialog[open]')) return; if (Date.now() - lastTouch < 3000) return; prune(); renderAll(); } setInterval(tick, 30000); document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+// ダイアログが開いてるときと、タップした直後は自動更新しない
+let lastTouch = 0;
+document.addEventListener('pointerdown', () => { lastTouch = Date.now(); }, true);
+function tick() {
+  if (document.querySelector('dialog[open]')) return;
+  if (Date.now() - lastTouch < 3000) return;
+  prune();
+  renderAll();
+}
+setInterval(tick, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });

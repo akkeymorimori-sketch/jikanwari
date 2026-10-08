@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=23">
+<link rel="stylesheet" href="style.css?V=25">
 </head>
 <body>
 <header>
@@ -511,6 +511,7 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=23"></script>
+<script>window.addEventListener('error', e => alert('エラー: ' + e.message + '（' + (e.lineno || '?') + '行目）'));</script>
+<script src="app.js?V=25"></script>
 </body>
 </html>
