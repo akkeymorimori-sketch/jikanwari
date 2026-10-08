@@ -3369,13 +3369,14 @@ cutDlg.innerHTML =
   '<div class="dlg">' +
   '<div class="dlgHead"><h2 id="cutTitle">海苔で隠す</h2>' +
   '<button type="button" class="x" id="cutX" aria-label="閉じる">×</button></div>' +
-  '<p class="hint">なぞった帯は切り取って、残りをくっつけて送るよ。日付の行と名前の列、自分の行は残してね</p>' +
+  '<p class="hint">なぞった帯は切り取って、残りをくっつけて送るよ。日付の行と名前の列、自分の行は残してね。２本指で拡大できるよ</p>' +
   '<div class="row cutModes"><button type="button" id="cutH" class="on">横の海苔</button>' +
   '<button type="button" id="cutV">縦の海苔</button></div>' +
-  '<canvas id="cutCv"></canvas>' +
+  '<div id="cutWrap"><canvas id="cutCv"></canvas></div>' +
   '<div class="row cutTools"><button type="button" id="cutUndo">1つ戻す</button>' +
   '<button type="button" id="cutClear">全部消す</button>' +
-  '<button type="button" id="cutAll">ほかのページにも同じ海苔</button></div>' +
+  '<button type="button" id="cutAll">ほかのページにも同じ海苔</button>' +
+  '<button type="button" id="cutZoom" hidden>等倍に戻す</button></div>' +
   '<p class="hint" id="cutInfo"></p>' +
   '<button type="button" class="primary" id="cutDone">できた</button>' +
   '</div>';
@@ -3460,12 +3461,13 @@ function drawCut() {
 async function openCut(i) {
   cutIdx = i;
   $('#cutTitle').textContent = `${i + 1}ページ目を海苔で隠す`;
-  cutBase = await shCanvas(shSrc[i], 1400);
+  cutBase = await shCanvas(shSrc[i], 2000);
   const cv = $('#cutCv');
   cv.width = cutBase.width;
   cv.height = cutBase.height;
-  drawCut();
   if (!cutDlg.open) cutDlg.showModal();
+  fitCut();
+  drawCut();
 }
 
 $('#shPages').addEventListener('click', e => {
@@ -3486,32 +3488,91 @@ function cutPos(e) {
   const r = $('#cutCv').getBoundingClientRect();
   return clamp01(cutMode === 'h' ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width);
 }
-$('#cutCv').addEventListener('pointerdown', e => {
+// 拡大：2本指でつまむ。1本指は海苔
+const cutWrap = $('#cutWrap');
+const cutPts = new Map();
+let zs = 1, zx = 0, zy = 0, cutPinch = null;
+
+function applyZoom() {
+  const w = cutWrap.clientWidth, h = cutWrap.clientHeight;
+  zs = Math.min(6, Math.max(1, zs));
+  zx = Math.min(0, Math.max(w - w * zs, zx));
+  zy = Math.min(0, Math.max(h - h * zs, zy));
+  $('#cutCv').style.transform = `translate(${zx}px, ${zy}px) scale(${zs})`;
+  $('#cutZoom').hidden = zs === 1;
+}
+function resetZoom() { zs = 1; zx = zy = 0; applyZoom(); }
+
+// 画面に収まる大きさにそろえる
+function fitCut() {
+  const cv = $('#cutCv'), pe = cutWrap.parentElement, cs = getComputedStyle(pe);
+  const mw = pe.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const s = Math.min(mw / cv.width, innerHeight * 0.6 / cv.height);
+  cutWrap.style.width = cv.style.width = Math.floor(cv.width * s) + 'px';
+  cutWrap.style.height = cv.style.height = Math.floor(cv.height * s) + 'px';
+  resetZoom();
+}
+
+const pinchInfo = () => {
+  const [p, q] = [...cutPts.values()];
+  return { d: Math.hypot(p.x - q.x, p.y - q.y) || 1, x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+};
+
+cutWrap.addEventListener('pointerdown', e => {
   e.preventDefault();
-  e.target.setPointerCapture(e.pointerId);
+  cutWrap.setPointerCapture(e.pointerId);
+  cutPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (cutPts.size === 2) {
+    cutDrag = null; // 引きかけの海苔は取り消す
+    cutPinch = { ...pinchInfo(), zs, zx, zy };
+    drawCut();
+    return;
+  }
+  if (cutPts.size > 2 || cutPinch) return;
   const p = cutPos(e);
   cutDrag = { d: cutMode, a: p, b: p, s: p };
   drawCut();
 });
-$('#cutCv').addEventListener('pointermove', e => {
+
+cutWrap.addEventListener('pointermove', e => {
+  if (!cutPts.has(e.pointerId)) return;
+  cutPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (cutPinch) {
+    if (cutPts.size < 2) return;
+    const r = cutWrap.getBoundingClientRect(), n = pinchInfo(), s = cutPinch;
+    const ns = Math.min(6, Math.max(1, s.zs * n.d / s.d));
+    // つまみ始めた点が指の真ん中に来続けるように
+    const u = (s.x - r.left - s.zx) / s.zs, v = (s.y - r.top - s.zy) / s.zs;
+    zs = ns;
+    zx = n.x - r.left - u * ns;
+    zy = n.y - r.top - v * ns;
+    applyZoom();
+    return;
+  }
   if (!cutDrag) return;
   const p = cutPos(e);
   cutDrag.a = Math.min(cutDrag.s, p);
   cutDrag.b = Math.max(cutDrag.s, p);
   drawCut();
 });
-$('#cutCv').addEventListener('pointerup', () => {
+
+function cutUp(e, commit) {
+  cutPts.delete(e.pointerId);
+  // つまんだあとは、指が全部離れるまで海苔を引かない
+  if (cutPinch) { if (!cutPts.size) cutPinch = null; return; }
   if (!cutDrag) return;
   const { d, a, b } = cutDrag;
   cutDrag = null;
-  if (b - a > 0.005) {
+  if (commit && b - a > 0.005) {
     shCuts.set(cutIdx, [...(shCuts.get(cutIdx) || []), { d, a, b }]);
-    shDone.delete(cutIdx); // 海苔が変わったら読み直す
+    shDone.delete(cutIdx);
     syncCutBtn(cutIdx);
   }
   drawCut();
-});
-$('#cutCv').addEventListener('pointercancel', () => { cutDrag = null; drawCut(); });
+}
+cutWrap.addEventListener('pointerup', e => cutUp(e, true));
+cutWrap.addEventListener('pointercancel', e => cutUp(e, false));
+$('#cutZoom').onclick = resetZoom;
 
 $('#cutUndo').onclick = () => {
   const cs = (shCuts.get(cutIdx) || []).slice(0, -1);

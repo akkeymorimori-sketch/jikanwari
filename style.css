@@ -519,10 +519,10 @@ details.sec > a, #aiBox > a { display: block; }
 #shRun, #shAdd { width: 100%; margin-top: 8px; }
 .shItem { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .shCutBtn { font-size: 13px; padding: 4px 8px; }
-#cutCv {
-  display: block; margin: 8px auto;
-  max-width: 100%; max-height: 60vh; width: auto; height: auto;
-  touch-action: none; border: 1px solid #ccc;
+#cutWrap {
+  position: relative; overflow: hidden;
+  margin: 8px auto; touch-action: none;
+  outline: 1px solid #ccc;
 }
-.cutModes button.on { background: #2f6fde; color: #fff; }
-.cutTools { flex-wrap: wrap; gap: 6px; }
+#cutCv { display: block; transform-origin: 0 0; }
+
