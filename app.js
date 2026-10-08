@@ -3144,6 +3144,7 @@ function shReset() {
   shDoc?.destroy?.();
   shDoc = null; shSrc = []; shRows = [];
   shDone.clear();
+  shCuts.clear();
   $('#shPages').innerHTML = '';
   $('#shResult').innerHTML = '';
   $('#shStatus').textContent = '';
@@ -3194,10 +3195,11 @@ async function shCanvas(src, max) {
 async function renderShPages() {
   const box = $('#shPages');
   box.innerHTML = shSrc.map((_, i) =>
-    `<label class="shPage"><input type="checkbox" data-shp="${i}" checked><span>${i + 1}</span></label>`).join('');
+    `<div class="shItem"><label class="shPage"><input type="checkbox" data-shp="${i}" checked><span>${i + 1}</span></label>` +
+    `<button type="button" class="shCutBtn" data-shcut="${i}">✂ 海苔</button></div>`).join('');
   for (const [i, s] of shSrc.entries()) {
     const cv = await shCanvas(s, 160);
-    box.children[i]?.prepend(cv);
+    box.children[i]?.querySelector('label')?.prepend(cv);
   }
 }
 
@@ -3274,7 +3276,7 @@ $('#shRun').onclick = async () => {
     for (const [k, i] of todo.entries()) {
       if (k > 0) await sleep(4000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
-      const cv = await shCanvas(shSrc[i], grid ? 2400 : 1800);
+      const cv = await shCut(i, grid ? 2400 : 1800);
       const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
       cv.width = cv.height = 0;
       const txt = await callVision(b64, grid ? gridPrompt(name) : shiftPrompt(name), st);
@@ -3358,6 +3360,191 @@ $('#shResult').addEventListener('click', e => {
     if (title) rememberPreset({ title, kind: 'job', start: '', end: '' });
   });
 });
+
+/* ===== シフト表：海苔で切って詰める ===== */
+const shCuts = new Map(); // ページ番号 → [{d:'h'|'v', a, b}]（0〜1の割合）
+const cutDlg = document.createElement('dialog');
+cutDlg.id = 'cutDlg';
+cutDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2 id="cutTitle">海苔で隠す</h2>' +
+  '<button type="button" class="x" id="cutX" aria-label="閉じる">×</button></div>' +
+  '<p class="hint">なぞった帯は切り取って、残りをくっつけて送るよ。日付の行と名前の列、自分の行は残してね</p>' +
+  '<div class="row cutModes"><button type="button" id="cutH" class="on">横の海苔</button>' +
+  '<button type="button" id="cutV">縦の海苔</button></div>' +
+  '<canvas id="cutCv"></canvas>' +
+  '<div class="row cutTools"><button type="button" id="cutUndo">1つ戻す</button>' +
+  '<button type="button" id="cutClear">全部消す</button>' +
+  '<button type="button" id="cutAll">ほかのページにも同じ海苔</button></div>' +
+  '<p class="hint" id="cutInfo"></p>' +
+  '<button type="button" class="primary" id="cutDone">できた</button>' +
+  '</div>';
+document.body.append(cutDlg);
+
+let cutIdx = -1, cutBase = null, cutMode = 'h', cutDrag = null;
+
+// 海苔を除いて残る区間（0〜1）
+function keptRanges(cuts, d) {
+  const bs = cuts.filter(c => c.d === d).map(c => [c.a, c.b]).sort((x, y) => x[0] - y[0]);
+  const out = [];
+  let p = 0;
+  for (const [a, b] of bs) {
+    if (a > p) out.push([p, a]);
+    p = Math.max(p, b);
+  }
+  if (p < 1) out.push([p, 1]);
+  return out.filter(([a, b]) => b - a > 0.001);
+}
+function keptSize(i) {
+  const cuts = shCuts.get(i) || [];
+  const len = r => r.reduce((s, [a, b]) => s + b - a, 0);
+  return { fx: len(keptRanges(cuts, 'v')), fy: len(keptRanges(cuts, 'h')) };
+}
+
+// 海苔を抜いて詰めた画像。残りが max くらいになるよう、元は大きめに描く
+async function shCut(i, max) {
+  const cuts = shCuts.get(i) || [];
+  if (!cuts.length) return shCanvas(shSrc[i], max);
+  const { fx, fy } = keptSize(i);
+  if (fx <= 0 || fy <= 0) throw new Error(`${i + 1}ページ目が全部海苔で隠れてる`);
+  const t = await shCanvas(shSrc[i], 100); // 縦横比を知るため
+  const L = Math.max(t.width, t.height), aw = t.width / L, ah = t.height / L;
+  t.width = t.height = 0;
+  // iPhoneの画像サイズ上限を超えないように
+  const M = Math.min(max / Math.max(aw * fx, ah * fy), Math.sqrt(14e6 / (aw * ah)), 8000);
+  const src = await shCanvas(shSrc[i], M);
+  const W = src.width, H = src.height;
+  const px = keptRanges(cuts, 'v').map(([a, b]) => [Math.round(a * W), Math.round(b * W)]);
+  const py = keptRanges(cuts, 'h').map(([a, b]) => [Math.round(a * H), Math.round(b * H)]);
+  const out = document.createElement('canvas');
+  out.width = px.reduce((s, [a, b]) => s + b - a, 0);
+  out.height = py.reduce((s, [a, b]) => s + b - a, 0);
+  const ctx = out.getContext('2d');
+  let oy = 0;
+  for (const [y0, y1] of py) {
+    let ox = 0;
+    for (const [x0, x1] of px) {
+      ctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, ox, oy, x1 - x0, y1 - y0);
+      ox += x1 - x0;
+    }
+    oy += y1 - y0;
+  }
+  src.width = src.height = 0;
+  return out;
+}
+
+function syncCutBtn(i) {
+  const b = document.querySelector(`[data-shcut="${i}"]`);
+  const n = (shCuts.get(i) || []).length;
+  if (b) b.textContent = n ? `✂ 海苔${n}` : '✂ 海苔';
+}
+
+function drawCut() {
+  const cv = $('#cutCv'), ctx = cv.getContext('2d');
+  if (!cutBase) return;
+  ctx.drawImage(cutBase, 0, 0);
+  ctx.fillStyle = 'rgba(0,0,0,.8)';
+  const bands = [...(shCuts.get(cutIdx) || [])];
+  if (cutDrag) bands.push(cutDrag);
+  for (const c of bands) {
+    if (c.d === 'h') ctx.fillRect(0, c.a * cv.height, cv.width, (c.b - c.a) * cv.height);
+    else ctx.fillRect(c.a * cv.width, 0, (c.b - c.a) * cv.width, cv.height);
+  }
+  const n = (shCuts.get(cutIdx) || []).length;
+  const k = keptSize(cutIdx);
+  $('#cutInfo').textContent = n
+    ? `海苔${n}本・残るのは横${Math.round(k.fx * 100)}%×縦${Math.round(k.fy * 100)}%`
+    : 'まだ海苔はないよ';
+}
+
+async function openCut(i) {
+  cutIdx = i;
+  $('#cutTitle').textContent = `${i + 1}ページ目を海苔で隠す`;
+  cutBase = await shCanvas(shSrc[i], 1400);
+  const cv = $('#cutCv');
+  cv.width = cutBase.width;
+  cv.height = cutBase.height;
+  drawCut();
+  if (!cutDlg.open) cutDlg.showModal();
+}
+
+$('#shPages').addEventListener('click', e => {
+  const b = e.target.closest('[data-shcut]');
+  if (b) openCut(+b.dataset.shcut);
+});
+
+const setCutMode = m => {
+  cutMode = m;
+  $('#cutH').classList.toggle('on', m === 'h');
+  $('#cutV').classList.toggle('on', m === 'v');
+};
+$('#cutH').onclick = () => setCutMode('h');
+$('#cutV').onclick = () => setCutMode('v');
+
+const clamp01 = v => Math.min(1, Math.max(0, v));
+function cutPos(e) {
+  const r = $('#cutCv').getBoundingClientRect();
+  return clamp01(cutMode === 'h' ? (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width);
+}
+$('#cutCv').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  e.target.setPointerCapture(e.pointerId);
+  const p = cutPos(e);
+  cutDrag = { d: cutMode, a: p, b: p, s: p };
+  drawCut();
+});
+$('#cutCv').addEventListener('pointermove', e => {
+  if (!cutDrag) return;
+  const p = cutPos(e);
+  cutDrag.a = Math.min(cutDrag.s, p);
+  cutDrag.b = Math.max(cutDrag.s, p);
+  drawCut();
+});
+$('#cutCv').addEventListener('pointerup', () => {
+  if (!cutDrag) return;
+  const { d, a, b } = cutDrag;
+  cutDrag = null;
+  if (b - a > 0.005) {
+    shCuts.set(cutIdx, [...(shCuts.get(cutIdx) || []), { d, a, b }]);
+    shDone.delete(cutIdx); // 海苔が変わったら読み直す
+    syncCutBtn(cutIdx);
+  }
+  drawCut();
+});
+$('#cutCv').addEventListener('pointercancel', () => { cutDrag = null; drawCut(); });
+
+$('#cutUndo').onclick = () => {
+  const cs = (shCuts.get(cutIdx) || []).slice(0, -1);
+  if (cs.length) shCuts.set(cutIdx, cs); else shCuts.delete(cutIdx);
+  shDone.delete(cutIdx);
+  syncCutBtn(cutIdx);
+  drawCut();
+};
+$('#cutClear').onclick = () => {
+  shCuts.delete(cutIdx);
+  shDone.delete(cutIdx);
+  syncCutBtn(cutIdx);
+  drawCut();
+};
+$('#cutAll').onclick = () => {
+  const cs = shCuts.get(cutIdx) || [];
+  if (!cs.length) return alert('先にこのページに海苔を引いてね');
+  if (!confirm('ほかのページも全部この海苔にする？（今ある海苔は上書き）')) return;
+  shSrc.forEach((_, i) => {
+    shCuts.set(i, cs.map(c => ({ ...c })));
+    shDone.delete(i);
+    syncCutBtn(i);
+  });
+  toast('全ページに同じ海苔を引いたよ');
+};
+const closeCut = () => {
+  cutDrag = null;
+  if (cutBase) cutBase.width = cutBase.height = 0;
+  cutBase = null;
+  cutDlg.close();
+};
+$('#cutX').onclick = closeCut;
+$('#cutDone').onclick = closeCut;
 
 /* ===== カレンダー書き出し（.ics） ===== */
 const ICS_DAYS = 14; // 持ち物は今日から2週間分
