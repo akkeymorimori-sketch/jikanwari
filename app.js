@@ -244,6 +244,9 @@ function normalize(s) {
   for (const k of Object.keys(s.diary))
     if (!isYmd(k) || typeof s.diary[k] !== 'string' || !s.diary[k].trim()) delete s.diary[k];
   s.jobHidden = Array.isArray(s.jobHidden) ? s.jobHidden.filter(v => typeof v === 'string') : [];
+  // 授業なしの課題
+  s.myTasks = Array.isArray(s.myTasks) ? s.myTasks.filter(k => k && typeof k.title === 'string') : [];
+  for (const k of s.myTasks) { k.id = fixId(k.id); k.done = !!k.done; k.due = isYmd(k.due) ? k.due : ''; }
   if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   return s;
 }
@@ -263,6 +266,13 @@ const courses = () => term().courses;
 const modelOf = p => state.models[p] || PROVIDERS[p].model;
 // 一覧で使う名前（略名があれば略名）
 const nm = c => (c.short || '').trim() || c.name;
+// 授業なしの課題（「その他」）は、授業のふりをした入れ物で扱う
+const SELF_ID = '__self';
+const selfCourse = {
+  id: SELF_ID, name: 'その他', short: '', day: null, period: null,
+  get tasks() { return state.myTasks; },
+  set tasks(v) { state.myTasks = v; }
+};
 
 /* ===== 日付・時刻の計算 ===== */
 function toMin(v) {
@@ -687,7 +697,7 @@ let taskAll = false; // 課題を全部表示するか
 function renderTasks() {
   const el = $('#taskCard'), now = new Date();
   const all = [];
-  for (const c of courses()) for (const t of c.tasks) if (!t.done) all.push({ c, t });
+  for (const c of [...courses(), selfCourse]) for (const t of c.tasks) if (!t.done) all.push({ c, t });
   all.sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'));
   if (!all.length) {
     el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
@@ -811,7 +821,7 @@ $('#packCard').addEventListener('change', e => {
 $('#taskCard').addEventListener('change', e => {
   const id = e.target.dataset.task;
   if (!id) return;
-  const c = courses().find(x => x.id === e.target.dataset.cid);
+  const c = findCourse(e.target.dataset.cid);
   const t = c?.tasks.find(x => x.id === id);
   if (t) {
     t.done = true; save(); renderAll();
@@ -821,7 +831,7 @@ $('#taskCard').addEventListener('change', e => {
 $('#taskCard').addEventListener('click', e => {
   if (e.target.closest('[data-tmore]')) { taskAll = !taskAll; renderTasks(); return; }
   const id = e.target.closest('.due')?.dataset.id;
-  if (id) openCourse(id);
+  if (id && id !== SELF_ID) openCourse(id);
 });
 
 $('#grid').addEventListener('click', e => {
@@ -1190,12 +1200,15 @@ function tasksDue(k) {
   const out = [];
   for (const t of state.terms) for (const c of t.courses) for (const x of c.tasks)
     if (x.due === k) out.push({ c, x });
+  for (const x of state.myTasks) if (x.due === k) out.push({ c: selfCourse, x });
+  return out;
   return out;
 }
 function intensiveOn(k) {
   return courses().filter(c => c.day === -1 && c.from && k >= c.from && k <= (c.to || c.from));
 }
 function findCourse(id) {
+  if (id === SELF_ID) return selfCourse;
   for (const t of state.terms) {
     const c = t.courses.find(x => x.id === id);
     if (c) return c;
@@ -1499,9 +1512,10 @@ function renderTaskForm() {
   const box = $('#taskBox');
   const cs = courses();
   const ed = ctEdit && findCourse(ctEdit.cid);
-  box.hidden = calMulti || (!cs.length && !ed);
+  box.hidden = calMulti;
   if (box.hidden) return;
-  const list = ed && !cs.includes(ed) ? [ed, ...cs] : cs;
+  const base = [...cs, selfCourse];
+  const list = ed && !base.includes(ed) ? [ed, ...base] : base;
   const sel = ed ? (ctEdit.to || ed.id)
     : (list.some(c => c.id === ctLastCid) ? ctLastCid : list[0].id);
   $('#ctCourse').innerHTML = list.map(c =>
