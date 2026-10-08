@@ -14,6 +14,7 @@
   --item-fg: #8a3b00; --badge-item: #e8590c; --badge-task: #7048e8;
   --toast-bg: #333; --toast-fg: #fff; --toast-link: #8fb8ff;
   --backdrop: rgba(0, 0, 0, .45);
+  --tabbar-h: 58px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -96,23 +97,18 @@ body {
 body.lock { position: fixed; left: 0; right: 0; overflow: hidden; }
 
 header {
-  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line);
+  display: flex; gap: 8px; align-items: center;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 2;
 }
-h1 { font-size: 17px; margin: 0 auto 0 0; }
+h1 { font-size: 17px; margin: 0 auto 0 0; white-space: nowrap; }
 h2 { font-size: 15px; margin: 0 0 6px; }
 h2 small, h3 small { font-weight: normal; color: var(--sub); font-size: 12px; margin-left: 4px; }
 h3 small.alert { color: var(--over); font-weight: bold; }
 h2[tabindex]:focus { outline: none; }
 h3 { margin: 8px 0 0; font-size: 14px; }
-.hbtns { display: flex; gap: 4px; }
-.hbtns button { white-space: nowrap; }
-#termSelect { width: auto; max-width: 11em; }
-@media (max-width: 480px) {
-  h1 { display: none; }
-  #termSelect { flex: 1; max-width: none; min-width: 0; }
-}
+#termSelect { width: auto; max-width: 60%; min-width: 0; }
 
 button {
   font: inherit; font-size: 14px; padding: 6px 10px;
@@ -131,12 +127,48 @@ input[type=checkbox] { width: auto; accent-color: var(--accent-strong); }
 input[type=date] { min-width: 0; }
 a { color: var(--accent); }
 
-main { max-width: 900px; margin: 0 auto; padding: 8px 8px 45vh; }
+main { max-width: 900px; margin: 0 auto; padding: 8px; }
 .card { background: var(--surface); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
 .muted { color: var(--muted); font-size: 13px; margin: 0; }
 .hint { color: var(--muted); font-size: 13px; margin: 0; }
 .ok { color: var(--ok); font-weight: bold; margin: 4px 0 0; font-size: 13px; }
 .start { margin: 0 0 6px; font-size: 14px; color: var(--accent); }
+
+/* ===== 画面（タブ） ===== */
+.view { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom)); }
+/* 時間割は表を画面のまんなかまで持ってこれるように */
+#view-grid { padding-bottom: 45vh; }
+
+#tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+#tabbar button {
+  height: var(--tabbar-h); border: none; border-radius: 0; background: none;
+  color: var(--muted); font-size: 11px; padding: 6px 0 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+}
+#tabbar button.on { color: var(--accent); font-weight: bold; }
+#tabbar svg {
+  width: 24px; height: 24px;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+#tabbar svg circle { fill: currentColor; stroke: none; }
+
+/* はじめにのボタン */
+.startBtns { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.startBtns button { padding: 10px; }
+
+/* その他 */
+.menu h2 { font-size: 13px; color: var(--sub); font-weight: normal; }
+.menu button {
+  width: 100%; text-align: left; padding: 10px 12px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+}
+.menu button + button { margin-top: 6px; }
+.menu button small { color: var(--muted); font-size: 12px; }
 
 /* ===== 次の授業 ===== */
 .nc {
@@ -269,6 +301,7 @@ details.sec > a, #aiBox > a { display: block; }
 }
 
 /* ===== カレンダー ===== */
+.calCard { display: flex; flex-direction: column; gap: 8px; }
 .calNav { justify-content: space-between; }
 .calNav > b { flex: none; font-size: 16px; }
 #calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
@@ -290,7 +323,6 @@ details.sec > a, #aiBox > a { display: block; }
   outline: 2px solid var(--accent-strong); outline-offset: -2px;
 }
 .cd.pick .dn::after { content: ' ✓'; color: var(--accent); }
-#calPickBox { margin-top: 4px; }
 .dn { font-size: 12px; font-weight: bold; }
 .dueMark {
   display: inline-block; margin-left: 2px; min-width: 14px; height: 14px;
@@ -323,6 +355,15 @@ details.sec > a, #aiBox > a { display: block; }
 #dayList li.editing { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 6px; }
 #evEditBox { display: flex; flex-direction: column; gap: 8px; }
 
+/* カレンダーから課題 */
+#taskBox { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+#ctDueBox { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.ctBtns { display: flex; gap: 8px; justify-content: flex-end; }
+#ctDel { margin-right: auto; color: var(--danger); }
+#dayList .ctRow { justify-content: flex-start; gap: 8px; }
+#dayList .ctRow .evText { flex: 1; }
+#evHead { padding-top: 10px; border-top: 1px solid var(--line); }
+
 /* ===== アイコンの色リンク ===== */
 .iconLinks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .iconLinks a {
@@ -332,20 +373,17 @@ details.sec > a, #aiBox > a { display: block; }
 }
 .iconLinks img { width: 44px; height: 44px; border-radius: 10px; }
 
-/* 「元に戻す」 */
+/* 「元に戻す」（下のタブに重ならない位置） */
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 10;
+  bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom)); z-index: 10;
   display: flex; gap: 10px; align-items: center; max-width: 92vw;
   background: var(--toast-bg); color: var(--toast-fg); font-size: 14px;
   padding: 8px 8px 8px 14px; border-radius: 8px;
 }
 #toast button { background: none; border: none; color: var(--toast-link); font-weight: bold; }
+
 /* ===== 収入 ===== */
-@media (max-width: 480px) {
-  #termSelect { min-width: 7em; }      /* ボタンが増えても学期の欄がつぶれないように */
-  .hbtns button { padding: 6px 8px; }
-}
 .lbl { width: 4.5em; }
 .inTotal { margin: 0; font-size: 14px; }
 .inTotal b { font-size: 20px; margin: 0 4px; }

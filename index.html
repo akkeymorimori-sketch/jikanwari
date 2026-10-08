@@ -2,35 +2,140 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1d1f24" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-title" content="時間割メモ">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <header>
   <h1>時間割メモ</h1>
   <select id="termSelect" aria-label="学期"></select>
-  <div class="hbtns">
-    <button id="importBtn">画像読込</button>
-    <button id="calBtn">カレンダー</button>
-    <button id="incomeBtn">収入</button>
-    <button id="termBtn">学期</button>
-    <button id="settingsBtn">設定</button>
-  </div>
 </header>
 
 <main>
-  <section class="card" id="nowCard"></section>
-  <section class="card" id="packCard"></section>
-  <section class="card" id="taskCard"></section>
-  <div id="grid"></div>
-  <section class="card" id="intCard"></section>
+  <!-- 今日 -->
+  <section class="view" id="view-today">
+    <section class="card" id="nowCard"></section>
+    <section class="card" id="packCard"></section>
+    <section class="card" id="taskCard"></section>
+  </section>
+
+  <!-- カレンダー -->
+  <section class="view" id="view-cal" hidden>
+    <div class="card calCard">
+      <div class="row calNav">
+        <button id="calPrev" aria-label="前の月">‹</button>
+        <b id="calTitle"></b>
+        <button id="calNext" aria-label="次の月">›</button>
+      </div>
+      <div id="calGrid"></div>
+      <p class="hint calLegend">
+        <span class="ev task">課題</span><span class="ev job">バイト</span><span class="ev other">予定</span><span class="ev int">集中講義</span><span class="ev off">休み</span>
+      </p>
+      <label class="inline" id="calPickBox"><input type="checkbox" id="calMulti"> 日付を複数選ぶ</label>
+      <p class="hint" id="calPickInfo"></p>
+    </div>
+
+    <div class="card calCard">
+      <h3 id="dayTitle"></h3>
+      <ul id="dayList"></ul>
+
+      <div id="taskBox">
+        <h3 id="ctHead">この日が締切の課題を追加</h3>
+        <select id="ctCourse" aria-label="授業"></select>
+        <input id="ctTitle" placeholder="課題（例：レポート第1回）" aria-label="課題の内容" autocomplete="off">
+        <label id="ctDueBox" hidden>締切 <input type="date" id="ctDue"></label>
+        <div class="ctBtns">
+          <button type="button" id="ctDel" hidden>削除</button>
+          <button type="button" id="ctCancel" hidden>やめる</button>
+          <button type="button" id="ctSave" class="primary" hidden>保存</button>
+          <button type="button" id="ctAdd" class="primary">課題を追加</button>
+        </div>
+      </div>
+
+      <h3 id="evHead">この日に予定を追加</h3>
+      <div class="row">
+        <select id="evKind" class="narrow" aria-label="種類">
+          <option value="job">バイト</option>
+          <option value="other">その他</option>
+        </select>
+        <input id="evTitle" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定のタイトル">
+      </div>
+      <div id="evChips" class="chips"></div>
+      <div class="row">
+        <input type="time" id="evStart" aria-label="開始時刻">
+        <span class="hint">〜</span>
+        <input type="time" id="evEnd" aria-label="終了時刻">
+        <button id="evAdd">追加</button>
+      </div>
+      <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
+      <div id="evEditBox" hidden>
+        <div class="row">
+          <select id="evScope" aria-label="変更する範囲"></select>
+        </div>
+        <div class="row split">
+          <button id="evDel" class="danger">削除</button>
+          <div class="row">
+            <button id="evCancel">やめる</button>
+            <button id="evSave" class="primary">変更を保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 時間割 -->
+  <section class="view" id="view-grid" hidden>
+    <div id="grid"></div>
+    <section class="card" id="intCard"></section>
+  </section>
+
+  <!-- その他 -->
+  <section class="view" id="view-more" hidden>
+    <div class="card menu">
+      <h2>時間割</h2>
+      <button id="importBtn"><b>画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
+      <button id="shareBtn"><b>時間割を共有</b><small>共有コードを送る・受け取る</small></button>
+    </div>
+    <div class="card menu">
+      <h2>学期</h2>
+      <button id="termBtn"><b>学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
+    </div>
+    <div class="card menu">
+      <h2>バイト</h2>
+      <button id="incomeBtn"><b>収入</b><small>給与の記録と1年の合計</small></button>
+    </div>
+    <div class="card menu">
+      <h2>アプリ</h2>
+      <button id="settingsBtn"><b>設定</b><small>時限の時刻、テーマ、シラバス、バックアップ、AI</small></button>
+    </div>
+  </section>
 </main>
+
+<!-- 下のタブ -->
+<nav id="tabbar" aria-label="画面の切り替え">
+  <button data-tab="today" class="on" aria-current="page">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>
+    今日
+  </button>
+  <button data-tab="cal">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+    カレンダー
+  </button>
+  <button data-tab="grid">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+    時間割
+  </button>
+  <button data-tab="more">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+    その他
+  </button>
+</nav>
 
 <!-- 授業詳細 -->
 <dialog id="courseDlg">
@@ -224,59 +329,6 @@
   </div>
 </dialog>
 
-<!-- カレンダー（月表示） -->
-<dialog id="calDlg">
-  <div class="dlg">
-    <div class="dlgHead">
-      <h2 tabindex="-1" autofocus>カレンダー</h2>
-      <button id="calX" class="x big" aria-label="閉じる">×</button>
-    </div>
-    <div class="row calNav">
-      <button id="calPrev" aria-label="前の月">‹</button>
-      <b id="calTitle"></b>
-      <button id="calNext" aria-label="次の月">›</button>
-    </div>
-    <div id="calGrid"></div>
-    <p class="hint calLegend">
-      <span class="ev task">課題</span><span class="ev job">バイト</span><span class="ev other">予定</span><span class="ev int">集中講義</span><span class="ev off">休み</span>
-    </p>
-    <label class="inline" id="calPickBox"><input type="checkbox" id="calMulti"> 日付を複数選ぶ</label>
-    <p class="hint" id="calPickInfo"></p>
-
-    <h3 id="dayTitle"></h3>
-    <ul id="dayList"></ul>
-
-    <h3 id="evHead">この日に予定を追加</h3>
-    <div class="row">
-      <select id="evKind" class="narrow" aria-label="種類">
-        <option value="job">バイト</option>
-        <option value="other">その他</option>
-      </select>
-      <input id="evTitle" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定のタイトル">
-    </div>
-    <div id="evChips" class="chips"></div>
-    <div class="row">
-      <input type="time" id="evStart" aria-label="開始時刻">
-      <span class="hint">〜</span>
-      <input type="time" id="evEnd" aria-label="終了時刻">
-      <button id="evAdd">追加</button>
-    </div>
-    <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
-    <div id="evEditBox" hidden>
-      <div class="row">
-        <select id="evScope" aria-label="変更する範囲"></select>
-      </div>
-      <div class="row split">
-        <button id="evDel" class="danger">削除</button>
-        <div class="row">
-          <button id="evCancel">やめる</button>
-          <button id="evSave" class="primary">変更を保存</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</dialog>
-
 <!-- 収入 -->
 <dialog id="incomeDlg">
   <div class="dlg">
@@ -413,7 +465,7 @@
 
     <details id="aiBox">
       <summary>画像読み取り（AI）の設定</summary>
-      <p class="hint">APIキーを入れると、上に「画像読込」ボタンが出るよ</p>
+      <p class="hint">APIキーを入れると、「その他」に「画像から読み込む」が出るよ</p>
       <select id="sProvider" aria-label="使うAI"></select>
       <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
       <p id="sNote" class="hint"></p>
@@ -439,6 +491,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

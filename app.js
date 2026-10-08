@@ -503,9 +503,10 @@ function whenLabel(start, now) {
 function renderNow() {
   const el = $('#nowCard'), now = new Date(), t = term();
   if (!courses().length) {
-    const ocr = state.keys[state.provider] ? '上の「画像読込」から時間割の画像を読み込むこともできるよ。' : '';
-    el.innerHTML = '<h2>はじめに</h2><p class="muted">下の時間割の空いてるマスをタップすると、授業を追加できるよ。' + ocr +
-      '友達から共有コードをもらったら、「学期」→「時間割を共有」に貼り付けてね。</p>';
+    el.innerHTML = '<h2>はじめに</h2><p class="muted">まずは時間割を作ろう</p><div class="startBtns">' +
+      '<button data-go="grid" class="primary">手入力で作る</button>' +
+      (state.keys[state.provider] ? '<button data-go="import">画像から読み込む</button>' : '') +
+      '<button data-go="share">共有コードから読み込む</button></div>';
     return;
   }
 
@@ -514,7 +515,7 @@ function renderNow() {
     el.innerHTML = `<h2>この学期は終わったよ</h2>` +
       `<p class="muted">${esc(t.name)}は${md(parseYmd(t.end))}で終了</p>` +
       (nt ? `<button data-switch="${nt.id}">「${esc(nt.name)}」に切り替える</button>`
-          : '<p class="muted">上の「学期」から次の学期を作ってね</p>');
+          : '<p class="muted">上の学期の欄で「＋ 新しい学期を作る」を選んでね</p>');
     return;
   }
 
@@ -645,7 +646,7 @@ function renderTasks() {
   for (const c of courses()) for (const t of c.tasks) if (!t.done) all.push({ c, t });
   all.sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'));
   if (!all.length) {
-    el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。授業をタップすると追加できる</p>';
+    el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
     return;
   }
   el.innerHTML = `<h2>課題 <small>${all.length}件</small></h2><ul>` + all.map(({ c, t }) => {
@@ -725,10 +726,15 @@ function renderAll() {
   renderTasks();
   renderGrid();
   renderIntensive();
+  if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
 }
 
 /* ===== メイン画面の操作 ===== */
 $('#nowCard').addEventListener('click', e => {
+  const go = e.target.closest('[data-go]')?.dataset.go;
+  if (go === 'grid') return showTab('grid');
+  if (go === 'import') return $('#importBtn').click();
+  if (go === 'share') return openTermDlg('shareSec');
   const sw = e.target.dataset.switch;
   if (sw) {
     state.currentTermId = sw;
@@ -786,7 +792,7 @@ $('#intCard').addEventListener('click', e => {
 $('#termSelect').onchange = e => {
   if (e.target.value === '__new') {
     e.target.value = state.currentTermId;
-    openTermDlg(true);
+    openTermDlg('newTermSec');
     return;
   }
   state.currentTermId = e.target.value;
@@ -1097,6 +1103,9 @@ $('#courseDlg').addEventListener('close', () => {
 /* ===== カレンダー（月表示） ===== */
 let calMonth = null, calSel = '';
 let calMulti = false;          // 複数日選択モード
+let curTab = 'today';  // 表示中のタブ
+let ctEdit = null;     // 変更中の課題 { cid, id, to }
+let ctLastCid = '';    // 前回選んだ授業
 const calPicks = new Set();    // 選んだ日（月をまたいでも残る）
 const EV_PRESET_MAX = 30;
 const EV_LABEL = { job: 'バイト', other: '予定' };
@@ -1174,13 +1183,16 @@ function renderDay() {
   }
   for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(nm(c))}</span></li>`);
   for (const { c, x } of tasksDue(k)) rows.push(
-    `<li><label><input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''}>` +
-    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span></label><span class="from">${esc(nm(c))}・締切</span></li>`);
+    `<li class="ctRow ${ctEdit && ctEdit.id === x.id ? 'editing' : ''}">` +
+    `<input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''} aria-label="完了">` +
+    `<button type="button" class="evText" data-taskedit="${x.id}" data-cid="${c.id}">` +
+    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span> <span class="from">${esc(nm(c))}・締切</span></button></li>`);
   for (const e of eventsOn(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
     `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</button>` +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   $('#dayList').innerHTML = rows.join('') || '<li class="muted">なし</li>';
+  renderTaskForm();
 }
 
 const EV_ADD_TEXT = $('#evAdd').textContent;
@@ -1207,20 +1219,18 @@ function renderPicks(msg = '') {
   syncEvForm();
 }
 
-$('#calBtn').onclick = () => {
+// カレンダーのタブを開いたとき（今日に戻す）
+function openCal() {
   const now = new Date();
   calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   calSel = todayStr();
-  for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
+  for (const id of ['evTitle', 'evStart', 'evEnd', 'ctTitle']) $('#' + id).value = '';
   $('#evWeekly').checked = false;
   calMulti = false; calPicks.clear();
-  evEditId = null;
+  evEditId = null; ctEdit = null;
   renderEvSuggest();
   renderCal(); renderDay(); renderPicks();
-  $('#calDlg').showModal();
-};
-$('#calX').onclick = () => $('#calDlg').close();
-$('#calDlg').addEventListener('close', () => renderAll());
+}
 
 const moveMonth = k => {
   calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + k, 1);
@@ -1239,7 +1249,8 @@ $('#calGrid').addEventListener('click', e => {
     return;
   }
   calSel = d.dataset.date;
-  if (evEditId) endEvEdit();
+    if (evEditId) endEvEdit();
+  if (ctEdit) endTaskEdit();
   const sd = parseYmd(calSel);
   if (sd.getMonth() !== calMonth.getMonth()) calMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
   renderCal(); renderDay();
@@ -1260,8 +1271,10 @@ $('#dayList').addEventListener('change', e => {
   save(); renderCal(); renderDay();
 });
 $('#dayList').addEventListener('click', e => {
+  const te = e.target.closest('[data-taskedit]');
+  if (te) return startTaskEdit(te.dataset.cid, te.dataset.taskedit);
   const ed = e.target.closest('[data-evedit]');
-  if (ed) return startEvEdit(ed.dataset.evedit);
+  if (ed) { if (ctEdit) endTaskEdit(); return startEvEdit(ed.dataset.evedit); }
   const id = e.target.dataset.evdel;
   if (!id || !confirm('この予定を消す？')) return;
   state.events = state.events.filter(x => x.id !== id);
@@ -1409,6 +1422,106 @@ $('#evDel').onclick = () => {
 
 $('#evCancel').onclick = endEvEdit;
 
+/* ===== カレンダーから課題 ===== */
+const slotLabel = c => (Number.isInteger(c.day) && c.day >= 0 && c.period) ? `（${DAYS[c.day]}${c.period}）` : '';
+
+function renderTaskForm() {
+  const box = $('#taskBox');
+  const cs = courses();
+  const ed = ctEdit && findCourse(ctEdit.cid);
+  box.hidden = calMulti || (!cs.length && !ed);
+  if (box.hidden) return;
+  const list = ed && !cs.includes(ed) ? [ed, ...cs] : cs;
+  const sel = ed ? (ctEdit.to || ed.id)
+    : (list.some(c => c.id === ctLastCid) ? ctLastCid : list[0].id);
+  $('#ctCourse').innerHTML = list.map(c =>
+    `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(nm(c) || '名前なし')}${slotLabel(c)}</option>`).join('');
+  $('#ctHead').textContent = ed ? '課題を変更' : `${md(parseYmd(calSel))}締切の課題を追加`;
+  $('#ctAdd').hidden = !!ed;
+  for (const id of ['ctDueBox', 'ctDel', 'ctCancel', 'ctSave']) $('#' + id).hidden = !ed;
+}
+
+function startTaskEdit(cid, id) {
+  const x = findCourse(cid)?.tasks.find(k => k.id === id);
+  if (!x) return;
+  if (evEditId) endEvEdit();
+  ctEdit = { cid, id, to: '' };
+  $('#ctTitle').value = x.title;
+  $('#ctDue').value = x.due || calSel;
+  renderDay();
+  $('#ctHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function endTaskEdit() {
+  ctEdit = null;
+  $('#ctTitle').value = '';
+  renderDay();
+}
+
+$('#ctCourse').onchange = e => {
+  if (ctEdit) ctEdit.to = e.target.value;
+  else ctLastCid = e.target.value;
+};
+
+$('#ctAdd').onclick = () => {
+  const title = $('#ctTitle').value.trim();
+  if (!title) return alert('課題の内容を入れてね');
+  const c = findCourse($('#ctCourse').value);
+  if (!c) return;
+  c.tasks.push({ id: uid(), title, due: calSel, done: false });
+  ctLastCid = c.id;
+  $('#ctTitle').value = '';
+  save(); renderAll(); renderCal(); renderDay();
+};
+
+$('#ctSave').onclick = () => {
+  if (!ctEdit) return;
+  const from = findCourse(ctEdit.cid);
+  const x = from?.tasks.find(k => k.id === ctEdit.id);
+  if (!x) return endTaskEdit();
+  const title = $('#ctTitle').value.trim();
+  if (!title) return alert('課題の内容を入れてね');
+  x.title = title;
+  x.due = $('#ctDue').value;
+  const to = findCourse($('#ctCourse').value);
+  if (to && to !== from) {
+    from.tasks = from.tasks.filter(k => k !== x);
+    to.tasks.push(x);
+  }
+  const moved = x.due !== calSel;
+  save(); renderAll(); renderCal();
+  endTaskEdit();
+  if (moved) toast(x.due ? `締切を${md(parseYmd(x.due))}に移したよ` : '締切なしにしたよ');
+};
+
+$('#ctDel').onclick = () => {
+  const c = ctEdit && findCourse(ctEdit.cid);
+  if (!c || !confirm('この課題を消す？')) return;
+  c.tasks = c.tasks.filter(k => k.id !== ctEdit.id);
+  save(); renderAll(); renderCal();
+  endTaskEdit();
+};
+
+$('#ctCancel').onclick = endTaskEdit;
+
+/* ===== 画面の切り替え（下のタブ） ===== */
+function showTab(name) {
+  curTab = name;
+  document.querySelectorAll('.view').forEach(v => { v.hidden = v.id !== `view-${name}`; });
+  document.querySelectorAll('#tabbar [data-tab]').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('on', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  if (name === 'cal') openCal(); else renderAll();
+  window.scrollTo(0, 0);
+}
+$('#tabbar').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]');
+  if (b) showTab(b.dataset.tab);
+});
+$('#shareBtn').onclick = () => openTermDlg('shareSec');
+
 /* ===== ダイアログ中は後ろの画面を止める ===== */
 let lockY = 0;
 function syncScrollLock() {
@@ -1496,7 +1609,7 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: [
-          { type: 'text', text: prompt },,
+          { type: 'text', text: prompt },
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }
         ] }]
       })
@@ -1680,7 +1793,7 @@ function renderOffList() {
     || '<li class="muted">なし</li>';
 }
 
-function openTermDlg(toNew = false) {
+function openTermDlg(openId = '') {
   renderTermList();
   renderOffList();
   for (const id of ['offFrom', 'offTo', 'offNote', 'swapDate', 'newTermStart', 'newTermEnd']) $('#' + id).value = '';
@@ -1695,9 +1808,9 @@ function openTermDlg(toNew = false) {
   document.querySelectorAll('#termDlg details').forEach(d => { d.open = false; });
   $('#termDlg').showModal();
   $('#termDlg').scrollTop = 0;
-  if (toNew) {
-    $('#newTermSec').open = true;
-    $('#newTermSec').scrollIntoView({ block: 'nearest' });
+  if (openId) {
+    $('#' + openId).open = true;
+    $('#' + openId).scrollIntoView({ block: 'nearest' });
   }
 }
 $('#termBtn').onclick = () => openTermDlg();
