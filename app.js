@@ -3608,7 +3608,6 @@ $('#cutX').onclick = closeCut;
 $('#cutDone').onclick = closeCut;
 
 /* ===== カレンダー書き出し（.ics） ===== */
-const ICS_DAYS = 14; // 持ち物は今日から2週間分
 const icsDate = d => ymd(d).replace(/-/g, '');
 const icsEsc = s => String(s)
   .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
@@ -3646,6 +3645,14 @@ function icsEvent(uid, date, title, desc, stamp, seq) {
   ].filter(Boolean);
 }
 
+// 持ち物を書き出す日数：学期の終わりまで（終了日がなければ120日、最大200日）
+function icsDays(t, today) {
+  const e = t.end ? parseYmd(t.end) : null;
+  if (!e) return SEARCH_DAYS;
+  const n = Math.round((e - today) / 86400000) + 1;
+  return Math.min(200, Math.max(0, n));
+}
+
 function buildIcs() {
   const t = term(), lines = [];
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
@@ -3664,7 +3671,8 @@ function buildIcs() {
   }
 
   // 持ち物（授業がある日ごとに1件）
-  for (let i = 0; i < ICS_DAYS; i++) {
+  const nDays = icsDays(t, today);
+  for (let i = 0; i < nDays; i++) {
     const date = addDays(today, i);
     const cs = coursesOn(date, t).concat(intsOn(date, t));
     const all = [], desc = [];
@@ -3692,9 +3700,7 @@ const icsBox = document.createElement('div');
 icsBox.className = 'icsBox';
 icsBox.innerHTML =
   '<button type="button" id="icsBtn">📅 カレンダーに書き出す</button>' +
-  '<p class="hint">課題の締切と、2週間分の持ち物を書き出すよ。通知は前日21時。内容を変えたら書き出し直してね</p>' +
-  '<div class="row icsTry"><button type="button" id="icsOpenA">直接開く A（試験中）</button>' +
-  '<button type="button" id="icsOpenB">直接開く B（試験中）</button></div>';
+  '<p class="hint">課題の締切と、学期の終わりまでの持ち物を書き出すよ。通知は前日21時。「次回だけ」の持ち物や課題を足したら書き出し直してね。前に入れた予定は上書きされるよ</p>';
 $('#exportBtn').parentElement.after(icsBox);
 
 $('#icsBtn').onclick = async () => {
@@ -3717,29 +3723,6 @@ $('#icsBtn').onclick = async () => {
   }
   toast(`課題${nTask}件・持ち物${nPack}日分を書き出したよ`);
 };
-
-// 試験中：ファイル保存を挟まずにカレンダーの追加画面を出す
-function icsOpen(kind) {
-  const { text, nTask, nPack } = buildIcs();
-  if (!nTask && !nPack) return alert('書き出す課題も持ち物もまだないよ');
-  const a = document.createElement('a');
-  a.target = '_blank';
-  a.rel = 'noopener';
-  if (kind === 'A') {
-    // A：いったんファイルにして、それを開く
-    a.href = URL.createObjectURL(new Blob([text], { type: 'text/calendar' }));
-    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-  } else {
-    // B：中身をそのままURLにして開く
-    a.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(text);
-  }
-  document.body.append(a);
-  a.click();
-  a.remove();
-  toast(`課題${nTask}件・持ち物${nPack}日分を開いたよ`);
-}
-$('#icsOpenA').onclick = () => icsOpen('A');
-$('#icsOpenB').onclick = () => icsOpen('B');
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
