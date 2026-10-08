@@ -416,3 +416,33 @@ details.sec > a, #aiBox > a { display: block; }
   max-width: 100%; max-height: 60vh; width: auto; height: auto;
   touch-action: none; /* なぞってる間に画面がスクロールしないように */
 }
+/* ===== v21：今日の流れ ===== */
+.flowH { margin: 12px 0 4px; }
+.flow li { justify-content: flex-start; gap: 10px; align-items: baseline; padding: 6px 0; }
+.flow li[data-id] { cursor: pointer; }
+.flow .ft { min-width: 3.4em; color: var(--sub); font-variant-numeric: tabular-nums; font-size: 14px; }
+.flow .fl { font-size: 14px; }
+.flow .fl small { color: var(--sub); margin-left: 4px; }
+.flow li.f-job .ft::before, .flow li.f-other .ft::before { content: '●'; font-size: 9px; margin-right: 3px; vertical-align: 1px; }
+.flow li.f-job .ft::before { color: var(--ok); }
+.flow li.f-other .ft::before { color: var(--accent-strong); }
+.flow li.past { opacity: .45; }
+.absWarn { color: var(--over); font-weight: bold; }
+
+/* 時間割のマス：🎒1 📝2 ⚠2/3 */
+.course .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; font-size: 11px; line-height: 1.2; }
+
+/* 授業詳細の「詳細」 */
+#cMore > summary small { font-weight: normal; color: var(--sub); font-size: 12px; margin-left: 4px; }
+#cMore > summary small.alert { color: var(--over); font-weight: bold; }
+.cMoreBody { display: flex; flex-direction: column; gap: 8px; }
+/* ===== v23：メモ・日記・候補 ===== */
+.addEv { width: 100%; margin-top: 10px; border-style: dashed; color: var(--accent); }
+#noteCard .row { margin-top: 6px; }
+#noteCard .hint { margin-top: 4px; }
+#noteCard h3 { margin-top: 12px; }
+#diaryInput { margin-top: 4px; }
+.noteMark { font-style: normal; font-size: 9px; margin-left: 2px; color: var(--sub); }
+/* 長押しで文字選択やメニューが出ないように */
+.chip { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.chips:empty + .hint { display: none; }

@@ -177,13 +177,14 @@ function normalize(s) {
     e.title ??= ''; e.start ??= ''; e.end ??= '';
   }
   // 予定の入力候補（名前・種類・時刻を覚える）
-  s.evPresets = Array.isArray(s.evPresets)
+  const hadPresets = Array.isArray(s.evPresets);
+  s.evPresets = hadPresets
     ? s.evPresets.filter(p => p && typeof p.title === 'string' && p.title).map(p => ({
         title: p.title, kind: p.kind === 'other' ? 'other' : 'job', start: p.start || '', end: p.end || ''
       }))
     : [];
   // 前から入ってる予定があれば、そこから候補を作る（初回だけ）
-  if (!s.evPresets.length) {
+  if (!hadPresets) {
     for (const e of [...s.events].sort((a, b) => b.date.localeCompare(a.date))) {
       if (e.title && !s.evPresets.some(p => p.title === e.title))
         s.evPresets.push({ title: e.title, kind: e.kind, start: e.start, end: e.end });
@@ -235,6 +236,14 @@ function normalize(s) {
     t.cancels = t.cancels.filter(x => ids.has(x.courseId) && isYmd(x.date));
     for (const x of t.cancels) x.id = fixId(x.id);
   }
+  // メモ・一言日記・消したバイト先の候補
+  s.notes = Array.isArray(s.notes)
+    ? s.notes.filter(n => n && typeof n.text === 'string' && n.text.trim() && isYmd(n.date)) : [];
+  for (const n of s.notes) { n.id = fixId(n.id); n.pin = !!n.pin; }
+  s.diary = s.diary && typeof s.diary === 'object' && !Array.isArray(s.diary) ? s.diary : {};
+  for (const k of Object.keys(s.diary))
+    if (!isYmd(k) || typeof s.diary[k] !== 'string' || !s.diary[k].trim()) delete s.diary[k];
+  s.jobHidden = Array.isArray(s.jobHidden) ? s.jobHidden.filter(v => typeof v === 'string') : [];
   if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   return s;
 }
@@ -534,8 +543,6 @@ function renderNow() {
     }
   }
 
-  const evs = eventsOn(todayStr());
-  if (evs.length) h += `<p class="start">今日の予定：${evs.map(evLabel).join('、')}</p>`;
 
   const list = upcoming(now);
   const curList = list.filter(x => x.start <= now);
@@ -552,7 +559,42 @@ function renderNow() {
     body += `<h2>次の授業 <small>${DAYS[c.day]}${c.period}・${whenLabel(nxt[0].start, now)}</small></h2>` +
       nxt.map(courseLine).join('');
   }
-  el.innerHTML = h + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>');
+  el.innerHTML = h + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>') +
+    todayFlow(now, t) + '<button type="button" class="addEv" data-addev>＋ 今日の予定を追加</button>';
+}
+
+// 今日の流れ：授業とバイト・予定を時刻順に（全部終わったら出さない）
+function todayFlow(now, t = term()) {
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const rows = [];
+  for (const c of coursesOn(now, t)) {
+    const o = occurrence(c, now);
+    const a = absInfo(c);
+    rows.push({
+      min: o ? o.start.getHours() * 60 + o.start.getMinutes() : 2000 + c.period,
+      time: o ? hm(o.start) : `${c.period}限`,
+      label: `${c.period}限 ${esc(nm(c))}` + (c.room ? ` <small>${esc(c.room)}</small>` : '') +
+        (a.left != null && a.left <= 1 ? ` <span class="absWarn">⚠欠席${a.n}/${a.max}</span>` : ''),
+      past: !!o && o.end <= now, id: c.id, cls: 'f-cls'
+    });
+  }
+  for (const e of eventsOn(ymd(now))) {
+    const s = toMin(e.start), en = toMin(e.end);
+    const end = e.end ? `〜${en != null && s != null && en <= s ? '翌' : ''}${e.end}` : '';
+    rows.push({
+      min: s ?? -1, time: e.start || '',
+      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : ''),
+      past: s != null && en != null && en > s && en <= nowMin, id: '', cls: `f-${e.kind}`
+    });
+  }
+  const left = rows.filter(r => !r.past);
+  if (!left.length) return '';
+  // 残りが授業1つだけなら「次の授業」と同じなので出さない
+  if (left.length === 1 && rows.every(r => r.cls === 'f-cls')) return '';
+  rows.sort((a, b) => a.min - b.min);
+  return '<h3 class="flowH">今日の流れ</h3><ul class="flow">' + rows.map(r =>
+    `<li class="${r.cls}${r.past ? ' past' : ''}"${r.id ? ` data-id="${r.id}"` : ''}>` +
+    `<span class="ft">${esc(r.time)}</span><span class="fl">${r.label}</span></li>`).join('') + '</ul>';
 }
 
 /* ===== 画面：今日・明日の持ち物 ===== */
@@ -640,8 +682,10 @@ function renderPack() {
 }
 
 /* ===== 画面：課題 ===== */
+let taskAll = false; // 課題を全部表示するか
+
 function renderTasks() {
-  const el = $('#taskCard');
+  const el = $('#taskCard'), now = new Date();
   const all = [];
   for (const c of courses()) for (const t of c.tasks) if (!t.done) all.push({ c, t });
   all.sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'));
@@ -649,12 +693,19 @@ function renderTasks() {
     el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
     return;
   }
-  el.innerHTML = `<h2>課題 <small>${all.length}件</small></h2><ul>` + all.map(({ c, t }) => {
+  // 普段は期限切れと7日以内だけ。なければ近い順に3件
+  const near = all.filter(x => x.t.due && dayDiff(parseYmd(x.t.due), now) <= 7);
+  const base = near.length ? near : all.slice(0, 3);
+  const shown = taskAll ? all : base;
+  const rest = all.length - shown.length;
+  el.innerHTML = `<h2>課題 <small>${all.length}件</small></h2><ul>` + shown.map(({ c, t }) => {
     const st = dueState(t.due);
     return `<li class="${st.cls}"><label><input type="checkbox" data-task="${t.id}" data-cid="${c.id}">` +
       `<span>${esc(t.title)}</span></label>` +
       `<span class="due" data-id="${c.id}">${esc(nm(c))}・${st.label}</span></li>`;
-  }).join('') + '</ul>';
+  }).join('') + '</ul>' +
+    (rest > 0 ? `<button class="more" data-tmore>ほか${rest}件を表示</button>` : '') +
+    (taskAll && base.length < all.length ? '<button class="more" data-tmore>閉じる</button>' : '');
 }
 
 /* ===== 画面：時間割 ===== */
@@ -676,11 +727,12 @@ function renderGrid() {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
           const a = absInfo(c);
-          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b><small>${esc(c.room)}</small><div>` +
-            (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
-            (nt ? `<span class="badge task">課題${nt}</span>` : '') +
-            (a.left != null && a.left <= 1 ? `<span class="badge abs">欠席${a.n}/${a.max}</span>` : '') +
-            `</div></div>`;
+          const warn = a.left != null && a.left <= 1;
+          const marks = (ni ? `<span>🎒${ni}</span>` : '') + (nt ? `<span>📝${nt}</span>` : '') +
+            (warn ? `<span class="absWarn">⚠${a.n}/${a.max}</span>` : '');
+          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b>` +
+            (c.room ? `<small>${esc(c.room)}</small>` : '') +
+            (marks ? `<div class="marks">${marks}</div>` : '') + `</div>`;
         }).join('') + '</div>';
     }
   }
@@ -724,6 +776,7 @@ function renderAll() {
   renderNow();
   renderPack();
   renderTasks();
+  renderNotes();
   renderGrid();
   renderIntensive();
   if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
@@ -741,7 +794,7 @@ $('#nowCard').addEventListener('click', e => {
     save(); renderAll();
     return;
   }
-  const n = e.target.closest('.nc');
+  const n = e.target.closest('.nc, .flow li[data-id]');
   if (n) openCourse(n.dataset.id);
 });
 
@@ -766,6 +819,7 @@ $('#taskCard').addEventListener('change', e => {
   }
 });
 $('#taskCard').addEventListener('click', e => {
+  if (e.target.closest('[data-tmore]')) { taskAll = !taskAll; renderTasks(); return; }
   const id = e.target.closest('.due')?.dataset.id;
   if (id) openCourse(id);
 });
@@ -848,8 +902,9 @@ function openCourse(id) {
   renderItemSuggest();
   renderDetail();
   renderSyllabusHint();
+  $('#cMore').open = false; // 「詳細」は毎回閉じた状態から
   $('#courseDlg').showModal();
-  if (!c.name) $('#cName').focus(); // 新しい授業のときだけ授業名にカーソル
+  if (!c.name) $('#cName').focus();
 }
 
 function renderDetail() {
@@ -865,6 +920,15 @@ function renderDetail() {
       : `<button class="tag next" data-toggle="${i.id}">次回${i.until ? '・' + md(new Date(i.until)) : ''}</button>`) +
     `${esc(i.text)}</span><button class="x" data-del="${i.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
+
+  // 「詳細」を閉じてても中身がわかるように
+  const nc = t.cancels.filter(x => x.courseId === c.id).length;
+  const a = absInfo(c);
+  const parts = [`欠席${a.n}回`];
+  if (nc) parts.push(`休講${nc}件`);
+  if (c.syllabus) parts.push('シラバスあり');
+  $('#cMoreSum').textContent = parts.join('・');
+  $('#cMoreSum').className = a.left != null && a.left <= 1 ? 'alert' : '';
 
   // 課題
   const ts = c.tasks.slice().sort((a, b) =>
@@ -896,7 +960,6 @@ function renderDetail() {
   $('#cancelAdd').disabled = !ahead.length;
 
   // 欠席
-  const a = absInfo(c);
   let sum = `${a.n}回`;
   if (a.max != null) sum += a.left < 0 ? ` / 上限${a.max}回（超えてる）` : ` / 上限${a.max}回（あと${a.left}回）`;
   $('#absSummary').textContent = sum;
@@ -1165,7 +1228,8 @@ function renderCal() {
       (calMulti ? calPicks.has(k) && 'pick' : k === calSel && 'sel'), k === today && 'today',
       n % 7 === 5 && 'sat', n % 7 === 6 && 'sun'].filter(Boolean).join(' ');
     h += `<div class="${cls}" data-date="${k}"><span class="dn">${date.getDate()}` +
-      (pending.length ? `<i class="dueMark">${pending.length}</i>` : '') + '</span>' +
+      (pending.length ? `<i class="dueMark">${pending.length}</i>` : '') +
+      (state.diary[k] || state.notes.some(x => !x.pin && x.date === k) ? '<i class="noteMark">✎</i>' : '') + '</span>' +
       labels.slice(0, 3).join('') +
       (labels.length > 3 ? `<span class="more">+${labels.length - 3}</span>` : '') + '</div>';
   }
@@ -1191,6 +1255,12 @@ function renderDay() {
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
     `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</button>` +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
+  for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
+    `<li><span><span class="tag next">メモ</span>${esc(n.text)}</span>` +
+    `<button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`);
+  if (state.diary[k] || k <= todayStr()) rows.push(
+    `<li><button type="button" class="evText" data-diary="${k}"><span class="tag">日記</span>` +
+    (state.diary[k] ? esc(state.diary[k]) : '<span class="muted">一言日記を書く</span>') + '</button></li>');
   $('#dayList').innerHTML = rows.join('') || '<li class="muted">なし</li>';
   renderTaskForm();
 }
@@ -2346,12 +2416,16 @@ let inYear = new Date().getFullYear();
 let inEditId = null;
 const yen = n => `${Math.round(n).toLocaleString('ja-JP')}円`;
 const sumOf = (xs, k) => xs.reduce((a, x) => a + (x[k] || 0), 0);
+// 総支給がない記録は手取りで代わりに数える（手取り≦総支給なので少なめになる）
+const grossOf = x => x.gross ?? x.net ?? 0;
+const sumGross = xs => xs.reduce((a, x) => a + grossOf(x), 0);
+const netOnly = xs => xs.filter(x => x.gross == null && x.net != null).length;
 const incomesOf = y => state.incomes.filter(x => x.date.startsWith(`${y}-`))
   .sort((a, b) => a.date.localeCompare(b.date));
 
 function renderIncome() {
   const xs = incomesOf(inYear);
-  const g = sumOf(xs, 'gross'), n = sumOf(xs, 'net');
+  const g = sumGross(xs), n = sumOf(xs, 'net'), est = netOnly(xs);
   $('#inYear').textContent = `${inYear}年`;
 
   // 上限ライン
@@ -2366,9 +2440,11 @@ function renderIncome() {
   }
   // バイト先ごと
   const jobs = new Map();
-  for (const x of xs) jobs.set(x.job || '未設定', (jobs.get(x.job || '未設定') || 0) + (x.gross || 0));
+  for (const x of xs) jobs.set(x.job || '未設定', (jobs.get(x.job || '未設定') || 0) + grossOf(x));
   $('#inSummary').innerHTML =
-    `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(n)}</small></p>` + lim +
+    `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(n)}</small></p>` +
+    (est ? `<p class="hint">総支給がわからない${est}件は手取りで数えてるよ（*の月）。本当の総支給はこれより少し多いはず</p>` : '') +
+    lim +
     (jobs.size > 1 ? `<p class="hint">${[...jobs].map(([j, v]) => `${esc(j)} ${yen(v)}`).join('・')}</p>` : '');
 
   // 月ごと（支給日の月）
@@ -2377,7 +2453,7 @@ function renderIncome() {
       const ms = xs.filter(x => +x.date.slice(5, 7) === i + 1);
       const has = ms.length > 0;
       return `<tr class="${has ? '' : 'empty'}"><td>${i + 1}月</td>` +
-        `<td>${has ? yen(sumOf(ms, 'gross')) : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>`;
+        `<td>${has ? yen(sumGross(ms)) + (netOnly(ms) ? '*' : '') : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>
     }).join('');
 
   // 記録（新しい順）
@@ -2386,8 +2462,9 @@ function renderIncome() {
     `<button type="button" class="evText inRow" data-inedit="${x.id}">` +
     `<span class="tag">${md(parseYmd(x.date))}</span>${esc(x.job || 'バイト')}` +
     (x.month ? `<span class="from">${+x.month.slice(5)}月分</span>` : '') +
-    `<span class="inAmt">${x.gross != null ? yen(x.gross) : '-'}` +
-    (x.net != null ? ` <small>手取り${yen(x.net)}</small>` : '') + '</span></button>' +
+    `<span class="inAmt">` + (x.gross != null
+      ? yen(x.gross) + (x.net != null ? ` <small>手取り${yen(x.net)}</small>` : '')
+      : `<small>手取り</small> ${yen(x.net)}`) + '</span></button>' +
     `<button class="x" data-indel="${x.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">この年の記録はまだないよ</li>';
 }
@@ -2395,7 +2472,7 @@ function renderIncome() {
 // バイト先の候補（過去の記録 → カレンダーのバイト予定）
 function renderJobChips() {
   const names = [];
-  const add = v => { v = (v || '').trim(); if (v && !names.includes(v)) names.push(v); };
+  const add = v => { v = (v || '').trim(); if (v && !names.includes(v) && !state.jobHidden.includes(v)) names.push(v); };
   [...state.incomes].sort((a, b) => b.date.localeCompare(a.date)).forEach(x => add(x.job));
   state.evPresets.filter(p => p.kind === 'job').forEach(p => add(p.title));
   $('#inJobChips').innerHTML = names.slice(0, 8).map(v =>
@@ -2405,6 +2482,119 @@ $('#inJobChips').addEventListener('click', e => {
   const b = e.target.closest('[data-job]');
   if (b) $('#inJob').value = b.dataset.job;
 });
+
+/* ===== 候補の長押しで削除 ===== */
+function longPress(box, sel, fn) {
+  let timer = null, fired = false, sx = 0, sy = 0;
+  const clear = () => { clearTimeout(timer); timer = null; };
+  box.addEventListener('pointerdown', e => {
+    const b = e.target.closest(sel);
+    fired = false;
+    if (!b) return;
+    sx = e.clientX; sy = e.clientY;
+    clear();
+    timer = setTimeout(() => { timer = null; fired = true; fn(b); }, 550);
+  });
+  box.addEventListener('pointermove', e => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clear(); // 指が動いたらスクロール扱い
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) box.addEventListener(ev, clear);
+  // 長押しのあとのタップで候補が入力されないように
+  box.addEventListener('click', e => {
+    if (fired) { fired = false; e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  box.addEventListener('contextmenu', e => { if (e.target.closest(sel)) e.preventDefault(); });
+}
+
+longPress($('#evChips'), '[data-preset]', b => {
+  const i = +b.dataset.preset, p = state.evPresets[i];
+  if (!p || !confirm(`「${p.title}」を候補から消す？\n入ってる予定は消えないよ`)) return;
+  state.evPresets.splice(i, 1);
+  save(); renderEvSuggest(); renderJobChips();
+});
+longPress($('#inJobChips'), '[data-job]', b => {
+  const v = b.dataset.job;
+  if (!confirm(`「${v}」を候補から消す？\n収入の記録は消えないよ`)) return;
+  if (!state.jobHidden.includes(v)) state.jobHidden.push(v);
+  save(); renderJobChips();
+});
+
+/* ===== メモ・一言日記・意見箱 ===== */
+const FEEDBACK_URL = ''; // GoogleフォームのURLを入れるとボタンが出る
+
+function renderNotes() {
+  const today = todayStr();
+  const pin = state.notes.filter(n => n.pin);
+  const day = state.notes.filter(n => !n.pin && n.date === today);
+  $('#noteList').innerHTML = [...pin, ...day].map(n =>
+    `<li><span><button class="tag ${n.pin ? '' : 'next'}" data-ntoggle="${n.id}">${n.pin ? '残す' : '今日だけ'}</button>` +
+    `${esc(n.text)}</span><button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`).join('')
+    || '<li class="muted">なし</li>';
+  const d = $('#diaryInput');
+  if (document.activeElement !== d) d.value = state.diary[today] || ''; // 書いてる途中は上書きしない
+}
+
+function addNote() {
+  const text = $('#noteInput').value.trim();
+  if (!text) return;
+  state.notes.push({ id: uid(), date: todayStr(), text, pin: false });
+  $('#noteInput').value = '';
+  save(); renderNotes();
+}
+$('#noteAdd').onclick = addNote;
+$('#noteInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addNote(); }
+});
+
+function delNote(id) {
+  state.notes = state.notes.filter(x => String(x.id) !== id);
+  save(); renderNotes();
+  if (curTab === 'cal') { renderCal(); renderDay(); }
+}
+
+$('#noteList').addEventListener('click', e => {
+  const tg = e.target.closest('[data-ntoggle]');
+  if (tg) {
+    const n = state.notes.find(x => String(x.id) === tg.dataset.ntoggle);
+    if (!n) return;
+    n.pin = !n.pin;
+    if (!n.pin) n.date = todayStr(); // 「今日だけ」に戻したら今日のメモにする
+    save(); renderNotes();
+    return;
+  }
+  const dl = e.target.closest('[data-ndel]');
+  if (dl) delNote(dl.dataset.ndel);
+});
+
+$('#diaryInput').addEventListener('input', e => {
+  const v = e.target.value.trim(), k = todayStr();
+  if (v) state.diary[k] = v; else delete state.diary[k];
+  save();
+});
+
+// カレンダーで見返す・書き直す
+$('#dayList').addEventListener('click', e => {
+  const dl = e.target.closest('[data-ndel]');
+  if (dl) return delNote(dl.dataset.ndel);
+  const dy = e.target.closest('[data-diary]');
+  if (!dy) return;
+  const k = dy.dataset.diary;
+  const v = prompt(`${md(parseYmd(k))}の一言日記`, state.diary[k] || '');
+  if (v == null) return;
+  if (v.trim()) state.diary[k] = v.trim(); else delete state.diary[k];
+  save(); renderCal(); renderDay();
+  if (k === todayStr()) renderNotes();
+});
+
+// ホームから今日の予定を追加
+$('#nowCard').addEventListener('click', e => {
+  if (!e.target.closest('[data-addev]')) return;
+  showTab('cal');
+  setTimeout(() => $('#evHead').scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+});
+
+$('#feedbackBtn').hidden = !FEEDBACK_URL;
+$('#feedbackBtn').onclick = () => window.open(FEEDBACK_URL, '_blank', 'noopener');
 
 function syncInForm() {
   $('#inHead').textContent = inEditId ? '記録を変更' : '収入を追加';
@@ -2444,6 +2634,7 @@ $('#inSave').onclick = () => {
     !confirm('手取りが総支給より多くなってるけど、このまま保存する？')) return;
   const m = $('#inMonth').value;
   const v = { date, month: /^\d{4}-\d{2}$/.test(m) ? m : '', job: $('#inJob').value.trim(), gross, net };
+  if (v.job) state.jobHidden = state.jobHidden.filter(j => j !== v.job); // 消した候補でも、また使ったら戻す
   const x = inEditId && state.incomes.find(k => k.id === inEditId);
   if (x) Object.assign(x, v);
   else state.incomes.push({ id: uid(), ...v });

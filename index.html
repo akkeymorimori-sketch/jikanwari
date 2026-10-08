@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>時間割メモ</title>
-<link rel="stylesheet" href="style.css?v=20">
+<link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 <header>
@@ -23,6 +23,17 @@
     <section class="card" id="nowCard"></section>
     <section class="card" id="packCard"></section>
     <section class="card" id="taskCard"></section>
+    <section class="card" id="noteCard">
+      <h2>メモ</h2>
+      <ul id="noteList"></ul>
+      <div class="row">
+        <input id="noteInput" placeholder="例: 帰りに印刷" autocomplete="off" aria-label="メモ">
+        <button id="noteAdd">追加</button>
+      </div>
+      <p class="hint">「今日だけ」は日付が変わるとここから消えて、カレンダーで見返せるよ。タグをタップすると「残す」になる</p>
+      <h3>一言日記</h3>
+      <input id="diaryInput" placeholder="今日はどんな日だった？" autocomplete="off" maxlength="200" aria-label="一言日記">
+    </section>
   </section>
 
   <!-- カレンダー -->
@@ -67,6 +78,7 @@
         <input id="evTitle" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定のタイトル">
       </div>
       <div id="evChips" class="chips"></div>
+      <p class="hint">候補は長押しで消せるよ</p>
       <div class="row">
         <input type="time" id="evStart" aria-label="開始時刻">
         <span class="hint">〜</span>
@@ -113,6 +125,7 @@
     <div class="card menu">
       <h2>アプリ</h2>
       <button id="settingsBtn"><b>設定</b><small>時限の時刻、テーマ、シラバス、バックアップ、AI</small></button>
+      <button id="feedbackBtn" hidden><b>意見箱</b><small>名前なしで感想・不具合を送れる</small></button>
     </div>
   </section>
 </main>
@@ -187,33 +200,39 @@
     </div>
     <ul id="memoList"></ul>
 
-    <div id="cCancelSec" class="contents">
-    <h3>休講</h3>
-    <ul id="cancelList"></ul>
-    <div class="row">
-      <select id="cancelDate" aria-label="休講にする日"></select>
-      <button id="cancelAdd">休講にする</button>
-    </div>
-    <p class="hint">休講の回は飛ばすよ。「次回だけ」の持ち物は次の回に持ち越し</p>
-    </div>
+    <!-- 詳細（毎回閉じた状態で開く） -->
+    <details class="sec" id="cMore">
+      <summary>詳細 <small id="cMoreSum"></small></summary>
+      <div class="cMoreBody">
+        <h3>欠席 <small id="absSummary"></small></h3>
+        <ul id="absList"></ul>
+        <div class="row">
+          <input type="date" id="absDate" aria-label="欠席した日">
+          <button id="absAdd">欠席を記録</button>
+        </div>
+        <div class="row">
+          <label class="inline">休める上限 <input id="absMax" type="number" min="0" max="99" inputmode="numeric" class="num"></label>
+          <span class="hint">回（空でもOK）</span>
+        </div>
 
-    <h3>欠席 <small id="absSummary"></small></h3>
-    <ul id="absList"></ul>
-    <div class="row">
-      <input type="date" id="absDate" aria-label="欠席した日">
-      <button id="absAdd">欠席を記録</button>
-    </div>
-    <div class="row">
-      <label class="inline">休める上限 <input id="absMax" type="number" min="0" max="99" inputmode="numeric" class="num"></label>
-      <span class="hint">回（空でもOK）</span>
-    </div>
+        <div id="cCancelSec" class="contents">
+        <h3>休講</h3>
+        <ul id="cancelList"></ul>
+        <div class="row">
+          <select id="cancelDate" aria-label="休講にする日"></select>
+          <button id="cancelAdd">休講にする</button>
+        </div>
+        <p class="hint">休講の回は飛ばすよ。「次回だけ」の持ち物は次の回に持ち越し</p>
+        </div>
 
-    <h3>シラバス</h3>
-    <div class="row">
-      <input id="cSyllabus" type="url" inputmode="url" placeholder="URL（なくてもOK）" aria-label="シラバスのURL">
-      <button id="cSyllabusOpen">開く</button>
-    </div>
-    <p class="hint" id="cSyllabusHint"></p>
+        <h3>シラバス</h3>
+        <div class="row">
+          <input id="cSyllabus" type="url" inputmode="url" placeholder="URL（なくてもOK）" aria-label="シラバスのURL">
+          <button id="cSyllabusOpen">開く</button>
+        </div>
+        <p class="hint" id="cSyllabusHint"></p>
+      </div>
+    </details>
 
     <div class="row split" id="cBtns">
       <button id="cDelete" class="danger">授業を削除</button>
@@ -386,6 +405,7 @@
       <input id="inJob" autocomplete="off" placeholder="例: カフェ" aria-label="バイト先">
     </div>
     <div id="inJobChips" class="chips"></div>
+    <p class="hint">候補は長押しで消せるよ</p>
     <div class="row">
       <span class="hint lbl">総支給</span>
       <input type="number" id="inGross" min="0" inputmode="numeric" aria-label="総支給額">
@@ -491,6 +511,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=23"></script>
 </body>
 </html>
