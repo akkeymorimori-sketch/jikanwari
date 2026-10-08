@@ -3068,6 +3068,39 @@ const shiftPrompt = name => `これはアルバイトのシフト表の画像で
 - 「公休」「休み」などの欄に名前があるだけで、時刻がない日は出力しない。
 - 見つからなければ [] だけを出力する。読み取れない部分を推測で埋めない。
 - ほかの人の名前や、行事・メモの欄の内容は出力しない。`;
+// 1か月の表用：日付の行と自分の行を別々に書き出してもらい、対応づけはアプリでやる
+const gridPrompt = name => `これはアルバイトのシフト表の画像です。名前が縦に並び、日付が横に並んでいます。1つの日付の下に「始業」「終業」の2列があります。1ページに表が2段以上あることもあります。
+「${name}」さんの行だけを、次の手順で読んでください。
+1. 表の段ごとに、いちばん上の日付の行を左から順にすべて書き出す。勤務がない日も飛ばさない。
+2. 同じ段の「${name}」さんの行を左から順に、日付1つにつき [始業, 終業] の組で書き出す。空欄は ["",""]。
+3. dates と cells の数は必ず同じにする。
+JSONだけを出力してください。説明文やコードブロック記号は書かないでください。
+形式: {"blocks":[{"dates":["10/1","10/2"],"cells":[["13:00","22:00"],["",""]]}]}
+ルール:
+- 名前が「${name}」と完全に同じ行だけを使う。名字だけ同じ別の人は使わない。
+- 時刻は24時間表記の HH:MM。読めないセルは推測せず ["",""] にする。
+- 日付は「月/日」の数字だけ。曜日は書かない。
+- 見つからなければ {"blocks":[]} だけを出力する。`;
+
+// 日付とセルの数が合わない段は、ずれてる可能性が高いので捨てる
+function gridToRows(o) {
+  const out = [];
+  let bad = 0;
+  for (const b of Array.isArray(o?.blocks) ? o.blocks : []) {
+    const ds = Array.isArray(b?.dates) ? b.dates : [];
+    const cs = Array.isArray(b?.cells) ? b.cells : [];
+    if (!ds.length) continue;
+    if (ds.length !== cs.length) { bad++; continue; }
+    ds.forEach((d, j) => {
+      const m = String(d).match(/(\d{1,2})\s*[\/／月]\s*(\d{1,2})/);
+      const c = cs[j];
+      if (!m || !Array.isArray(c) || !c[0]) return;
+      out.push({ month: +m[1], day: +m[2], start: c[0], end: c[1] || '' });
+    });
+  }
+  return { out, bad };
+}
+
 
 const shiftDlg = document.createElement('dialog');
 shiftDlg.id = 'shiftDlg';
@@ -3078,6 +3111,10 @@ shiftDlg.innerHTML =
   '<label>表の中の自分の名前（表に書いてあるとおりに）<input id="shName" placeholder="例：山田" autocomplete="off"></label>' +
   '<label>カレンダーに入れる名前<input id="shJob" placeholder="例：バイト先の名前" list="shJobList" autocomplete="off"></label>' +
   '<datalist id="shJobList"></datalist>' +
+  '<label>表の形<select id="shLayout">' +
+  '<option value="day">1日ごとの表・その他</option>' +
+  '<option value="grid">1か月の表（名前が縦、日付が横）</option>' +
+  '</select></label>' +
   '<label class="fileBtn">PDF・写真を選ぶ<input type="file" id="shFile" accept="application/pdf,image/*" multiple class="vh"></label>' +
   '<p class="hint">PDFは全ページ、写真は何枚でもまとめて選べるよ</p>' +
   '<div id="shPages" class="shPages"></div>' +
@@ -3094,6 +3131,7 @@ const shDone = new Map(); // ページ番号 → 読み取り結果
 function openShift() {
   $('#shName').value = state.shiftName || '';
   $('#shJob').value = state.shiftJob || '';
+  $('#shLayout').value = state.shiftLayout || 'day';
   const jobs = new Set();
   for (const p of state.evPresets) if (p.kind === 'job' && p.title) jobs.add(p.title);
   for (const x of state.incomes) if (x.job) jobs.add(x.job);
@@ -3214,32 +3252,48 @@ $('#shRun').onclick = async () => {
   const name = $('#shName').value.trim();
   if (!name) return alert('表の中の自分の名前を入れてね');
   if (!hasKey()) return openPhoto('guide');
+  const layout = $('#shLayout').value;
+  const grid = layout === 'grid';
   state.shiftName = name;
   state.shiftJob = $('#shJob').value.trim();
+  state.shiftLayout = layout;
   save();
-  if (name !== shDoneName) { shDone.clear(); shDoneName = name; }
+  // 名前か表の形が変わったら、読み取り済みのページもやり直す
+  const doneKey = name + '|' + layout;
+  if (doneKey !== shDoneName) { shDone.clear(); shDoneName = doneKey; }
 
   const todo = [...document.querySelectorAll('#shPages [data-shp]:checked')]
     .map(x => +x.dataset.shp).filter(i => !shDone.has(i));
   if (!todo.length) return showShRows();
 
   const st = $('#shStatus');
+  let bad = 0;
   shRunning = true;
   $('#shRun').disabled = true;
   try {
     for (const [k, i] of todo.entries()) {
       if (k > 0) await sleep(4000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
-      const cv = await shCanvas(shSrc[i], 1800);
+      const cv = await shCanvas(shSrc[i], grid ? 2400 : 1800);
       const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
       cv.width = cv.height = 0;
-      const txt = await callVision(b64, shiftPrompt(name), st);
-      const s = txt.indexOf('['), e = txt.lastIndexOf(']');
+      const txt = await callVision(b64, grid ? gridPrompt(name) : shiftPrompt(name), st);
+      const [open, close] = grid ? ['{', '}'] : ['[', ']'];
+      const s = txt.indexOf(open), e = txt.lastIndexOf(close);
       if (s < 0 || e < s) throw new Error(`${i + 1}ページ目の結果がうまく読めなかった`);
-      shDone.set(i, JSON.parse(txt.slice(s, e + 1)));
+      const json = JSON.parse(txt.slice(s, e + 1));
+      if (grid) {
+        const g = gridToRows(json);
+        bad += g.bad;
+        shDone.set(i, g.out);
+      } else {
+        shDone.set(i, json);
+      }
       showShRows();
     }
-    st.textContent = '読み取り終わったよ。下を確認して追加してね';
+    st.textContent = bad
+      ? `読み取り終わったよ。ただ${bad}段は日付と時刻の数が合わなかったから飛ばした。下を確認してね`
+      : '読み取り終わったよ。下を確認して追加してね';
     $('#shRun').textContent = '読み取る';
   } catch (err) {
     st.textContent = `エラー: ${friendlyError(err)}（${shDone.size}ページ分は読めてる。もう一回押すと続きから）`;
