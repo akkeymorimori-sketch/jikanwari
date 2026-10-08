@@ -3692,7 +3692,9 @@ const icsBox = document.createElement('div');
 icsBox.className = 'icsBox';
 icsBox.innerHTML =
   '<button type="button" id="icsBtn">📅 カレンダーに書き出す</button>' +
-  '<p class="hint">課題の締切と、2週間分の持ち物を書き出すよ。通知は前日21時。内容を変えたら書き出し直してね</p>';
+  '<p class="hint">課題の締切と、2週間分の持ち物を書き出すよ。通知は前日21時。内容を変えたら書き出し直してね</p>' +
+  '<div class="row icsTry"><button type="button" id="icsOpenA">直接開く A（試験中）</button>' +
+  '<button type="button" id="icsOpenB">直接開く B（試験中）</button></div>';
 $('#exportBtn').parentElement.after(icsBox);
 
 $('#icsBtn').onclick = async () => {
@@ -3715,6 +3717,29 @@ $('#icsBtn').onclick = async () => {
   }
   toast(`課題${nTask}件・持ち物${nPack}日分を書き出したよ`);
 };
+
+// 試験中：ファイル保存を挟まずにカレンダーの追加画面を出す
+function icsOpen(kind) {
+  const { text, nTask, nPack } = buildIcs();
+  if (!nTask && !nPack) return alert('書き出す課題も持ち物もまだないよ');
+  const a = document.createElement('a');
+  a.target = '_blank';
+  a.rel = 'noopener';
+  if (kind === 'A') {
+    // A：いったんファイルにして、それを開く
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/calendar' }));
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  } else {
+    // B：中身をそのままURLにして開く
+    a.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(text);
+  }
+  document.body.append(a);
+  a.click();
+  a.remove();
+  toast(`課題${nTask}件・持ち物${nPack}日分を開いたよ`);
+}
+$('#icsOpenA').onclick = () => icsOpen('A');
+$('#icsOpenB').onclick = () => icsOpen('B');
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */

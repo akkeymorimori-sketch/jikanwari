@@ -526,3 +526,5 @@ details.sec > a, #aiBox > a { display: block; }
 }
 #cutCv { display: block; transform-origin: 0 0; }
 
+.icsTry { gap: 6px; margin-top: 6px; }
+.icsTry button { font-size: 13px; }
