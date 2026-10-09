@@ -530,3 +530,10 @@ details.sec > a, #aiBox > a { display: block; }
 #ocrResult select.d { width: auto; min-width: 3.6em; padding: 3px 2px; }
 #ocrResult input.p { width: 3em; min-width: 3em; }
 #ocrResult td:first-child, #ocrResult td:nth-child(2) { width: 1%; white-space: nowrap; }
+.calTitleWrap { position: relative; display: inline-block; }
+.calTitleWrap::after { content: ' ▾'; font-size: .8em; color: #888; }
+#calPick {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0; font-size: 16px; cursor: pointer;
+}

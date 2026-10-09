@@ -1264,6 +1264,8 @@ function findCourse(id) {
 function renderCal() {
   const y = calMonth.getFullYear(), m = calMonth.getMonth(), t = term(), today = todayStr();
   $('#calTitle').textContent = `${y}年${m + 1}月`;
+  const cp = $('#calPick');
+  if (cp) cp.value = `${y}-${String(m + 1).padStart(2, '0')}`;
   const first = new Date(y, m, 1);
   const start = addDays(first, -dayIndex(first)); // 月曜はじまり
   let h = ['月', '火', '水', '木', '金', '土', '日'].map((d, i) =>
@@ -3727,6 +3729,22 @@ $('#icsBtn').onclick = async () => {
   }
   toast(`課題${nTask}件・持ち物${nPack}日分を書き出したよ`);
 };
+
+/* ===== カレンダー：年月をタップして選ぶ ===== */
+const calPick = document.createElement('input');
+calPick.type = 'month';
+calPick.id = 'calPick';
+calPick.setAttribute('aria-label', '年月を選ぶ');
+const calTitleWrap = document.createElement('span');
+calTitleWrap.className = 'calTitleWrap';
+$('#calTitle').before(calTitleWrap);
+calTitleWrap.append($('#calTitle'), calPick);
+calPick.addEventListener('change', () => {
+  const m = calPick.value.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return;
+  calMonth = new Date(+m[1], +m[2] - 1, 1);
+  renderCal();
+});
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
