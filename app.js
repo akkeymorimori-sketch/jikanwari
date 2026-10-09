@@ -111,7 +111,7 @@ const newTerm = (name, start = '', end = '', courses = []) =>
 // day = -1 は集中講義
 const newCourse = (day, period, extra = {}) => ({
   id: uid(), day, period, name: '', short: '', teacher: '', room: '', syllabus: '', from: '', to: '',
-  items: [], memos: [], tasks: [], absences: [], maxAbsence: '', ...extra
+  items: [], memos: [], tasks: [], absences: [], maxAbsence: '', tag: '', ...extra
 });
 
 // 旧バージョン（学期なし）のデータを変換
@@ -169,6 +169,14 @@ function normalize(s) {
   if (!COLORS.includes(s.theme.color)) s.theme.color = 'blue';
   if (!FONTS.includes(s.theme.font)) s.theme.font = 'system';
 
+  // 授業のタグ（学期をまたいで共通）
+  s.tags = Array.isArray(s.tags) ? s.tags.filter(t => t && typeof t.name === 'string' && t.name.trim()) : [];
+  for (const t of s.tags) {
+    t.id = fixId(t.id);
+    t.name = t.name.trim().slice(0, 10);
+    if (!TAG_COLORS.includes(t.color)) t.color = TAG_COLORS[0];
+  }
+
   // バイトなどの予定（学期をまたいで共通）
   s.events = Array.isArray(s.events) ? s.events.filter(e => e && isYmd(e.date)) : [];
   for (const e of s.events) {
@@ -219,6 +227,7 @@ function normalize(s) {
       c.id = fixId(c.id);
       c.name ??= ''; c.short ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
       c.from ??= ''; c.to ??= '';
+      c.tag = typeof c.tag === 'string' ? c.tag : '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
       c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
       c.maxAbsence ??= '';
@@ -773,7 +782,8 @@ function renderGrid() {
           const warn = a.left != null && a.left <= 1;
           const marks = (ni ? `<span>🎒${ni}</span>` : '') + (nt ? `<span>📝${nt}</span>` : '') +
             (warn ? `<span class="absWarn">⚠${a.n}/${a.max}</span>` : '');
-          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b>` +
+          const tg = tagOf(c);
+          return `<div class="course${tg ? ' tagged' : ''}" data-id="${c.id}"${tg ? ` style="--tag:${tg.color}"` : ''}><b>${esc(nm(c))}</b>` +
             (c.room ? `<small>${esc(c.room)}</small>` : '') +
             (marks ? `<div class="marks">${marks}</div>` : '') + `</div>`;
         }).join('') + '</div>';
@@ -781,6 +791,7 @@ function renderGrid() {
   }
   g.innerHTML = h;
   syncGridBar();
+  renderTagLegend();
 }
 
 function renderTermSelect() {
@@ -804,7 +815,8 @@ function renderIntensive() {
       ? '<div class="intList">' + list.map(c => {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
-          return `<div class="course" data-id="${c.id}"><b>${esc(nm(c))}</b>` +
+          const tg = tagOf(c);
+          return `<div class="course${tg ? ' tagged' : ''}" data-id="${c.id}"${tg ? ` style="--tag:${tg.color}"` : ''}><b>${esc(nm(c))}</b>` +
             `<span class="when">${rangeLabel(c)}</span><small>${esc(c.room)}</small><div>` +
             (ni ? `<span class="badge item">持ち物${ni}</span>` : '') +
             (nt ? `<span class="badge task">課題${nt}</span>` : '') +
@@ -956,6 +968,8 @@ function openCourse(id) {
   $('#absMax').value = c.maxAbsence;
   renderItemSuggest();
   renderDetail();
+  renderCTags();
+  $('#tagNew').hidden = true;
   renderSyllabusHint();
   $('#cMore').open = false; // 「詳細」は毎回閉じた状態から
   $('#courseDlg').showModal();
@@ -2033,7 +2047,7 @@ $('#termCreate').onclick = () => {
   const start = $('#newTermStart').value, end = $('#newTermEnd').value;
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
   const copied = $('#newTermCopy').checked ? courses().filter(c => c.day !== -1).map(c => newCourse(c.day, c.period, {
-    name: c.name, short: c.short, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence,
+    name: c.name, short: c.short, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence, tag: c.tag,
     items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() }))
   })) : [];
   const t = newTerm(name, start, end, copied);
@@ -2307,7 +2321,8 @@ function shareJSON() {
     times: state.times.map(x => [x.start, x.end]),
     c: t.courses.filter(c => c.name.trim()).map(c => [
       c.day, c.period, c.name, c.short, c.teacher, c.room, c.syllabus, c.from, c.to,
-      withItems ? c.items.filter(i => i.type === 'always').map(i => i.text) : []
+      withItems ? c.items.filter(i => i.type === 'always').map(i => i.text) : [],
+      tagOf(c) ? [tagOf(c).name, tagOf(c).color] : 0
     ])
   };
   if ($('#shareOff').checked) {
@@ -2369,13 +2384,14 @@ function parseShare(d) {
   const okPeriod = v => Number.isInteger(v) && v >= 1 && v <= 10;
 
   const cs = d.c.slice(0, 200).filter(Array.isArray).map(
-    ([day, period, name, short, teacher, room, syllabus, from, to, items]) => ({
+    ([day, period, name, short, teacher, room, syllabus, from, to, items, tag]) => ({
       day: okDay(day) ? day : 0,
       period: okPeriod(period) ? period : 1,
       name: str(name).trim(), short: str(short), teacher: str(teacher), room: str(room),
       syllabus: isHttp(syllabus) ? str(syllabus) : '',
       from: isYmd(from) ? from : '', to: isYmd(to) ? to : '',
-      items: Array.isArray(items) ? items.map(str).map(s => s.trim()).filter(Boolean).slice(0, 30) : []
+      tag: Array.isArray(tag) && str(tag[0]).trim()
+        ? { name: str(tag[0]).trim().slice(0, 10), color: TAG_COLORS.includes(tag[1]) ? tag[1] : TAG_COLORS[0] } : null
     })).filter(c => c.name);
   if (!cs.length) throw new Error('bad');
 
@@ -2436,6 +2452,7 @@ function renderSharePreview() {
 const fromShare = c => newCourse(c.day, c.period, {
   name: c.name, short: c.short, teacher: c.teacher, room: c.room,
   syllabus: c.syllabus, from: c.from, to: c.to,
+  tag: shareTag(c.tag),
   items: c.items.map(text => ({ id: uid(), text, type: 'always', added: Date.now(), until: null }))
 });
 
@@ -3745,6 +3762,134 @@ calPick.addEventListener('change', () => {
   calMonth = new Date(+m[1], +m[2] - 1, 1);
   renderCal();
 });
+
+/* ===== タグ（授業の色分け） ===== */
+// 欠席警告の赤とかぶらない8色
+const TAG_COLORS = ['#3b82f6', '#22a55b', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#a16207', '#6b7280'];
+const tagOf = c => (c && c.tag && state.tags.find(t => t.id === c.tag)) || null;
+const palHtml = (sel, attr) => TAG_COLORS.map(col =>
+  `<button type="button" class="sw${col === sel ? ' on' : ''}" style="--sw:${col}" ${attr} data-col="${col}" aria-label="色"></button>`).join('');
+
+// 共有コードのタグは、同じ名前があればそれを使い、なければ作る
+function shareTag(x) {
+  if (!x) return '';
+  let t = state.tags.find(v => v.name === x.name);
+  if (!t) { t = { id: uid(), name: x.name, color: x.color }; state.tags.push(t); }
+  return t.id;
+}
+
+// 授業詳細のタグ欄
+const tagBox = document.createElement('div');
+tagBox.className = 'tagBox';
+tagBox.innerHTML =
+  '<span class="tagLbl">タグ</span><div id="cTags" class="tagChips"></div>' +
+  '<div id="tagNew" class="tagNew" hidden>' +
+  '<input id="tagName" placeholder="例：教職" maxlength="10" autocomplete="off" aria-label="タグの名前">' +
+  '<div class="pal" id="tagNewPal"></div><p class="hint">色をタップすると作れるよ</p></div>';
+($('#cRoom').closest('.row') || $('#cRoom').closest('label') || $('#cRoom')).after(tagBox);
+
+function renderCTags() {
+  const c = cur();
+  if (!c) return;
+  $('#cTags').innerHTML =
+    state.tags.map(t =>
+      `<button type="button" class="tagChip${c.tag === t.id ? ' on' : ''}" style="--tag:${t.color}" data-ctag="${t.id}">${esc(t.name)}</button>`).join('') +
+    '<button type="button" class="tagChip add" data-ctag="new">＋ 新しいタグ</button>' +
+    (state.tags.length ? '<button type="button" class="tagChip edit" data-ctag="edit">編集</button>' : '');
+}
+
+$('#cTags').addEventListener('click', e => {
+  const b = e.target.closest('[data-ctag]');
+  if (!b) return;
+  const k = b.dataset.ctag, c = cur();
+  if (k === 'new') {
+    const box = $('#tagNew');
+    box.hidden = !box.hidden;
+    if (!box.hidden) {
+      $('#tagNewPal').innerHTML = palHtml('', 'data-newcol');
+      $('#tagName').value = '';
+      $('#tagName').focus();
+    }
+    return;
+  }
+  if (k === 'edit') return openTagDlg();
+  c.tag = c.tag === k ? '' : k; // もう一回押すと外れる
+  save(); renderAll(); renderCTags();
+});
+
+$('#tagNewPal').addEventListener('click', e => {
+  const col = e.target.closest('[data-newcol]')?.dataset.col;
+  if (!col) return;
+  const name = $('#tagName').value.trim();
+  if (!name) return alert('タグの名前を入れてね');
+  let t = state.tags.find(x => x.name === name);
+  if (!t) { t = { id: uid(), name, color: col }; state.tags.push(t); }
+  cur().tag = t.id;
+  $('#tagNew').hidden = true;
+  save(); renderAll(); renderCTags();
+});
+
+// タグの編集
+const tagDlg = document.createElement('dialog');
+tagDlg.id = 'tagDlg';
+tagDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2>タグの編集</h2>' +
+  '<button type="button" class="x" id="tagX" aria-label="閉じる">×</button></div>' +
+  '<p class="hint">変更はすぐ反映されるよ。タグを消すと、付けてた授業は色なしに戻る</p>' +
+  '<ul id="tagList" class="tagList"></ul>' +
+  '<button type="button" class="primary" id="tagDone">閉じる</button>' +
+  '</div>';
+document.body.append(tagDlg);
+
+function renderTagList() {
+  $('#tagList').innerHTML = state.tags.map(t =>
+    `<li><input data-tname="${t.id}" value="${esc(t.name)}" maxlength="10" aria-label="タグの名前">` +
+    `<button type="button" class="x" data-tagdel="${t.id}" aria-label="削除">×</button>` +
+    `<div class="pal">${palHtml(t.color, `data-tcol="${t.id}"`)}</div></li>`).join('') ||
+    '<li class="muted">タグはまだないよ</li>';
+}
+function openTagDlg() { renderTagList(); tagDlg.showModal(); }
+
+$('#tagList').addEventListener('change', e => {
+  const id = e.target.dataset.tname;
+  if (!id) return;
+  const t = state.tags.find(x => x.id === id), v = e.target.value.trim();
+  if (!t) return;
+  if (!v) { e.target.value = t.name; return; }
+  t.name = v.slice(0, 10);
+  save(); renderAll(); renderCTags();
+});
+$('#tagList').addEventListener('click', e => {
+  const sw = e.target.closest('[data-tcol]');
+  if (sw) {
+    const t = state.tags.find(x => x.id === sw.dataset.tcol);
+    if (!t) return;
+    t.color = sw.dataset.col;
+    save(); renderAll(); renderCTags(); renderTagList();
+    return;
+  }
+  const del = e.target.closest('[data-tagdel]');
+  if (!del) return;
+  const t = state.tags.find(x => x.id === del.dataset.tagdel);
+  if (!t || !confirm(`タグ「${t.name}」を消す？`)) return;
+  state.tags = state.tags.filter(x => x !== t);
+  save(); renderAll(); renderCTags(); renderTagList();
+});
+$('#tagX').onclick = () => tagDlg.close();
+$('#tagDone').onclick = () => tagDlg.close();
+
+// 時間割の下の凡例（使ってるタグだけ）
+const tagLegend = document.createElement('div');
+tagLegend.id = 'tagLegend';
+tagLegend.className = 'tagLegend';
+$('#grid').after(tagLegend);
+function renderTagLegend() {
+  const used = new Set(courses().map(tagOf).filter(Boolean));
+  tagLegend.innerHTML = state.tags.filter(t => used.has(t))
+    .map(t => `<span style="--tag:${t.color}">${esc(t.name)}</span>`).join('');
+  tagLegend.hidden = !used.size;
+}
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
