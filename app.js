@@ -209,6 +209,14 @@ function normalize(s) {
     x.net = toYen(x.net);
   }
   s.incomeLimit = toYen(s.incomeLimit) ?? '';
+  // バイト先ごとの時給・休憩（収入の見込み用）
+  s.wages = s.wages && typeof s.wages === 'object' && !Array.isArray(s.wages) ? s.wages : {};
+  for (const [k, v] of Object.entries(s.wages)) {
+    const w = toYen(v && v.w) ?? null, b = Number(v && v.brk);
+    const brk = Number.isFinite(b) && b > 0 ? Math.min(Math.round(b), 180) : 0;
+    if (w == null && !brk) delete s.wages[k];
+    else s.wages[k] = { w, brk };
+  }
 
   delete s.icon;
   delete s.appName;
@@ -3629,6 +3637,87 @@ const closeCut = () => {
 };
 $('#cutX').onclick = closeCut;
 $('#cutDone').onclick = closeCut;
+
+/* ===== 収入の見込み（シフトから） ===== */
+const fcBox = document.createElement('div');
+fcBox.id = 'inForecast';
+$('#inSummary').before(fcBox);
+let fcOffset = 0, fcNames = [];
+
+// 勤務の長さ（分）と、そのうち22時〜翌5時の分
+function shiftMin(e) {
+  const s = toMin(e.start), e0 = toMin(e.end);
+  if (s == null || e0 == null) return null;
+  const en = e0 <= s ? e0 + 1440 : e0;
+  let night = 0;
+  for (let m = s; m < en; m++) {
+    const h = m % 1440;
+    if (h >= 1320 || h < 300) night++;
+  }
+  return { total: en - s, night };
+}
+const hrs = m => `${Math.round(m / 6) / 10}時間`;
+
+function renderForecast() {
+  const now = new Date();
+  const d0 = new Date(now.getFullYear(), now.getMonth() + fcOffset, 1);
+  const key = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}`;
+  const by = new Map();
+  for (const e of state.events) {
+    if (e.kind !== 'job' || !e.date.startsWith(key)) continue;
+    const name = e.title || 'バイト';
+    const r = by.get(name) || { n: 0, min: 0, pay: 0, noTime: 0 };
+    by.set(name, r);
+    const t = shiftMin(e);
+    if (!t) { r.noTime++; continue; }
+    const wg = state.wages[name] || {};
+    const work = Math.max(0, t.total - (t.total > 360 ? (wg.brk || 0) : 0));
+    const night = Math.min(t.night, work);
+    r.n++; r.min += work;
+    if (wg.w != null) r.pay += wg.w * (work - night) / 60 + wg.w * 1.25 * night / 60;
+  }
+  fcNames = [...by.keys()];
+  const known = fcNames.filter(k => state.wages[k]?.w != null);
+  const total = known.reduce((a, k) => a + by.get(k).pay, 0);
+  const head =
+    `<div class="fcHead"><button type="button" id="fcPrev" aria-label="前の月">‹</button>` +
+    `<b>${d0.getMonth() + 1}月の見込み</b>` +
+    `<button type="button" id="fcNext" aria-label="次の月">›</button></div>`;
+  if (!fcNames.length) {
+    fcBox.innerHTML = head + '<p class="hint">この月のバイト予定はまだないよ。カレンダーに入れるかシフト表を読み取ると、ここに見込みが出るよ</p>';
+    return;
+  }
+  fcBox.innerHTML = head +
+    `<p class="inTotal">${known.length ? yen(total) : '—'}<small>${fcOffset < 0 ? '働いた分' : '予定どおり働いたら'}</small></p>` +
+    (known.length < fcNames.length ? '<p class="hint">時給が未入力のバイトは合計に入ってないよ</p>' : '') +
+    '<ul class="fcList">' + fcNames.map((k, i) => {
+      const r = by.get(k), wg = state.wages[k] || {};
+      return `<li><div class="fcRow"><span>${esc(k)}<small> ${r.n}回・${hrs(r.min)}</small></span>` +
+        `<b>${wg.w != null ? yen(r.pay) : '時給を入れてね'}</b></div>` +
+        (r.noTime ? `<p class="hint">時刻のない予定${r.noTime}件は数えてないよ</p>` : '') +
+        `<div class="fcIn"><label>時給<input type="number" inputmode="numeric" min="0" data-fw="${i}" value="${wg.w ?? ''}">円</label>` +
+        `<label>休憩<input type="number" inputmode="numeric" min="0" data-fb="${i}" value="${wg.brk || ''}">分</label></div></li>`;
+    }).join('') + '</ul>' +
+    '<p class="hint">22〜5時は25%増しで計算。休憩は6時間を超えた日だけ引くよ。交通費や残業代は入ってないよ</p>';
+}
+
+fcBox.addEventListener('click', e => {
+  if (e.target.id === 'fcPrev') { fcOffset--; renderForecast(); }
+  if (e.target.id === 'fcNext') { fcOffset++; renderForecast(); }
+});
+fcBox.addEventListener('change', e => {
+  const i = e.target.dataset.fw ?? e.target.dataset.fb;
+  if (i == null) return;
+  const k = fcNames[+i];
+  const wg = state.wages[k] || { w: null, brk: 0 };
+  if (e.target.dataset.fw != null) wg.w = toYen(e.target.value) ?? null;
+  else wg.brk = Math.min(Math.max(Math.round(Number(e.target.value) || 0), 0), 180);
+  if (wg.w == null && !wg.brk) delete state.wages[k];
+  else state.wages[k] = wg;
+  save(); renderForecast();
+});
+// 収入画面を開いたら今月に戻す
+$('#incomeBtn').addEventListener('click', () => { fcOffset = 0; renderForecast(); });
 
 /* ===== カレンダー書き出し（.ics） ===== */
 const icsDate = d => ymd(d).replace(/-/g, '');
