@@ -525,3 +525,8 @@ details.sec > a, #aiBox > a { display: block; }
   outline: 1px solid #ccc;
 }
 #cutCv { display: block; transform-origin: 0 0; }
+/* 画像読み込みの結果：曜日と時限がつぶれないように */
+#ocrResult { overflow-x: auto; }
+#ocrResult select.d { width: auto; min-width: 3.6em; padding: 3px 2px; }
+#ocrResult input.p { width: 3em; min-width: 3em; }
+#ocrResult td:first-child, #ocrResult td:nth-child(2) { width: 1%; white-space: nowrap; }

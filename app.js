@@ -1830,17 +1830,21 @@ $('#runOcr').onclick = async () => {
 
 function showRows(arr) {
   const dayOpts = sel => DAYS.map((d, i) => `<option value="${i}" ${i === sel ? 'selected' : ''}>${d}</option>`).join('');
+  // 「月曜」「月曜日」で返ってきても先頭1文字で判定
+  const dayOf = c => Math.max(0, DAYS.indexOf(String(c.day ?? '').trim().charAt(0)));
+  // 曜日→時限の順に並べる
+  const rows = arr.map(c => ({ ...c, _d: dayOf(c), _p: +c.period || 1 }))
+    .sort((a, b) => (a._d - b._d) || (a._p - b._p));
   $('#ocrResult').innerHTML =
     '<table><tr><td>曜</td><td>限</td><td>授業名</td><td>教員</td><td>教室</td><td>除外</td></tr>' +
-    arr.map(c => {
-      const d = Math.max(0, DAYS.indexOf(c.day));
-      return `<tr class="r"><td><select class="d">${dayOpts(d)}</select></td>` +
-        `<td><input class="p" type="number" min="1" max="10" value="${+c.period || 1}" style="width:48px"></td>` +
-        `<td><input class="n" value="${esc(c.name)}"></td>` +
-        `<td><input class="t" value="${esc(c.teacher)}"></td>` +
-        `<td><input class="rm" value="${esc(c.room)}"></td>` +
-        `<td><input type="checkbox" class="skip"></td></tr>`;
-    }).join('') + '</table>';
+    rows.map(c =>
+      `<tr class="r"><td><select class="d" aria-label="曜日">${dayOpts(c._d)}</select></td>` +
+      `<td><input class="p" type="number" min="1" max="10" value="${c._p}" aria-label="時限"></td>` +
+      `<td><input class="n" value="${esc(c.name)}" aria-label="授業名"></td>` +
+      `<td><input class="t" value="${esc(c.teacher)}" aria-label="教員"></td>` +
+      `<td><input class="rm" value="${esc(c.room)}" aria-label="教室"></td>` +
+      `<td><input type="checkbox" class="skip" aria-label="除外"></td></tr>`
+    ).join('') + '</table>';
 }
 
 function applyImport(replace) {
