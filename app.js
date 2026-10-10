@@ -265,6 +265,21 @@ function normalize(s) {
   // 授業なしの課題
   s.myTasks = Array.isArray(s.myTasks) ? s.myTasks.filter(k => k && typeof k.title === 'string') : [];
   for (const k of s.myTasks) { k.id = fixId(k.id); k.done = !!k.done; k.due = isYmd(k.due) ? k.due : ''; }
+  // 自分で作った名目
+  s.cats = Array.isArray(s.cats) ? s.cats.filter(g => g && typeof g.name === 'string') : [];
+  for (const g of s.cats) {
+    g.id = /^cat-[\w-]+$/.test(g.id) ? g.id : 'cat-' + uid();
+    g.name = g.name.trim().slice(0, 20) || '名目';
+    g.short = ''; g.day = null; g.period = null;
+    g.tasks = Array.isArray(g.tasks) ? g.tasks.filter(k => k && typeof k.title === 'string') : [];
+    for (const k of g.tasks) { k.id = fixId(k.id); k.done = !!k.done; k.due = isYmd(k.due) ? k.due : ''; }
+  }
+  // ホームに出すタイミング
+  const okLead = v => v === 'all' || /^\d{1,2}[dwm]$/.test(v);
+  s.taskLead = okLead(s.taskLead) ? s.taskLead : '2w';
+  for (const t of s.terms) for (const c of t.courses) for (const k of c.tasks) k.lead = okLead(k.lead) ? k.lead : '';
+  for (const k of s.myTasks) k.lead = okLead(k.lead) ? k.lead : '';
+  for (const g of s.cats) for (const k of g.tasks) k.lead = okLead(k.lead) ? k.lead : '';
   if (!s.terms.some(t => t.id === s.currentTermId)) s.currentTermId = s.terms[0].id;
   return s;
 }
@@ -747,28 +762,28 @@ function renderPack() {
 let taskAll = false; // 課題を全部表示するか
 
 function renderTasks() {
-  const el = $('#taskCard'), now = new Date();
+  const el = $('#taskCard');
   const all = [];
-  for (const c of [...courses(), selfCourse]) for (const t of c.tasks) if (!t.done) all.push({ c, t });
+  for (const c of [...courses(), ...taskGroups()]) for (const t of c.tasks) if (!t.done) all.push({ c, t });
   all.sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'));
   if (!all.length) {
     el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
     return;
   }
-  // 普段は期限切れと7日以内だけ。なければ近い順に3件
-  const near = all.filter(x => x.t.due && dayDiff(parseYmd(x.t.due), now) <= 7);
-  const base = near.length ? near : all.slice(0, 3);
-  const shown = taskAll ? all : base;
+  // 普段は「ホームに出す」時期に入った課題だけ
+  const vis = all.filter(x => showable(x.t));
+  const shown = taskAll ? all : vis;
   const rest = all.length - shown.length;
-  el.innerHTML = `<h2>課題 <small>${all.length}件</small></h2><ul>` + shown.map(({ c, t }) => {
+  el.innerHTML = `<h2>課題 <small>${vis.length}件</small></h2><ul>` + (shown.map(({ c, t }) => {
     const st = dueState(t.due);
     return `<li class="${st.cls}"><label><input type="checkbox" data-task="${t.id}" data-cid="${c.id}">` +
       `<span>${esc(t.title)}</span></label>` +
       `<span class="due" data-id="${c.id}">${esc(nm(c))}・${st.label}</span></li>`;
-  }).join('') + '</ul>' +
-    (rest > 0 ? `<button class="more" data-tmore>ほか${rest}件を表示</button>` : '') +
-    (taskAll && base.length < all.length ? '<button class="more" data-tmore>閉じる</button>' : '');
+  }).join('') || '<li class="muted">今やる課題はないよ</li>') + '</ul>' +
+    (rest > 0 ? `<button class="more" data-tmore>まだ先の課題${rest}件を表示</button>` : '') +
+    (taskAll && vis.length < all.length ? '<button class="more" data-tmore>閉じる</button>' : '');
 }
+
 
 /* ===== 画面：時間割 ===== */
 function renderGrid() {
@@ -901,7 +916,7 @@ $('#taskCard').addEventListener('change', e => {
 $('#taskCard').addEventListener('click', e => {
   if (e.target.closest('[data-tmore]')) { taskAll = !taskAll; renderTasks(); return; }
   const id = e.target.closest('.due')?.dataset.id;
-  if (id && id !== SELF_ID) openCourse(id);
+if (id && !isGroup(id)) openCourse(id);
 });
 
 $('#grid').addEventListener('click', e => {
@@ -927,17 +942,18 @@ $('#termSelect').onchange = e => {
   const v = e.target.value;
   if (v === '__new' || v === '__edit') {
     e.target.value = state.currentTermId;
-    if (v === '__new') return openTermDlg('newTermSec');
-    openTermDlg();
-    // 学期一覧が折りたたみの中にあるなら、そこだけ開く
-    const d = $('#termList').closest('details');
-    if (d) d.open = true;
+    e.target.blur();
+    setTimeout(() => {
+      if (v === '__new') return openTermDlg('newTermSec');
+      openTermDlg();
+      const d = $('#termList').closest('details');
+      if (d) d.open = true;
+    }, 50);
     return;
   }
   state.currentTermId = v;
   save(); renderAll();
 };
-
 
 /* ===== 授業詳細 ===== */
 let currentId = null;
@@ -1281,12 +1297,15 @@ function tasksDue(k) {
     if (x.due === k) out.push({ c, x });
   for (const x of state.myTasks) if (x.due === k) out.push({ c: selfCourse, x });
   return out;
+  for (const g of state.cats) for (const x of g.tasks) if (x.due === k) out.push({ c: g, x });
 }
 function intensiveOn(k) {
   return courses().filter(c => c.day === -1 && c.from && k >= c.from && k <= (c.to || c.from));
 }
 function findCourse(id) {
   if (id === SELF_ID) return selfCourse;
+  const g = state.cats.find(x => x.id === id);
+  if (g) return g;
   for (const t of state.terms) {
     const c = t.courses.find(x => x.id === id);
     if (c) return c;
@@ -1597,15 +1616,15 @@ function renderTaskForm() {
   const ed = ctEdit && findCourse(ctEdit.cid);
   box.hidden = calMulti;
   if (box.hidden) return;
-  const base = [...cs, selfCourse];
+  const base = [...cs, ...taskGroups()];
   const list = ed && !base.includes(ed) ? [ed, ...base] : base;
   const sel = ed ? (ctEdit.to || ed.id)
     : (list.some(c => c.id === ctLastCid) ? ctLastCid : list[0].id);
   $('#ctCourse').innerHTML = list.map(c =>
-    `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(nm(c) || '名前なし')}${slotLabel(c)}</option>`).join('');
+    `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(nm(c) || '名前なし')}${slotLabel(c)}</option>`).join('') + '<option value="__newcat">＋ 新しい名目を作る</option>';
   $('#ctHead').textContent = ed ? '課題を変更' : `${md(parseYmd(calSel))}締切の課題を追加`;
   $('#ctAdd').hidden = !!ed;
-  for (const id of ['ctDueBox', 'ctDel', 'ctCancel', 'ctSave']) $('#' + id).hidden = !ed;
+  for (const id of ['ctDueBox', 'ctDel', 'ctCancel', 'ctSave']) $('#' + id).hidden = !ed;syncCatTools(); 
 }
 
 function startTaskEdit(cid, id) {
@@ -1614,7 +1633,7 @@ function startTaskEdit(cid, id) {
   if (evEditId) endEvEdit();
   ctEdit = { cid, id, to: '' };
   $('#ctTitle').value = x.title;
-  $('#ctDue').value = x.due || calSel;
+  $('#ctDue').value = x.due || calSel;setLeadUI('ct', x.lead);
   renderDay();
   $('#ctHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1626,8 +1645,17 @@ function endTaskEdit() {
 }
 
 $('#ctCourse').onchange = e => {
-  if (ctEdit) ctEdit.to = e.target.value;
-  else ctLastCid = e.target.value;
+  let v = e.target.value;
+  if (v === '__newcat') {
+    const g = newCat();
+    v = g ? g.id : (ctEdit ? (ctEdit.to || ctEdit.cid) : ctLastCid);
+    if (ctEdit) ctEdit.to = v; else ctLastCid = v;
+    renderTaskForm();
+    return;
+  }
+  if (ctEdit) ctEdit.to = v;
+  else ctLastCid = v;
+  syncCatTools();
 };
 
 $('#ctAdd').onclick = () => {
@@ -1649,7 +1677,7 @@ $('#ctSave').onclick = () => {
   const title = $('#ctTitle').value.trim();
   if (!title) return alert('課題の内容を入れてね');
   x.title = title;
-  x.due = $('#ctDue').value;
+  x.due = $('#ctDue').value;x.lead = getLeadUI('ct');
   const to = findCourse($('#ctCourse').value);
   if (to && to !== from) {
     from.tasks = from.tasks.filter(k => k !== x);
@@ -2198,6 +2226,7 @@ function collect() {
   tmp.shiftTimes = $('#sShift').checked;
   tmp.syllabusSearch = $('#sSyllabus').value.trim();
   tmp.theme = { color: $('#sColor').value, font: $('#sFont').value };
+  tmp.taskLead = getLeadUI('s') || '2w';
 }
 
 function renderLastExport() {
@@ -2217,7 +2246,8 @@ function openSettings() {
     showSat: state.showSat,
     shiftTimes: state.shiftTimes,
     syllabusSearch: state.syllabusSearch,
-    theme: { ...state.theme }
+    theme: { ...state.theme },
+    taskLead: state.taskLead
   };
   fillProviderFields(state.provider);
   $('#sPeriods').value = tmp.periods;
@@ -2225,7 +2255,7 @@ function openSettings() {
   $('#sShift').checked = tmp.shiftTimes;
   $('#sSyllabus').value = tmp.syllabusSearch;
   $('#sColor').value = tmp.theme.color;
-  $('#sFont').value = tmp.theme.font;
+  $('#sFont').value = tmp.theme.font;setLeadUI('s', tmp.taskLead);
   $('#restoreFile').value = '';
   renderTimes();
   collect();
@@ -2279,6 +2309,7 @@ $('#sSave').onclick = () => {
   state.shiftTimes = tmp.shiftTimes;
   state.syllabusSearch = tmp.syllabusSearch;
   state.theme = tmp.theme;
+  state.taskLead = tmp.taskLead;
   applyTheme(state.theme);
   scheduleChanged();
   $('#settingsDlg').close();
@@ -3917,11 +3948,11 @@ function buildIcs() {
   let nTask = 0, nPack = 0;
 
   // 課題の締切（終わってないもの・今日以降）
-  for (const c of [...courses(), selfCourse]) for (const k of c.tasks) {
+  for (const c of [...courses(), ...taskGroups()]) for (const k of c.tasks) {
     if (k.done || !k.due) continue;
     const d = parseYmd(k.due);
     if (!d || d < today) continue;
-    const from = c === selfCourse ? '' : `授業：${nm(c)}`;
+    const from = c === selfCourse ? '' : isGroup(c.id) ? `名目：${c.name}` : `授業：${nm(c)}`;
     lines.push(...icsEvent(`task-${k.id}`, d, `〆 ${k.title}`, from, stamp, seq));
     nTask++;
   }
@@ -4123,6 +4154,114 @@ function renderTagLegend() {
     .map(t => `<span style="--tag:${t.color}">${esc(t.name)}</span>`).join('');
   tagLegend.hidden = !used.size;
 }
+
+/* ===== 課題の名目・ホームに出すタイミング ===== */
+function taskGroups() { return [selfCourse, ...state.cats]; }
+function isGroup(id) { return id === SELF_ID || state.cats.some(g => g.id === id); }
+
+function parseLead(s) {
+  const m = /^(\d{1,2})([dwm])$/.exec(s || '');
+  return m ? { n: +m[1], u: m[2] } : null;
+}
+function leadOf(k) { return k.lead || state.taskLead || '2w'; }
+function showable(k) {
+  if (!k.due) return true;
+  const lead = leadOf(k);
+  if (lead === 'all') return true;
+  const L = parseLead(lead), d = parseYmd(k.due);
+  if (!L || !d) return true;
+  if (L.u === 'm') d.setMonth(d.getMonth() - L.n);
+  else d.setDate(d.getDate() - L.n * (L.u === 'w' ? 7 : 1));
+  return new Date() >= d;
+}
+
+function leadUI(p, withDefault) {
+  return `<input type="number" id="${p}LeadN" class="leadN" min="1" max="99" inputmode="numeric" aria-label="数">` +
+    `<select id="${p}LeadU">` +
+    (withDefault ? '<option value="">いつもの設定</option>' : '') +
+    '<option value="d">日前から</option><option value="w">週間前から</option>' +
+    '<option value="m">か月前から</option><option value="all">いつも表示</option></select>';
+}
+function syncLeadUI(p) {
+  const u = $(`#${p}LeadU`).value;
+  $(`#${p}LeadN`).hidden = !u || u === 'all';
+}
+function setLeadUI(p, s) {
+  const L = parseLead(s);
+  $(`#${p}LeadU`).value = s === 'all' ? 'all' : L ? L.u : '';
+  $(`#${p}LeadN`).value = L ? L.n : 2;
+  syncLeadUI(p);
+}
+function getLeadUI(p) {
+  const u = $(`#${p}LeadU`).value;
+  if (!u || u === 'all') return u;
+  const n = Math.min(99, Math.max(1, parseInt($(`#${p}LeadN`).value, 10) || 1));
+  return n + u;
+}
+
+// 設定画面：全体のタイミング
+const leadBox = document.createElement('div');
+leadBox.className = 'leadBox';
+leadBox.innerHTML = '<h3>課題をホームに出すタイミング</h3>' +
+  '<div class="row leadRow">締切の' + leadUI('s', false) + '</div>' +
+  '<p class="hint">これより先の課題はホームでは隠れるよ（カレンダーにはいつも出る）。課題ごとに変えたいときは、カレンダーで課題をタップした画面から</p>';
+$('#aiBox').before(leadBox);
+$('#sLeadU').addEventListener('change', () => syncLeadUI('s'));
+
+// カレンダーの課題変更画面：課題ごとのタイミング
+const ctLeadRow = document.createElement('div');
+ctLeadRow.className = 'row leadRow';
+ctLeadRow.innerHTML = 'ホームに出す：' + leadUI('ct', true);
+$('#ctDueBox').append(ctLeadRow);
+$('#ctLeadU').addEventListener('change', () => syncLeadUI('ct'));
+
+// 名目の作成・名前変更・削除
+function newCat() {
+  const name = (prompt('新しい名目の名前（例：学サポ）') || '').trim().slice(0, 20);
+  if (!name) return null;
+  if (name === 'その他') return selfCourse;
+  const same = state.cats.find(g => g.name === name);
+  if (same) return same;
+  const g = { id: 'cat-' + uid(), name, short: '', day: null, period: null, tasks: [] };
+  state.cats.push(g);
+  save();
+  return g;
+}
+const catTools = document.createElement('div');
+catTools.className = 'row catTools';
+catTools.hidden = true;
+catTools.innerHTML = '<button type="button" id="catRename">名前を変える</button>' +
+  '<button type="button" id="catDel" class="danger">この名目を消す</button>';
+$('#ctCourse').after(catTools);
+function curCat() { return state.cats.find(g => g.id === $('#ctCourse').value); }
+function syncCatTools() { catTools.hidden = !curCat(); }
+
+$('#catRename').onclick = () => {
+  const g = curCat();
+  if (!g) return;
+  const v = (prompt('名目の新しい名前', g.name) || '').trim().slice(0, 20);
+  if (!v) return;
+  g.name = v;
+  save(); renderAll(); renderCal(); renderDay();
+};
+$('#catDel').onclick = () => {
+  const g = curCat();
+  if (!g) return;
+  const n = g.tasks.length;
+  if (!confirm(`「${g.name}」を消す？` + (n ? `\n中の課題${n}件は「その他」に移すよ` : ''))) return;
+  state.myTasks.push(...g.tasks);
+  state.cats = state.cats.filter(x => x !== g);
+  if (ctEdit && ctEdit.cid === g.id) ctEdit.cid = SELF_ID;
+  if (ctEdit && ctEdit.to === g.id) ctEdit.to = '';
+  if (ctLastCid === g.id) ctLastCid = SELF_ID;
+  save(); renderAll(); renderCal(); renderDay();
+};
+
+// 学期の画面を閉じたとき、学期メニューが開き直さないように
+$('#termDlg').addEventListener('close', () => {
+  const s = $('#termSelect');
+  if (document.activeElement === s) s.blur();
+});
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */

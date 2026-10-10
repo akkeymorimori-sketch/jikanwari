@@ -583,3 +583,9 @@ details.sec > a, #aiBox > a { display: block; }
   -webkit-overflow-scrolling: touch;
 }
 #imgView { display: block; width: 100%; height: auto; max-width: none; }
+
+.leadBox { margin: 12px 0; }
+.leadRow { align-items: center; gap: 6px; flex-wrap: wrap; }
+.leadN { width: 4.5em; }
+.catTools { margin-top: 6px; gap: 6px; }
+.catTools button { font-size: 14px; }
