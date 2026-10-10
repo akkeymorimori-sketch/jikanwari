@@ -807,7 +807,8 @@ function renderGrid() {
 function renderTermSelect() {
   $('#termSelect').innerHTML = state.terms.map(t =>
     `<option value="${t.id}" ${t.id === state.currentTermId ? 'selected' : ''}>${esc(t.name)}</option>`).join('') +
-    '<option value="__new">＋ 新しい学期を作る</option>';
+    '<option value="__new">＋ 新しい学期を作る</option>' +
+    '<option value="__edit">⚙ 学期の設定</option>';
 }
 
 /* ===== 画面：集中講義 ===== */
@@ -923,14 +924,20 @@ $('#intCard').addEventListener('click', e => {
 });
 
 $('#termSelect').onchange = e => {
-  if (e.target.value === '__new') {
+  const v = e.target.value;
+  if (v === '__new' || v === '__edit') {
     e.target.value = state.currentTermId;
-    openTermDlg('newTermSec');
+    if (v === '__new') return openTermDlg('newTermSec');
+    openTermDlg();
+    // 学期一覧が折りたたみの中にあるなら、そこだけ開く
+    const d = $('#termList').closest('details');
+    if (d) d.open = true;
     return;
   }
-  state.currentTermId = e.target.value;
+  state.currentTermId = v;
   save(); renderAll();
 };
+
 
 /* ===== 授業詳細 ===== */
 let currentId = null;
