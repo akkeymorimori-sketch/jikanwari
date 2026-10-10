@@ -44,7 +44,7 @@ const PROVIDERS = {
     label: 'Gemini（Google AI Studio・無料枠あり）',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     model: 'gemini-3.5-flash-lite',
-    models: ['gemini-3.5-flash-lite', 'gemini-3.8-flash'],
+    models: ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'],
     keyUrl: 'https://aistudio.google.com/apikey',
     note: '無料枠では送った画像が Google の製品改善に使われる。'
   },
@@ -162,6 +162,8 @@ function normalize(s) {
   if (!s.geminiDefault35) {
     if (s.models.gemini === 'gemini-3.8-flash') delete s.models.gemini;
     s.geminiDefault35 = true;
+  // 3.5 Flash は廃止されて 3.6 Flash に転送されるようになったので、直接 3.6 を呼ぶ
+  if (s.models.gemini === 'gemini-3.5-flash') s.models.gemini = 'gemini-3.6-flash';
   }
 
   // テーマ
@@ -4217,7 +4219,7 @@ $('#ctLeadU').addEventListener('change', () => syncLeadUI('ct'));
 
 // 名目の作成・名前変更・削除
 function newCat() {
-  const name = (prompt('新しい名目の名前（例：学サポ）') || '').trim().slice(0, 20);
+  const name = (prompt('新しい名目の名前') || '').trim().slice(0, 20);
   if (!name) return null;
   if (name === 'その他') return selfCourse;
   const same = state.cats.find(g => g.name === name);
