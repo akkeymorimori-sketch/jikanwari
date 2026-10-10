@@ -183,6 +183,7 @@ function normalize(s) {
     e.id = fixId(e.id);
     e.kind = e.kind === 'other' ? 'other' : 'job';
     e.title ??= ''; e.start ??= ''; e.end ??= '';
+    if (typeof e.img !== 'string' || !/^sh-[\w-]+$/.test(e.img)) delete e.img;
   }
   // 予定の入力候補（名前・種類・時刻を覚える）
   const hadPresets = Array.isArray(s.evPresets);
@@ -639,7 +640,8 @@ function todayFlow(now, t = term()) {
     const end = e.end ? `〜${en != null && s != null && en <= s ? '翌' : ''}${e.end}` : '';
     rows.push({
       min: s ?? -1, time: e.start || '',
-      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : ''),
+      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : '') +
+        (e.img ? ` <button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(now) + ' ' + (e.title || 'バイト'))}">📄</button>` : ''),
       past: s != null && en != null && en > s && en <= nowMin, id: '', cls: `f-${e.kind}`
     });
   }
@@ -852,6 +854,8 @@ $('#nowCard').addEventListener('click', e => {
   if (go === 'grid') return showTab('grid');
   if (go === 'import') return $('#importBtn').click();
   if (go === 'share') return openTermDlg('shareSec');
+  const im = e.target.closest('[data-evimg]');
+  if (im) return openShiftImg(im.dataset.evimg, im.dataset.label);
   const sw = e.target.dataset.switch;
   if (sw) {
     state.currentTermId = sw;
@@ -1336,6 +1340,7 @@ function renderDay() {
   for (const e of eventsOn(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
     `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</button>` +
+    (e.img ? `<button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る">📄</button>` : '') +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
     `<li><span><span class="tag next">メモ</span>${esc(n.text)}</span>` +
@@ -1423,6 +1428,8 @@ $('#dayList').addEventListener('change', e => {
   save(); renderCal(); renderDay();
 });
 $('#dayList').addEventListener('click', e => {
+  const im = e.target.closest('[data-evimg]');
+  if (im) return openShiftImg(im.dataset.evimg, im.dataset.label);
   const te = e.target.closest('[data-taskedit]');
   if (te) return startTaskEdit(te.dataset.cid, te.dataset.taskedit);
   const ed = e.target.closest('[data-evedit]');
@@ -3340,11 +3347,11 @@ $('#shRun').onclick = async () => {
 
 function showShRows() {
   const map = new Map();
-  for (const arr of shDone.values()) for (const r of Array.isArray(arr) ? arr : []) {
+  for (const [page, arr] of shDone) for (const r of Array.isArray(arr) ? arr : []) {
     const date = shYmd(r?.month, r?.day), start = shTime(r?.start), end = shTime(r?.end);
     if (!date || !start) continue;
     const k = `${date} ${start}`;
-    if (!map.has(k)) map.set(k, { date, start, end });
+    if (!map.has(k)) map.set(k, { date, start, end, page });
   }
   // 同じ日で、終わりと次の始まりがつながってる勤務は1つにする
   const list = [...map.values()].sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
@@ -3374,20 +3381,51 @@ $('#shResult').addEventListener('change', e => {
   if ($('#shAdd')) $('#shAdd').textContent = `${n}件をカレンダーに追加`;
 });
 
-$('#shResult').addEventListener('click', e => {
+$('#shResult').addEventListener('click', async e => {
   if (e.target.id !== 'shAdd') return;
+  const btn = e.target;
   const title = $('#shJob').value.trim();
   state.shiftJob = title;
   const picks = shRows.filter(r => r.on && r.start);
   if (!picks.length) return alert('追加する勤務を選んでね');
   // 同じ日・同じ名前・同じ時刻のバイトは二重に入れない
-  const isDup = r => state.events.some(x => x.date === r.date && x.kind === 'job' &&
+  const findDup = r => state.events.find(x => x.date === r.date && x.kind === 'job' &&
     x.title === title && x.start === r.start && x.end === r.end);
-  const add = picks.filter(r => !isDup(r)), skipped = picks.length - add.length;
-  if (!add.length) return alert('全部もうカレンダーに入ってるよ');
+  const add = picks.filter(r => !findDup(r)), skipped = picks.length - add.length;
+
+  // 読み取ったページの画像を保存（あとでカレンダーから見る用）
+  btn.disabled = true;
+  btn.textContent = 'シフト表を保存中…';
+  const pages = new Map(); // ページ番号 → 画像ID
+  try {
+    for (const p of new Set(picks.map(r => r.page))) {
+      if (p == null || !shSrc[p]) continue;
+      const cv = await shCanvas(shSrc[p], 2400);
+      const blob = await cvBlob(cv);
+      cv.width = cv.height = 0;
+      if (!blob) continue;
+      const id = 'sh-' + uid();
+      await imgPut(id, blob);
+      pages.set(p, id);
+    }
+  } catch { /* 画像が保存できなくても予定は入れる */ }
+  btn.disabled = false;
+  btn.textContent = `${shRows.length}件をカレンダーに追加`;
+
+  if (!add.length && !pages.size) return alert('全部もうカレンダーに入ってるよ');
   shiftDlg.close();
-  withUndo(`${add.length}件のシフトを追加したよ` + (skipped ? `（${skipped}件は入ってたので飛ばした）` : ''), () => {
-    for (const r of add) state.events.push({ id: uid(), date: r.date, kind: 'job', title, start: r.start, end: r.end });
+  const msg = add.length
+    ? `${add.length}件のシフトを追加したよ` + (skipped ? `（${skipped}件は入ってたので飛ばした）` : '')
+    : `入ってた${skipped}件にシフト表をつけたよ`;
+  withUndo(msg, () => {
+    for (const r of picks) {
+      const img = pages.get(r.page) || '';
+      const old = findDup(r);
+      if (old) { if (img) old.img = img; continue; } // 入ってた予定には画像だけつける
+      const ev = { id: uid(), date: r.date, kind: 'job', title, start: r.start, end: r.end };
+      if (img) ev.img = img;
+      state.events.push(ev);
+    }
     if (title) rememberPreset({ title, kind: 'job', start: '', end: '' });
   });
 });
@@ -3718,6 +3756,80 @@ fcBox.addEventListener('change', e => {
 });
 // 収入画面を開いたら今月に戻す
 $('#incomeBtn').addEventListener('click', () => { fcOffset = 0; renderForecast(); });
+
+/* ===== シフト表の画像（IndexedDBに保存） ===== */
+let imgDbP = null;
+function imgDb() {
+  return imgDbP ??= new Promise((ok, ng) => {
+    const r = indexedDB.open('gakulog-img', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('shift');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => { imgDbP = null; ng(r.error); };
+  });
+}
+async function imgTx(mode, fn) {
+  const db = await imgDb();
+  return new Promise((ok, ng) => {
+    const tx = db.transaction('shift', mode);
+    const req = fn(tx.objectStore('shift'));
+    tx.oncomplete = () => ok(req?.result);
+    tx.onerror = tx.onabort = () => ng(tx.error);
+  });
+}
+const imgPut = (id, blob) => imgTx('readwrite', s => s.put(blob, id));
+const imgGet = id => imgTx('readonly', s => s.get(id));
+const imgKeys = () => imgTx('readonly', s => s.getAllKeys());
+const imgDel = id => imgTx('readwrite', s => s.delete(id));
+const cvBlob = cv => new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+
+// 見る画面
+const imgDlg = document.createElement('dialog');
+imgDlg.id = 'imgDlg';
+imgDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2 id="imgTitle" tabindex="-1" autofocus>シフト表</h2>' +
+  '<button type="button" class="x big" id="imgX" aria-label="閉じる">×</button></div>' +
+  '<div class="row end"><button type="button" id="imgOut" aria-label="縮小">−</button>' +
+  '<button type="button" id="imgIn" aria-label="拡大">＋</button></div>' +
+  '<div id="imgWrap"><img id="imgView" alt="シフト表"></div>' +
+  '</div>';
+document.body.append(imgDlg);
+
+let imgUrl = '', imgZoom = 1;
+function setImgZoom(z) {
+  imgZoom = Math.min(4, Math.max(1, z));
+  $('#imgView').style.width = `${imgZoom * 100}%`;
+  $('#imgOut').disabled = imgZoom <= 1;
+  $('#imgIn').disabled = imgZoom >= 4;
+}
+async function openShiftImg(id, label) {
+  let blob = null;
+  try { blob = await imgGet(id); } catch {}
+  if (!blob) return alert('シフト表の画像が見つからなかった。バックアップから戻した予定には画像は入ってないよ');
+  if (imgUrl) URL.revokeObjectURL(imgUrl);
+  imgUrl = URL.createObjectURL(blob);
+  $('#imgView').src = imgUrl;
+  $('#imgTitle').textContent = label || 'シフト表';
+  setImgZoom(1);
+  $('#imgWrap').scrollTo(0, 0);
+  imgDlg.showModal();
+}
+$('#imgIn').onclick = () => setImgZoom(imgZoom + 1);
+$('#imgOut').onclick = () => setImgZoom(imgZoom - 1);
+$('#imgX').onclick = () => imgDlg.close();
+imgDlg.addEventListener('close', () => {
+  $('#imgView').removeAttribute('src');
+  if (imgUrl) { URL.revokeObjectURL(imgUrl); imgUrl = ''; }
+});
+
+// どの予定にも使われてない画像を消す（起動して少したってから）
+async function cleanShiftImgs() {
+  try {
+    const used = new Set(state.events.map(e => e.img).filter(Boolean));
+    for (const k of await imgKeys()) if (!used.has(k)) await imgDel(k);
+  } catch {}
+}
+setTimeout(cleanShiftImgs, 10000);
 
 /* ===== カレンダー書き出し（.ics） ===== */
 const icsDate = d => ymd(d).replace(/-/g, '');
