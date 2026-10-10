@@ -1948,9 +1948,16 @@ function renderTermList() {
         (t.id === state.currentTermId ? '<span class="tag">表示中</span>' : '') +
         `<span class="from">${t.courses.length}件</span>` +
         `<button class="x" data-termdel="${t.id}">削除</button></div>` +
-      `<div class="row"><span class="hint">開始</span><input type="date" data-tstart="${t.id}" value="${esc(t.start)}">` +
-        `<span class="hint">終了</span><input type="date" data-tend="${t.id}" value="${esc(t.end)}"></div>` +
+      `<div class="row"><span class="hint">開始</span><input type="date" data-tstart="${t.id}" aria-label="開始日">` +
+        `<button type="button" class="x" data-tclr="${t.id}" data-k="start" aria-label="開始日を消す">×</button></div>` +
+      `<div class="row"><span class="hint">終了</span><input type="date" data-tend="${t.id}" aria-label="終了日">` +
+        `<button type="button" class="x" data-tclr="${t.id}" data-k="end" aria-label="終了日を消す">×</button></div>` +
     `</div></li>`).join('');
+  // 日付は初期値として埋め込まない（iPhoneの「リセット」で空にできるように）
+  for (const t of state.terms) {
+    $(`[data-tstart="${t.id}"]`).value = t.start;
+    $(`[data-tend="${t.id}"]`).value = t.end;
+  }
 }
 
 function renderOffList() {
@@ -1994,22 +2001,40 @@ $('#termList').addEventListener('input', e => {
   state.terms.find(t => t.id === id).name = e.target.value;
   save(); renderTermSelect(); renderOffList();
 });
+// 選んでる途中（ホイールを回してる間）はチェックしない。おかしければ反映しないだけ
 $('#termList').addEventListener('change', e => {
   const { tstart, tend } = e.target.dataset;
   const id = tstart || tend;
   if (!id) return;
   const t = state.terms.find(x => x.id === id);
-  const k = tstart ? 'start' : 'end', before = t[k];
-  t[k] = e.target.value;
-  if (t.start && t.end && t.end < t.start) {
-    alert('終了日が開始日より前になってるよ');
-    t[k] = before;
-    e.target.value = before;
-    return;
-  }
+  const k = tstart ? 'start' : 'end', v = e.target.value;
+  const s = k === 'start' ? v : t.start, en = k === 'end' ? v : t.end;
+  if (s && en && en < s) return;
+  t[k] = v;
   scheduleChanged();
 });
+// 日付欄から離れたときに、反映できてなければ知らせて戻す
+$('#termList').addEventListener('focusout', e => {
+  const { tstart, tend } = e.target.dataset;
+  const id = tstart || tend;
+  if (!id) return;
+  const t = state.terms.find(x => x.id === id);
+  const k = tstart ? 'start' : 'end';
+  if (e.target.value === t[k]) return;
+  alert('終了日が開始日より前になってるよ');
+  e.target.value = t[k];
+});
+
 $('#termList').addEventListener('click', e => {
+  const clr = e.target.closest('[data-tclr]');
+  if (clr) {
+    const t = state.terms.find(x => x.id === clr.dataset.tclr);
+    if (!t) return;
+    t[clr.dataset.k] = '';
+    renderTermList();
+    scheduleChanged();
+    return;
+  }
   const id = e.target.dataset.termdel;
   if (!id) return;
   if (state.terms.length === 1) return alert('学期は最低1つ必要だよ');
