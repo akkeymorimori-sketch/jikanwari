@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=50">
+<link rel="stylesheet" href="style.css?v=54">
 </head>
 <body>
 <header>
@@ -431,6 +431,9 @@
       <button id="sX" class="x big" aria-label="閉じる">×</button>
     </div>
 
+    <h3>使い方</h3>
+    <label class="inline"><input type="checkbox" id="sUseGrid"> 時間割を使う</label>
+    <p class="hint">オフにすると、時間割・持ち物・学期など授業まわりを隠すよ。データは消えないから、オンに戻せば元通り</p>
     <h3>表示</h3>
     <div class="row">
       <label class="inline">時限数 <input id="sPeriods" type="number" min="1" max="10" class="num"></label>
@@ -511,6 +514,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=50"></script>
+<script src="app.js?v=54"></script>
 </body>
 </html>

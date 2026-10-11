@@ -162,9 +162,9 @@ function normalize(s) {
   if (!s.geminiDefault35) {
     if (s.models.gemini === 'gemini-3.8-flash') delete s.models.gemini;
     s.geminiDefault35 = true;
+  }
   // 3.5 Flash は廃止されて 3.6 Flash に転送されるようになったので、直接 3.6 を呼ぶ
   if (s.models.gemini === 'gemini-3.5-flash') s.models.gemini = 'gemini-3.6-flash';
-  }
 
   // テーマ
   s.theme ??= {};
@@ -185,6 +185,7 @@ function normalize(s) {
     e.id = fixId(e.id);
     e.kind = e.kind === 'other' ? 'other' : 'job';
     e.title ??= ''; e.start ??= ''; e.end ??= '';
+    if (e.src !== 'cal') { delete e.src; delete e.ext; }
     if (typeof e.img !== 'string' || !/^sh-[\w-]+$/.test(e.img)) delete e.img;
   }
   // 予定の入力候補（名前・種類・時刻を覚える）
@@ -279,6 +280,22 @@ function normalize(s) {
   // ホームに出すタイミング
   const okLead = v => v === 'all' || /^\d{1,2}[dwm]$/.test(v);
   s.taskLead = okLead(s.taskLead) ? s.taskLead : '2w';
+  s.useGrid = s.useGrid !== false; // 時間割を使うか（最初はON）
+  // 通知（アプリ版だけ）
+  const nf = s.notify && typeof s.notify === 'object' ? s.notify : {};
+  s.notify = {
+    on: !!nf.on,
+    time: /^([01]\d|2[0-3]):[0-5]\d$/.test(nf.time) ? nf.time : '21:00',
+    job: [0, 30, 60, 90, 120].includes(nf.job) ? nf.job : 60
+  };
+  // カレンダーから取り込むシフト（アプリ版だけ）
+  const cs = s.calSync && typeof s.calSync === 'object' ? s.calSync : {};
+  s.calSync = {
+    cals: Array.isArray(cs.cals) ? cs.cals.filter(x => x && typeof x.id === 'string').map(x => ({
+      id: x.id, title: String(x.title || '').slice(0, 40), job: String(x.job || '').trim().slice(0, 20)
+    })) : [],
+    last: typeof cs.last === 'number' ? cs.last : 0
+  };
   for (const t of s.terms) for (const c of t.courses) for (const k of c.tasks) k.lead = okLead(k.lead) ? k.lead : '';
   for (const k of s.myTasks) k.lead = okLead(k.lead) ? k.lead : '';
   for (const g of s.cats) for (const k of g.tasks) k.lead = okLead(k.lead) ? k.lead : '';
@@ -291,6 +308,7 @@ function save() {
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
     saveWarned = false;
+    scheduleNotify();
   } catch {
     if (!saveWarned) alert('保存できなかった。空き容量がないか、プライベートブラウズかも。設定から書き出しておいてね');
     saveWarned = true;
@@ -573,11 +591,20 @@ function whenLabel(start, now) {
 
 function renderNow() {
   const el = $('#nowCard'), now = new Date(), t = term();
+  // 時間割を使わないときは、予定とバイトだけ
+  if (!state.useGrid) {
+    const f = todayFlow(now, { ...t, courses: [] });
+    el.innerHTML = `<h2>今日 ${md(now)}</h2>` + (f || '<p class="muted">これからの予定はないよ</p>') +
+      '<button type="button" class="addEv" data-addev>＋ 今日の予定を追加</button>';
+    return;
+  }
   if (!courses().length) {
     el.innerHTML = '<h2>はじめに</h2><p class="muted">まずは時間割を作ろう</p><div class="startBtns">' +
       '<button data-go="grid" class="primary">手入力で作る</button>' +
       '<button data-go="import">📷 写真から読み込む</button>' +
-      '<button data-go="share">共有コードから読み込む</button></div>';
+      '<button data-go="share">共有コードから読み込む</button></div>' +
+      '<p class="hint startAlt">時間割はいらない？</p>' +
+      '<button data-go="nogrid" class="addEv">予定管理だけで使う</button>';
     return;
   }
 
@@ -856,6 +883,7 @@ function renderIntensive() {
 
 function renderAll() {
   $('#importBtn').hidden = false;
+  applyMode();
   renderTermSelect();
   renderNow();
   renderPack();
@@ -872,6 +900,11 @@ $('#nowCard').addEventListener('click', e => {
   if (go === 'grid') return showTab('grid');
   if (go === 'import') return $('#importBtn').click();
   if (go === 'share') return openTermDlg('shareSec');
+  if (go === 'nogrid') {
+    state.useGrid = false; save(); renderAll();
+    toast('予定管理だけのモードにしたよ。設定からいつでも戻せる', () => { state.useGrid = true; save(); renderAll(); });
+    return;
+  }
   const im = e.target.closest('[data-evimg]');
   if (im) return openShiftImg(im.dataset.evimg, im.dataset.label);
   const sw = e.target.dataset.switch;
@@ -1298,10 +1331,11 @@ function tasksDue(k) {
   for (const t of state.terms) for (const c of t.courses) for (const x of c.tasks)
     if (x.due === k) out.push({ c, x });
   for (const x of state.myTasks) if (x.due === k) out.push({ c: selfCourse, x });
-  return out;
   for (const g of state.cats) for (const x of g.tasks) if (x.due === k) out.push({ c: g, x });
+  return out;
 }
 function intensiveOn(k) {
+  if (!state.useGrid) return [];
   return courses().filter(c => c.day === -1 && c.from && k >= c.from && k <= (c.to || c.from));
 }
 function findCourse(id) {
@@ -1328,7 +1362,7 @@ function renderCal() {
   for (let n = 0; n < 42; n++) {
     const date = addDays(start, n), k = ymd(date);
     if (n === 35 && date.getMonth() !== m) break; // 5週で収まる月
-    const off = inTerm(date, t) ? offInfo(date, t) : null;
+    const off = state.useGrid && inTerm(date, t) ? offInfo(date, t) : null;
     const pending = tasksDue(k).filter(({ x }) => !x.done);
     const labels = [];
     // 課題をいちばん先に並べて、「+1」に隠れないようにする
@@ -1356,7 +1390,7 @@ function renderDay() {
   const off = inTerm(date, t) ? offInfo(date, t) : null;
   if (off) rows.push(`<li><span>休み：${esc(offLabel(off))}</span></li>`);
   else {
-    const cs = coursesOn(date, t);
+    const cs = state.useGrid ? coursesOn(date, t) : [];
     if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${c.period}限 ${esc(nm(c))}`).join('／')}</span></li>`);
   }
   for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(nm(c))}</span></li>`);
@@ -1618,7 +1652,7 @@ function renderTaskForm() {
   const ed = ctEdit && findCourse(ctEdit.cid);
   box.hidden = calMulti;
   if (box.hidden) return;
-  const base = [...cs, ...taskGroups()];
+  const base = [...(state.useGrid ? cs : []), ...taskGroups()];
   const list = ed && !base.includes(ed) ? [ed, ...base] : base;
   const sel = ed ? (ctEdit.to || ed.id)
     : (list.some(c => c.id === ctLastCid) ? ctLastCid : list[0].id);
@@ -2249,7 +2283,8 @@ function openSettings() {
     shiftTimes: state.shiftTimes,
     syllabusSearch: state.syllabusSearch,
     theme: { ...state.theme },
-    taskLead: state.taskLead
+    taskLead: state.taskLead,
+    useGrid: state.useGrid
   };
   fillProviderFields(state.provider);
   $('#sPeriods').value = tmp.periods;
@@ -2258,6 +2293,7 @@ function openSettings() {
   $('#sSyllabus').value = tmp.syllabusSearch;
   $('#sColor').value = tmp.theme.color;
   $('#sFont').value = tmp.theme.font;setLeadUI('s', tmp.taskLead);
+  $('#sUseGrid').checked = tmp.useGrid;
   $('#restoreFile').value = '';
   renderTimes();
   collect();
@@ -2312,6 +2348,7 @@ $('#sSave').onclick = () => {
   state.syllabusSearch = tmp.syllabusSearch;
   state.theme = tmp.theme;
   state.taskLead = tmp.taskLead;
+  state.useGrid = tmp.useGrid;
   applyTheme(state.theme);
   scheduleChanged();
   $('#settingsDlg').close();
@@ -3960,7 +3997,7 @@ function buildIcs() {
   }
 
   // 持ち物（授業がある日ごとに1件）
-  const nDays = icsDays(t, today);
+  const nDays = state.useGrid ? icsDays(t, today) : 0;
   for (let i = 0; i < nDays; i++) {
     const date = addDays(today, i);
     const cs = coursesOn(date, t).concat(intsOn(date, t));
@@ -4265,6 +4302,284 @@ $('#termDlg').addEventListener('close', () => {
   if (document.activeElement === s) s.blur();
 });
 
+/* ===== 通知（アプリ版だけ） ===== */
+const isApp = !!window.Capacitor?.isNativePlatform?.();
+const LN = isApp ? window.Capacitor.Plugins.LocalNotifications : null;
+const NOTIFY_DAYS = 14, NOTIFY_MAX = 60;
+
+// これから出す通知の一覧を作る
+function notifyPlan() {
+  const n = state.notify, t = term(), out = [];
+  const now = new Date();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const [hh, mm] = n.time.split(':').map(Number);
+  for (let i = 0; i <= NOTIFY_DAYS; i++) {
+    const day = addDays(today, i);       // 通知を出す日
+    const next = addDays(today, i + 1);  // その次の日
+    // 前の日の夜：持ち物と締切
+    const at = new Date(day); at.setHours(hh, mm, 0, 0);
+    if (at > now) {
+      const lines = [], its = [], ds = [];
+      for (const c of state.useGrid ? coursesOn(next, t).concat(intsOn(next, t)) : []) {
+        const o = c.day === -1 ? null : occurrence(c, next);
+        for (const x of itemsFor(c, o ? o.start : next)) {
+          const s = x.text.trim();
+          if (s && !its.includes(s)) its.push(s);
+        }
+      }
+      const k = ymd(next);
+      for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
+        if (!x.done && x.due === k) ds.push(x.title);
+      if (its.length) lines.push('持ち物：' + its.join('、'));
+      if (ds.length) lines.push('締切：' + ds.join('、'));
+      if (lines.length) out.push({ at, title: `明日 ${md(next)} の準備`, body: lines.join('\n') });
+    }
+    // バイトの前
+    if (n.job > 0) for (const e of eventsOn(ymd(day))) {
+      if (e.kind !== 'job') continue;
+      const s = toMin(e.start);
+      if (s == null) continue;
+      const at2 = new Date(day); at2.setHours(0, s - n.job, 0, 0);
+      if (at2 > now) out.push({ at: at2, title: `${e.title || 'バイト'} ${e.start}から`, body: `あと${n.job}分で始まるよ` });
+    }
+  }
+  return out.sort((a, b) => a.at - b.at).slice(0, NOTIFY_MAX);
+}
+
+// 予約を全部消して入れ直す（保存が続いても1回で済むように少し待つ）
+let notifyTimer = 0;
+function scheduleNotify() {
+  if (!LN) return;
+  clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(syncNotify, 1500);
+}
+async function syncNotify() {
+  try {
+    const p = await LN.getPending();
+    if (p.notifications.length) await LN.cancel({ notifications: p.notifications.map(x => ({ id: x.id })) });
+    if (!state.notify.on) return;
+    if ((await LN.checkPermissions()).display !== 'granted') return;
+    const list = notifyPlan().map((x, i) => ({
+      id: i + 1, title: x.title, body: x.body,
+      schedule: { at: x.at, allowWhileIdle: true }
+    }));
+    if (list.length) await LN.schedule({ notifications: list });
+  } catch (err) {
+    console.warn('通知の予約に失敗', err);
+  }
+}
+async function askPerm() {
+  const r = await LN.requestPermissions();
+  if (r.display === 'granted') return true;
+  alert('通知が許可されてないよ。スマホの設定 → アプリ → がくログ → 通知 からONにしてね');
+  return false;
+}
+
+if (LN) {
+  const nBox = document.createElement('div');
+  nBox.className = 'nBox';
+  nBox.innerHTML = '<h3>通知</h3>' +
+    '<label class="row nRow"><input type="checkbox" id="nOn"> 通知を使う</label>' +
+    '<div class="row nRow">前の日の <input type="time" id="nTime"> に、明日の持ち物と締切</div>' +
+    '<div class="row nRow">バイトの <select id="nJob">' +
+    '<option value="0">通知しない</option><option value="30">30分前</option>' +
+    '<option value="60">1時間前</option><option value="90">1時間半前</option>' +
+    '<option value="120">2時間前</option></select></div>' +
+    '<button type="button" id="nTest">テスト通知（5秒後）</button>' +
+    '<p class="hint">ここは変えるとすぐ保存されるよ。予約するのは今の学期の2週間分で、アプリを開くたびに入れ直す</p>';
+  $('#aiBox').before(nBox);
+
+  const syncNotifyUI = () => {
+    $('#nOn').checked = state.notify.on;
+    $('#nTime').value = state.notify.time;
+    $('#nJob').value = String(state.notify.job);
+  };
+  setTimeout(syncNotifyUI, 0);
+
+  $('#nOn').onchange = async e => {
+    if (e.target.checked && !(await askPerm())) { e.target.checked = false; return; }
+    state.notify.on = e.target.checked;
+    save();
+    toast(state.notify.on ? '通知をONにしたよ' : '通知をOFFにしたよ');
+  };
+  $('#nTime').onchange = e => {
+    if (!/^\d\d:\d\d$/.test(e.target.value)) return syncNotifyUI();
+    state.notify.time = e.target.value;
+    save();
+  };
+  $('#nJob').onchange = e => {
+    state.notify.job = +e.target.value;
+    save();
+  };
+  $('#nTest').onclick = async () => {
+    if (!(await askPerm())) return;
+    await LN.schedule({ notifications: [{
+      id: 99999, title: 'がくログ', body: '通知のテストだよ',
+      schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true }
+    }] });
+    toast('5秒後に届くよ。アプリを閉じて待ってみて');
+  };
+
+  // 日付が変わっても予約がずれないように、開くたびに入れ直す
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { syncNotifyUI(); scheduleNotify(); }
+  });
+}
+
+/* ===== シフトをカレンダーから取り込む（アプリ版だけ） ===== */
+const CAL = isApp ? window.Capacitor.Plugins.CapacitorCalendar : null;
+const isIOS = isApp && window.Capacitor.getPlatform() === 'ios';
+const CAL_BACK = 7, CAL_AHEAD = 60;
+const pad2 = n => String(n).padStart(2, '0');
+const hhmm = d => pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+
+async function calPerm() {
+  const r = isIOS ? await CAL.requestFullCalendarAccess() : await CAL.requestReadOnlyCalendarAccess();
+  return r.result === 'granted';
+}
+
+let calBusy = false;
+async function syncCal(manual = false) {
+  if (!CAL || calBusy || !state.calSync.cals.length) return;
+  calBusy = true;
+  try {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const from = addDays(today, -CAL_BACK), to = addDays(today, CAL_AHEAD + 1);
+    const { result } = await CAL.listEventsInRange({ from: from.getTime(), to: to.getTime() });
+    // 全部のカレンダーが空で返ってきたら、許可がないとみなして何も消さない
+    if (!result || !result.length) throw new Error('empty');
+    const jobOf = new Map(state.calSync.cals.map(c => [c.id, c.job]));
+    const fromK = ymd(from), toK = ymd(addDays(today, CAL_AHEAD));
+
+    const fresh = [];
+    for (const ev of result) {
+      // 選んだカレンダー以外は、ここで捨てる（保存しない）
+      if (!jobOf.has(ev.calendarId) || ev.isAllDay) continue;
+      const s = new Date(ev.startDate), en = new Date(ev.endDate);
+      if (!(en > s) || en - s > 24 * 3600e3) continue;
+      const date = ymd(s);
+      if (date < fromK || date > toK) continue;
+      fresh.push({
+        date, start: hhmm(s), end: hhmm(en),
+        title: jobOf.get(ev.calendarId) || (ev.title || '').trim() || 'バイト',
+        ext: `${ev.calendarId}|${ev.id}|${ev.startDate}`
+      });
+    }
+    // 範囲内の取り込み済みはいったん消して入れ直す（📄の画像は引き継ぐ）
+    const imgs = new Map();
+    state.events = state.events.filter(e => {
+      if (e.src !== 'cal' || e.date < fromK || e.date > toK) return true;
+      if (e.img) imgs.set(e.ext, e.img);
+      return false;
+    });
+    let n = 0;
+    for (const f of fresh) {
+      const dup = state.events.some(e => e.kind === 'job' && e.date === f.date && e.start === f.start && e.end === f.end);
+      if (dup) continue;
+      const e = { id: uid(), date: f.date, kind: 'job', title: f.title, start: f.start, end: f.end, src: 'cal', ext: f.ext };
+      if (imgs.has(f.ext)) e.img = imgs.get(f.ext);
+      state.events.push(e);
+      n++;
+    }
+    state.calSync.last = Date.now();
+    save();
+    if (manual || !document.querySelector('dialog[open]')) renderAll();
+    renderCsList();
+    if (manual) toast(`${n}件のシフトを取り込んだよ`);
+  } catch (err) {
+    console.warn('カレンダーの取り込みに失敗', err);
+    if (manual) alert('カレンダーを読めなかった。スマホの設定 → アプリ → がくログ で、カレンダーの許可を確かめてね');
+  } finally {
+    calBusy = false;
+  }
+}
+
+function renderCsList() {
+  if (!CAL) return;
+  const cs = state.calSync.cals;
+  $('#csList').innerHTML = cs.map((c, i) =>
+    `<li><span class="csName">${esc(c.title || 'カレンダー')}</span>` +
+    `<input type="text" data-csjob="${i}" placeholder="バイト先（空なら予定名）" maxlength="20">` +
+    `<button type="button" class="x" data-csdel="${i}" aria-label="外す">×</button></li>`
+  ).join('') || '<li class="muted">まだ選んでないよ</li>';
+  cs.forEach((c, i) => { $(`[data-csjob="${i}"]`).value = c.job; });
+  $('#csRun').hidden = !cs.length;
+  const l = state.calSync.last;
+  $('#csLast').textContent = l ? `最後に取り込んだ：${md(new Date(l))} ${hm(new Date(l))}` : '';
+}
+
+if (CAL) {
+  const box = document.createElement('div');
+  box.className = 'csBox';
+  box.innerHTML = '<h3>シフトをカレンダーから取り込む</h3>' +
+    '<p class="hint">シフトボードなどがスマホのカレンダーに書き出したシフトを、バイトの予定として取り込むよ。選んだカレンダー以外の予定は保存しない</p>' +
+    '<ul id="csList" class="csList"></ul>' +
+    '<div id="csPicker" class="csPicker" hidden></div>' +
+    '<div class="row"><button type="button" id="csPick">カレンダーを選ぶ</button>' +
+    '<button type="button" id="csRun">今すぐ取り込む</button></div>' +
+    '<p class="hint" id="csLast"></p>' +
+    '<p class="hint">ここは変えるとすぐ保存されるよ。取り込んだシフトをがくログで直しても、次に取り込むとカレンダーの内容に戻る</p>';
+  $('#aiBox').before(box);
+
+  $('#csPick').onclick = async () => {
+    try {
+      if (!(await calPerm())) return alert('カレンダーの許可がないよ。スマホの設定 → アプリ → がくログ からONにしてね');
+      const { result } = await CAL.listCalendars();
+      if (!result || !result.length) return alert('カレンダーが見つからなかった');
+      const chosen = new Set(state.calSync.cals.map(c => c.id));
+      const p = $('#csPicker');
+      p.innerHTML = result.map((c, i) =>
+        `<label class="row csOpt"><input type="checkbox" data-csi="${i}" ${chosen.has(c.id) ? 'checked' : ''}> ` +
+        `${esc(c.title || '名前なし')}${c.accountName ? ` <small>${esc(c.accountName)}</small>` : ''}</label>`
+      ).join('') + '<button type="button" id="csOk" class="primary">これにする</button>';
+      p.hidden = false;
+      p._cals = result;
+    } catch (err) {
+      console.warn(err);
+      alert('カレンダーの一覧を読めなかった');
+    }
+  };
+
+  box.addEventListener('click', e => {
+    if (e.target.id === 'csOk') {
+      const p = $('#csPicker'), list = p._cals || [];
+      const old = new Map(state.calSync.cals.map(c => [c.id, c]));
+      state.calSync.cals = [...p.querySelectorAll('[data-csi]')].filter(x => x.checked).map(x => {
+        const c = list[+x.dataset.csi];
+        return { id: c.id, title: c.title || '', job: old.get(c.id)?.job || '' };
+      });
+      p.hidden = true;
+      save(); renderCsList();
+      syncCal(true);
+      return;
+    }
+    const del = e.target.dataset.csdel;
+    if (del != null) {
+      const c = state.calSync.cals[+del];
+      if (!confirm(`「${c.title}」の取り込みをやめる？\n今日から先の取り込んだシフトは消すよ`)) return;
+      const today = ymd(new Date());
+      state.events = state.events.filter(x => !(x.src === 'cal' && x.ext.startsWith(c.id + '|') && x.date >= today));
+      state.calSync.cals.splice(+del, 1);
+      save(); renderCsList(); renderAll();
+    }
+  });
+
+  box.addEventListener('change', e => {
+    const i = e.target.dataset.csjob;
+    if (i == null) return;
+    state.calSync.cals[+i].job = e.target.value.trim().slice(0, 20);
+    save();
+    syncCal();
+  });
+
+  $('#csRun').onclick = () => syncCal(true);
+
+  // 起動が終わってから表示・取り込み。開き直すたびにも取り込む
+  setTimeout(renderCsList, 0);
+  setTimeout(() => syncCal(), 1500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncCal(); });
+}
+
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
 const gridBar = document.createElement('div');
@@ -4332,6 +4647,23 @@ $('#fabMenu').addEventListener('click', e => {
     toast('空いてるマスをタップすると授業を追加できるよ');
   }
 });
+
+/* ===== 時間割を使わないモード ===== */
+// 設定の時限まわりと、その他の「時間割」「学期」に印をつけておく（隠すのはCSS）
+for (const el of [
+  $('#importBtn')?.closest('.menu'), $('#termBtn')?.closest('.menu'),
+  $('#sPeriods')?.closest('.row'), $('#sPeriods')?.closest('.row')?.previousElementSibling,
+  $('#sShift')?.closest('label'), $('#sShift')?.closest('label')?.previousElementSibling, $('#sTimes'),
+  $('#sSyllabus'), $('#sSyllabus')?.previousElementSibling, $('#sSyllabus')?.nextElementSibling
+]) el?.classList.add('gridOnly');
+
+$('#sUseGrid').onchange = e => { tmp.useGrid = e.target.checked; };
+
+function applyMode() {
+  const off = !state.useGrid;
+  document.documentElement.classList.toggle('noGrid', off);
+  if (off && curTab === 'grid') showTab('today');
+}
 
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
 applyTheme(state.theme);

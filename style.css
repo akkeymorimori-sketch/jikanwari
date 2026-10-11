@@ -589,3 +589,30 @@ details.sec > a, #aiBox > a { display: block; }
 .leadN { width: 4.5em; }
 .catTools { margin-top: 6px; gap: 6px; }
 .catTools button { font-size: 14px; }
+
+.nBox { margin: 12px 0; }
+.nRow { align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+#nTime { width: auto; }
+
+.csBox { margin: 12px 0; }
+.csList { list-style: none; padding: 0; margin: 6px 0; }
+.csList li { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.csName { flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.csList input { flex: 1; min-width: 0; }
+.csPicker { border: 1px solid #ccc; border-radius: 8px; padding: 8px; margin: 6px 0; }
+.csOpt { align-items: center; gap: 6px; margin: 4px 0; }
+.csOpt small { color: #666; }
+
+/* ===== 時間割を使わないモード ===== */
+.noGrid .gridOnly,
+.noGrid #tabbar [data-tab="grid"],
+.noGrid #termSelect,
+.noGrid #packCard,
+.noGrid #view-grid,
+.noGrid #gridBar,
+.noGrid #fabMenu [data-fab="course"],
+.noGrid .phOpt[data-ph="grid"],
+.noGrid .calLegend .ev.int,
+.noGrid .calLegend .ev.off { display: none !important; }
+.noGrid #tabbar { grid-template-columns: repeat(3, 1fr); }
+.startAlt { margin-top: 12px; }
