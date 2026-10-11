@@ -1275,15 +1275,19 @@ $('#cDelete').onclick = () => {
 };
 
 // 変更があれば確認して、開く前の状態に戻す
-function closeCourse() {
+// 変更があれば3択で聞く
+async function closeCourse() {
   const c = cur();
   if (c && courseBackup && courseSnap(c) !== courseBackup) {
-    if (!confirm('変更を保存せずに閉じる？')) return;
-    const t = term(), b = JSON.parse(courseBackup);
-    const idx = t.courses.indexOf(c);
-    if (idx >= 0) t.courses[idx] = b.c;
-    t.cancels = t.cancels.filter(x => x.courseId !== c.id).concat(b.cancels);
-    scheduleChanged();
+    const a = await ask3();
+    if (a === 'back') return;
+    if (a === 'discard') {
+      const t = term(), b = JSON.parse(courseBackup);
+      const idx = t.courses.indexOf(c);
+      if (idx >= 0) t.courses[idx] = b.c;
+      t.cancels = t.cancels.filter(x => x.courseId !== c.id).concat(b.cancels);
+      scheduleChanged();
+    }
   }
   $('#courseDlg').close();
 }
@@ -1369,7 +1373,7 @@ function renderCal() {
     for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
     for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
-    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
+    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
 
     const cls = ['cd', pending.length && 'due',
       date.getMonth() !== m && 'out', off && 'offday',
@@ -1604,6 +1608,7 @@ function startEvEdit(id) {
   $('#evStart').value = e.start;
   $('#evEnd').value = e.end;
   $('#evScope').value = 'one';
+  $('#evMoveTo').value = e.date;
   renderDay(); renderPicks();
   $('#evHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1812,12 +1817,84 @@ async function fileToJpegBase64(file, max = 1568) {
 const isBusy = (status, msg) =>
   [500, 502, 503, 504, 529].includes(status) || /high demand|overloaded|unavailable/i.test(msg);
 
+/* ===== 閉じるときの3択 ===== */
+const ask3Dlg = document.createElement('dialog');
+ask3Dlg.id = 'ask3Dlg';
+ask3Dlg.innerHTML = '<div class="dlg">' +
+  '<p id="ask3Msg"></p>' +
+  '<button type="button" class="primary" data-a3="save">保存して閉じる</button>' +
+  '<button type="button" class="danger" data-a3="discard">保存せずに閉じる</button>' +
+  '<button type="button" data-a3="back">戻る</button></div>';
+document.body.append(ask3Dlg);
+let ask3Done = null;
+function ask3(msg = '変更を保存する？') {
+  $('#ask3Msg').textContent = msg;
+  ask3Dlg.returnValue = '';
+  ask3Dlg.showModal();
+  return new Promise(ok => { ask3Done = ok; });
+}
+ask3Dlg.addEventListener('click', e => {
+  const b = e.target.closest('[data-a3]');
+  if (b) ask3Dlg.close(b.dataset.a3);
+});
+// Escで閉じたときは「戻る」扱い
+ask3Dlg.addEventListener('close', () => {
+  const r = ask3Dlg.returnValue || 'back';
+  ask3Done?.(r);
+  ask3Done = null;
+});
+
+/* ===== AIの読み取りを中止する ===== */
+let aiCtl = null;
+const isAbort = err => err?.name === 'AbortError';
+const abortErr = () => new DOMException('中止', 'AbortError');
+function aiCheck() {
+  if (aiCtl?.signal.aborted) throw abortErr();
+}
+// 中止ボタンで止まる sleep
+function aiSleep(ms) {
+  return new Promise((ok, ng) => {
+    const sig = aiCtl?.signal;
+    if (sig?.aborted) return ng(abortErr());
+    const stop = () => { clearTimeout(t); ng(abortErr()); };
+    const t = setTimeout(() => { sig?.removeEventListener('abort', stop); ok(); }, ms);
+    sig?.addEventListener('abort', stop, { once: true });
+  });
+}
+// 「読み取る」ボタンの横に「中止」を出す
+function aiBegin(runSel) {
+  aiCtl = new AbortController();
+  const run = $(runSel);
+  let stop = run.nextElementSibling;
+  if (!stop || !stop.classList.contains('aiStop')) {
+    stop = document.createElement('button');
+    stop.type = 'button';
+    stop.className = 'aiStop';
+    stop.onclick = () => {
+      if (!aiCtl) return;
+      stop.disabled = true;
+      stop.textContent = '中止中…';
+      aiCtl.abort();
+    };
+    run.after(stop);
+  }
+  stop.textContent = '中止';
+  stop.disabled = false;
+  stop.hidden = false;
+}
+function aiEnd(runSel) {
+  const stop = $(runSel).nextElementSibling;
+  if (stop?.classList.contains('aiStop')) stop.hidden = true;
+  aiCtl = null;
+}
+
 // 1回だけリクエストを送る
 async function requestOnce(p, key, model, b64, prompt = PROMPT) {
   let r;
   if (p === 'claude') {
     r = await fetch(PROVIDERS.claude.url, {
       method: 'POST',
+      signal: aiCtl?.signal,
       headers: {
         'content-type': 'application/json',
         'x-api-key': key,
@@ -1836,6 +1913,7 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
     // Gemini / OpenRouter（OpenAI互換）
     r = await fetch(PROVIDERS[p].url, {
       method: 'POST',
+      signal: aiCtl?.signal,
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model,
@@ -1872,10 +1950,11 @@ async function callVision(b64, prompt = PROMPT, st = $('#ocrStatus')) {
       if (n > 0) {
         const w = 2 ** n * 2; // 4秒 → 8秒
         st.textContent = `混んでるみたい。${w}秒後にもう一回試すね（${model}）`;
-        await sleep(w * 1000);
+        await aiSleep(w * 1000);
         st.textContent = `読み取り中…（${model}）`;
       }
       const r = await requestOnce(p, key, model, b64, prompt);
+      aiCheck();
       if (r.ok) return r.text;
       if (r.status === 429) throw new Error('回数制限に達したみたい。少し待ってからもう一回試してね');
       if (!isBusy(r.status, r.msg)) throw new Error(r.msg);
@@ -1914,6 +1993,7 @@ $('#runOcr').onclick = async () => {
   if (!f) return alert('画像を選んでね');
   ocrRunning = true;
   $('#runOcr').disabled = true;
+  aiBegin('#runOcr');
   $('#ocrStatus').textContent = `読み取り中…（${PROVIDERS[state.provider].label}）`;
   try {
     const txt = await callVision(await fileToJpegBase64(f));
@@ -1923,8 +2003,9 @@ $('#runOcr').onclick = async () => {
     showRows(arr);
     $('#ocrStatus').textContent = `${arr.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
   } catch (err) {
-    $('#ocrStatus').textContent = 'エラー: ' + friendlyError(err);
+    $('#ocrStatus').textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
   } finally {
+    aiEnd('#runOcr');
     ocrRunning = false;
     $('#runOcr').disabled = false;
   }
@@ -2305,9 +2386,13 @@ function openSettings() {
   $('#settingsDlg').scrollTop = 0;
 }
 
-function closeSettings() {
+async function closeSettings() {
   collect();
-  if (JSON.stringify(tmp) !== snapshot && !confirm('変更を保存せずに閉じる？')) return;
+  if (JSON.stringify(tmp) !== snapshot) {
+    const a = await ask3();
+    if (a === 'back') return;
+    if (a === 'save') return $('#sSave').onclick();
+  }
   applyTheme(state.theme); // 試した色や文字を元に戻す
   $('#settingsDlg').close();
 }
@@ -3035,6 +3120,7 @@ $('#scanRun').onclick = async () => {
   const st = $('#scanStatus');
   scanRunning = true;
   $('#scanRun').disabled = true;
+  aiBegin('#scanRun');
   st.textContent = `読み取り中…（${PROVIDERS[state.provider].label}）`;
   try {
     const txt = await callVision(scanToBase64(), PAY_PROMPT, st);
@@ -3051,8 +3137,9 @@ $('#scanRun').onclick = async () => {
       ? `${got.join('・')}を読み取ったよ。下の欄を確認して「${$('#inSave').textContent}」を押してね`
       : '金額が見つからなかった。範囲を変えてもう一回試してみて';
   } catch (err) {
-    st.textContent = 'エラー: ' + friendlyError(err);
+    st.textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
   } finally {
+    aiEnd('#scanRun');
     scanRunning = false;
     $('#scanRun').disabled = false;
   }
@@ -3412,9 +3499,10 @@ $('#shRun').onclick = async () => {
   let bad = 0;
   shRunning = true;
   $('#shRun').disabled = true;
+  aiBegin('#shRun');
   try {
     for (const [k, i] of todo.entries()) {
-      if (k > 0) await sleep(4000); // 回数制限にかからないように間をあける
+      if (k > 0) await aiSleep(4000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
       const cv = await shCut(i, grid ? 2400 : 1800);
       const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
@@ -3438,9 +3526,12 @@ $('#shRun').onclick = async () => {
       : '読み取り終わったよ。下を確認して追加してね';
     $('#shRun').textContent = '読み取る';
   } catch (err) {
-    st.textContent = `エラー: ${friendlyError(err)}（${shDone.size}ページ分は読めてる。もう一回押すと続きから）`;
+    st.textContent = isAbort(err)
+      ? `中止したよ（${shDone.size}ページ分は読めてる。もう一回押すと続きから）`
+      : `エラー: ${friendlyError(err)}（${shDone.size}ページ分は読めてる。もう一回押すと続きから）`;
     $('#shRun').textContent = '続きから読み取る';
   } finally {
+    aiEnd('#shRun');
     shRunning = false;
     $('#shRun').disabled = false;
     showShRows();
@@ -4579,6 +4670,294 @@ if (CAL) {
   setTimeout(() => syncCal(), 1500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) syncCal(); });
 }
+
+/* ===== 予定を長押しで動かす ===== */
+const CAL_SRC_MSG = 'カレンダーから取り込んだ予定は、元のカレンダーで動かしてね（ここで動かしても次の取り込みで戻っちゃう）';
+const evDayDiff = (a, b) => Math.round((parseYmd(b) - parseYmd(a)) / 864e5);
+function moveEvents(ids, delta, msg) {
+  const back = [];
+  for (const e of state.events) if (ids.has(e.id)) {
+    back.push([e.id, e.date]);
+    e.date = ymd(addDays(parseYmd(e.date), delta));
+  }
+  if (!back.length) return;
+  save(); renderAll(); renderCal(); renderDay();
+  toast(msg, () => {
+    for (const [id, d] of back) {
+      const e = state.events.find(x => x.id === id);
+      if (e) e.date = d;
+    }
+    save(); renderAll(); renderCal(); renderDay();
+  });
+}
+
+let drag = null, dragSkipClick = 0;
+function endDrag() {
+  if (!drag) return;
+  clearTimeout(drag.timer);
+  drag.ghost?.remove();
+  drag.over?.classList.remove('dropTo');
+  drag = null;
+}
+function moveGhost(x, y) {
+  drag.ghost.style.left = x + 'px';
+  drag.ghost.style.top = y + 'px';
+  const cell = document.elementFromPoint(x, y)?.closest('#calGrid .cd') || null;
+  if (cell !== drag.over) {
+    drag.over?.classList.remove('dropTo');
+    cell?.classList.add('dropTo');
+    drag.over = cell;
+  }
+}
+$('#calGrid').addEventListener('pointerdown', e => {
+  const lb = e.target.closest('[data-evid]');
+  if (!lb || calMulti) return;
+  const ev = state.events.find(x => x.id === lb.dataset.evid);
+  if (!ev) return;
+  endDrag();
+  const x0 = e.clientX, y0 = e.clientY;
+  drag = { ev, x0, y0, on: false, over: null, ghost: null };
+  drag.timer = setTimeout(() => {
+    if (!drag) return;
+    drag.on = true;
+    navigator.vibrate?.(15);
+    const g = document.createElement('div');
+    g.className = 'dragGhost ev ' + ev.kind;
+    g.textContent = ev.title || EV_LABEL[ev.kind];
+    document.body.append(g);
+    drag.ghost = g;
+    moveGhost(x0, y0);
+  }, 400);
+});
+document.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (!drag.on) {
+    // 長押しになる前に指が動いたら、ふつうのスクロール
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 10) endDrag();
+    return;
+  }
+  moveGhost(e.clientX, e.clientY);
+});
+document.addEventListener('pointerup', () => {
+  if (!drag) return;
+  const { on, over, ev } = drag;
+  endDrag();
+  if (!on) return;
+  dragSkipClick = Date.now();
+  const to = over?.dataset.date;
+  if (!to || to === ev.date) return;
+  if (ev.src === 'cal') return alert(CAL_SRC_MSG);
+  calSel = to;
+  moveEvents(new Set([ev.id]), evDayDiff(ev.date, to), `${md(parseYmd(to))}に移動したよ`);
+});
+document.addEventListener('pointercancel', () => endDrag());
+// つかんでる間は画面をスクロールさせない
+document.addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
+// 長押しメニューと、離したあとの「日付タップ」を止める
+$('#calGrid').addEventListener('contextmenu', e => {
+  if (e.target.closest('[data-evid]')) e.preventDefault();
+});
+$('#calGrid').addEventListener('click', e => {
+  if (Date.now() - dragSkipClick < 500) e.stopImmediatePropagation();
+}, true);
+
+// 変更画面から、まとめて日付を移動
+const evMoveBox = document.createElement('div');
+evMoveBox.className = 'evMove';
+evMoveBox.innerHTML =
+  '<div class="row"><input type="date" id="evMoveTo" aria-label="移動先の日付">' +
+  '<button type="button" id="evMove">日付を移動</button></div>' +
+  '<p class="hint">上で選んだ範囲の予定を、まとめて同じ日数ずらすよ</p>';
+$('#evEditBox').append(evMoveBox);
+$('#evMove').onclick = () => {
+  const base = state.events.find(x => x.id === evEditId);
+  const to = $('#evMoveTo').value;
+  if (!base || !isYmd(to)) return alert('移動先の日付を選んでね');
+  const delta = evDayDiff(base.date, to);
+  if (!delta) return;
+  const all = evTargets($('#evScope').value);
+  const ts = all.filter(e => e.src !== 'cal');
+  if (!ts.length) return alert(CAL_SRC_MSG);
+  endEvEdit();
+  calSel = to;
+  const sd = parseYmd(to);
+  calMonth = new Date(sd.getFullYear(), sd.getMonth(), 1);
+  const skip = all.length - ts.length;
+  moveEvents(new Set(ts.map(e => e.id)), delta,
+    (ts.length > 1 ? `${ts.length}件を${Math.abs(delta)}日${delta > 0 ? '後ろ' : '前'}にずらしたよ` : `${md(sd)}に移動したよ`) +
+    (skip ? `（取り込んだ予定${skip}件はそのまま）` : ''));
+};
+
+/* ===== 機能をさがす ===== */
+const goSet = sel => {
+  openSettings();
+  setTimeout(() => {
+    const el = $(sel);
+    if (!el) return;
+    const d = el.closest('details');
+    if (d) d.open = true;
+    el.scrollIntoView({ block: 'center' });
+  }, 80);
+};
+const goTerm = sel => {
+  openTermDlg();
+  const el = $(sel), d = el?.closest('details');
+  if (d) { d.open = true; el.scrollIntoView({ block: 'center' }); }
+};
+const FEATURES = [
+  { id: 'grid', name: '時間割', where: '下の「時間割」タブ', desc: '授業を曜日と時限で並べる。マスをタップすると授業の詳細', kw: '時間割 授業 科目 登録', grid: 1, go: () => showTab('grid') },
+  { id: 'photoGrid', name: '写真から時間割を読み込む', where: '＋ →「📷 写真から追加」→ 時間割', desc: '大学サイトの時間割のスクショから、AIが授業を入れる', kw: '写真 画像 スクショ 読み取り 読み込み 自動', grid: 1, go: () => startPhoto('grid') },
+  { id: 'photoPay', name: '給与明細を読み取る', where: '＋ →「📷 写真から追加」→ 給与明細', desc: '明細の写真から支給日・総支給・手取りを読み取る。いらない所は塗りつぶせる', kw: '給与 明細 給料 写真 読み取り', go: () => openPhoto('pick') },
+  { id: 'photoShift', name: 'シフト表を読み取る', where: '＋ →「📷 写真から追加」→ シフト表', desc: 'シフト表の写真やPDFから自分の勤務だけ拾ってバイト予定にする。他の人の所は海苔で隠せる', kw: 'シフト PDF 海苔 読み取り', go: () => openPhoto('pick') },
+  { id: 'items', name: '持ち物', where: '授業の詳細 →「持ち物」', desc: '「次回だけ」と「毎回」を選べる。今日と明日の分はホームにまとめて出る', kw: '持ち物 忘れ物 準備 教科書', grid: 1, go: () => showTab('grid') },
+  { id: 'tasks', name: '課題', where: 'カレンダーで日付をタップ（授業の詳細からも）', desc: '締切つきで登録すると、ホームに近い順で出る。授業と関係ない「その他」もOK', kw: '課題 宿題 レポート 締切 提出 期限', go: () => showTab('cal') },
+  { id: 'taskLead', name: '課題をホームに出すタイミング', where: '設定 → 課題', desc: '締切の何日・何週間前からホームに出すか。課題ごとにも変えられる', kw: 'いつから タイミング 前から 隠す', go: () => goSet('#sLeadU') },
+  { id: 'cats', name: '課題の名目', where: 'カレンダーで課題を追加 → 授業の欄 →「＋ 新しい名目を作る」', desc: 'サークルや就活など、授業以外の課題のグループ', kw: '名目 グループ サークル 授業以外', go: () => showTab('cal') },
+  { id: 'cal', name: 'カレンダー', where: '下の「カレンダー」タブ', desc: '課題・バイト・予定・休みを月の表で見る。上の年月をタップすると飛べる', kw: 'カレンダー 予定 スケジュール 月', go: () => showTab('cal') },
+  { id: 'job', name: 'バイトの予定', where: 'カレンダーで日付をタップ → 種類を「バイト」', desc: '同じ曜日に4週分まとめて追加できる。夜勤もOK', kw: 'バイト アルバイト 勤務 塾', go: () => showTab('cal') },
+  { id: 'income', name: '収入', where: '「収入」ボタン', desc: '月ごと・バイト先ごとの収入、年間の上限まであといくら、時給からの見込み', kw: '収入 給料 お金 扶養 見込み 時給 上限', go: () => $('#incomeBtn').click() },
+  { id: 'term', name: '学期', where: '上の学期の選択', desc: '前期・後期の切り替え、新しい学期づくり、開始日と終了日', kw: '学期 前期 後期 年度 新学期 開始日', grid: 1, go: () => goTerm('#termList') },
+  { id: 'offday', name: '授業がない日・曜日の振替', where: '学期の画面', desc: '祝日や行事で授業がない日、ほかの曜日の授業をする日', kw: '祝日 振替 授業がない 休み', grid: 1, go: () => goTerm('#offFrom') },
+  { id: 'intensive', name: '集中講義', where: '時間割の下', desc: '期間だけ決まってる授業を登録', kw: '集中講義 集中', grid: 1, go: () => showTab('grid') },
+  { id: 'absence', name: '欠席の記録', where: '授業の詳細 →「詳細」', desc: '欠席の回数と、あと何回休めるか', kw: '欠席 出席 休める 単位', grid: 1, go: () => showTab('grid') },
+  { id: 'cancel', name: '休講', where: '授業の詳細 →「詳細」', desc: 'その日だけ授業がないことにする。持ち物も次の回にずれる', kw: '休講', grid: 1, go: () => showTab('grid') },
+  { id: 'syllabus', name: 'シラバス', where: '授業の詳細 →「詳細」', desc: 'シラバスのURLを貼っておいて、すぐ開ける', kw: 'シラバス URL', grid: 1, go: () => showTab('grid') },
+  { id: 'tags', name: 'タグ（授業の色分け）', where: '授業の詳細 →「タグ」', desc: 'タグを付けると時間割が色分けされる', kw: 'タグ 色分け 分類 色', grid: 1, go: () => showTab('grid') },
+  { id: 'short', name: '略名', where: '授業の詳細 → 授業名の横', desc: '時間割やホームに短い名前で出す', kw: '略名 短く 名前', grid: 1, go: () => showTab('grid') },
+  { id: 'notes', name: 'メモ・一言日記', where: 'ホームの課題の下', desc: '今日だけのメモ、残すメモ、一言日記。過去の分はカレンダーで見返せる', kw: 'メモ 日記 ひとこと', go: () => showTab('today') },
+  { id: 'share', name: '時間割の共有', where: '学期の画面 →「共有」', desc: '共有コードで友達と時間割をやりとり', kw: '共有 友達 送る コード', grid: 1, go: () => openTermDlg('shareSec') },
+  { id: 'backup', name: 'バックアップ・復元', where: '設定 → データ', desc: 'データをファイルに書き出す・戻す。機種変更やアプリ版への引っ越しに', kw: 'バックアップ 復元 引っ越し 機種変 データ', go: () => goSet('#exportBtn') },
+  { id: 'ics', name: 'カレンダーに書き出す', where: '設定 → データの下', desc: '課題の締切と持ち物をスマホのカレンダーに入れる。前日21時に通知', kw: '書き出し ics 通知 リマインド Googleカレンダー', go: () => goSet('#icsBtn') },
+  { id: 'notify', name: '通知', where: '設定 →「通知」', desc: '前の日の夜に持ち物と締切、バイトの前にお知らせ', kw: '通知 リマインド お知らせ', app: 1, go: () => goSet('#nOn') },
+  { id: 'calSync', name: 'カレンダーからシフトを取り込む', where: '設定', desc: 'シフトボードなどでスマホのカレンダーに入った予定を、バイトとして取り込む', kw: 'シフトボード 取り込み 同期 連携', app: 1, go: () => goSet('#csList') },
+  { id: 'theme', name: 'テーマの色・文字', where: '設定 → 表示', desc: 'アプリの色とフォントを変える', kw: 'テーマ 色 フォント 文字 見た目', go: () => goSet('#sColor') },
+  { id: 'icon', name: 'アイコンの色', where: '設定 → アイコン', desc: 'ホーム画面のアイコンの色を選ぶ（追加し直しが必要）', kw: 'アイコン', go: () => goSet('#iconBox') },
+  { id: 'times', name: '時限の時刻', where: '設定 → 時限', desc: '何限が何時からか。1つずらすと後ろもまとめてずらせる', kw: '時刻 何限 時限 開始 終了', grid: 1, go: () => goSet('#sTimes') },
+  { id: 'sat', name: '土曜日を表示', where: '設定 → 表示', desc: '時間割に土曜の列を出す', kw: '土曜', grid: 1, go: () => goSet('#sSat') },
+  { id: 'useGrid', name: '時間割を使う・使わない', where: '設定 → 使い方', desc: '時間割まわりを隠して、予定管理だけで使う', kw: '時間割 いらない 隠す 社会人 予定管理', go: () => goSet('#sUseGrid') },
+  { id: 'ai', name: 'AIの準備（APIキー）', where: '設定 → AI', desc: '写真の読み取りに使うキーを入れる。Geminiなら無料枠あり', kw: 'AI APIキー キー Gemini', go: () => openPhoto('guide') },
+  { id: 'feedback', name: '目安箱', where: '目安箱のボタン', desc: '匿名で意見や不具合を送れる', kw: '意見 要望 バグ 不具合 目安箱', go: () => window.open(FEEDBACK_URL, '_blank') }
+];
+function helpFeatures() {
+  return FEATURES.filter(f =>
+    (!f.app || isApp) && (!f.grid || state.useGrid) && (f.id !== 'feedback' || FEEDBACK_URL));
+}
+// キーなし・AI失敗時のキーワード検索
+function helpLocal(q) {
+  const s = q.replace(/\s+/g, '');
+  return helpFeatures().map(f => {
+    let n = s.includes(f.name) ? 5 : 0;
+    for (const k of f.kw.split(' ')) if (k && s.includes(k)) n += k.length;
+    return { f, n };
+  }).filter(x => x.n).sort((a, b) => b.n - a.n).slice(0, 3).map(x => x.f);
+}
+const helpPrompt = q => `あなたは学生向けアプリ「がくログ」の案内係です。ユーザーの質問に合う機能を、下の機能一覧の中からだけ選んでください。
+一覧にない機能は「その機能はまだない」と正直に答え、作り話をしないでください。
+JSONだけを出力してください。説明文やコードブロック記号は書かないでください。
+形式: {"answer":"…","ids":["id1"]}
+answerは2文以内の、やさしいタメ口の日本語。idsは関係が強い順に最大3つ。合うものがなければ空の配列。
+機能一覧: ${JSON.stringify(helpFeatures().map(({ id, name, where, desc }) => ({ id, name, where, desc })))}
+質問: ${q}`;
+
+// 文字だけでAIに聞く
+async function askText(prompt) {
+  const p = state.provider, key = state.keys[p], model = modelOf(p);
+  if (!key) throw new Error('設定でAPIキーを入れてね');
+  const claude = p === 'claude';
+  const r = await fetch(PROVIDERS[p].url, {
+    method: 'POST',
+    signal: aiCtl?.signal,
+    headers: claude
+      ? { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }
+      : { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify(claude
+      ? { model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }
+      : { model, messages: [{ role: 'user', content: prompt }] })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 429) throw new Error('回数制限に達したみたい。少し待ってね');
+    throw new Error((Array.isArray(d) ? d[0] : d)?.error?.message || String(r.status));
+  }
+  if (claude) return (d.content || []).map(b => b.text || '').join('');
+  const c = d.choices?.[0]?.message?.content;
+  return Array.isArray(c) ? c.map(x => x.text || '').join('') : (c || '');
+}
+
+const helpDlg = document.createElement('dialog');
+helpDlg.id = 'helpDlg';
+helpDlg.innerHTML = '<div class="dlg">' +
+  '<div class="dlgHead"><h2>機能をさがす</h2>' +
+  '<button type="button" class="x" id="helpX" aria-label="閉じる">×</button></div>' +
+  '<p class="hint">「こういうことできる？」って書いてみて</p>' +
+  '<input id="helpQ" placeholder="例：課題をいつからホームに出すか変えたい" maxlength="100" autocomplete="off" aria-label="さがしたいこと">' +
+  '<button type="button" class="primary" id="helpRun">さがす</button>' +
+  '<p id="helpStatus" class="hint" aria-live="polite"></p>' +
+  '<ul id="helpList" class="helpList"></ul></div>';
+document.body.append(helpDlg);
+
+const helpBtn = document.createElement('button');
+helpBtn.type = 'button';
+helpBtn.id = 'helpBtn';
+helpBtn.textContent = '🔍 機能をさがす';
+$('#settingsBtn').before(helpBtn);
+helpBtn.onclick = () => {
+  $('#helpQ').value = '';
+  $('#helpStatus').textContent = '';
+  $('#helpList').innerHTML = '';
+  helpDlg.showModal();
+};
+$('#helpX').onclick = () => helpDlg.close();
+
+function renderHelp(fs) {
+  $('#helpList').innerHTML = fs.map(f =>
+    `<li><b>${esc(f.name)}</b><span class="hint">${esc(f.where)}</span>` +
+    `<p>${esc(f.desc)}</p><button type="button" data-help="${f.id}">開く</button></li>`).join('');
+}
+$('#helpList').addEventListener('click', e => {
+  const f = FEATURES.find(x => x.id === e.target.closest('[data-help]')?.dataset.help);
+  if (!f) return;
+  helpDlg.close();
+  setTimeout(f.go, 50);
+});
+
+let helpRunning = false;
+$('#helpRun').onclick = async () => {
+  const q = $('#helpQ').value.trim();
+  if (!q || helpRunning) return;
+  const st = $('#helpStatus'), local = helpLocal(q);
+  if (!hasKey()) {
+    renderHelp(local);
+    st.textContent = local.length
+      ? 'それっぽいのはこれかな'
+      : '見つからなかった。短い言葉で探してみて（AIの準備をすると普通の文で探せるよ）';
+    return;
+  }
+  helpRunning = true;
+  $('#helpRun').disabled = true;
+  aiBegin('#helpRun');
+  st.textContent = 'AIに聞いてる…';
+  try {
+    const txt = await askText(helpPrompt(q));
+    const s = txt.indexOf('{'), e = txt.lastIndexOf('}');
+    const r = JSON.parse(txt.slice(s, e + 1));
+    const fs = (Array.isArray(r.ids) ? r.ids : [])
+      .map(id => helpFeatures().find(f => f.id === id)).filter(Boolean).slice(0, 3);
+    renderHelp(fs);
+    st.textContent = String(r.answer || (fs.length ? 'これが使えそう' : 'ぴったりの機能はないみたい'));
+  } catch (err) {
+    renderHelp(local);
+    st.textContent = isAbort(err) ? '中止したよ'
+      : `AIに聞けなかった（${friendlyError(err)}）` + (local.length ? '。キーワードで探した結果を出すね' : '');
+  } finally {
+    aiEnd('#helpRun');
+    helpRunning = false;
+    $('#helpRun').disabled = false;
+  }
+};
+$('#helpQ').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing) $('#helpRun').click();
+});
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
