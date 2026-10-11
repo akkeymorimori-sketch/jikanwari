@@ -192,7 +192,7 @@ function normalize(s) {
   const hadPresets = Array.isArray(s.evPresets);
   s.evPresets = hadPresets
     ? s.evPresets.filter(p => p && typeof p.title === 'string' && p.title).map(p => ({
-        title: p.title, kind: p.kind === 'other' ? 'other' : 'job', start: p.start || '', end: p.end || ''
+        title: p.title, kind: ['other', 'exam'].includes(p.kind) ? p.kind : 'job', start: p.start || '', end: p.end || ''
       }))
     : [];
   // 前から入ってる予定があれば、そこから候補を作る（初回だけ）
@@ -576,8 +576,13 @@ function upcoming(now) {
 
 function courseLine(x) {
   const its = itemsFor(x.c, x.start);
+  const today = ymd(new Date());
+  const on = x.c.absences.includes(today);
+  const abs = ymd(x.start) === today
+    ? ` <button type="button" class="flowAbs${on ? ' on' : ''}" data-abs="${x.c.id}">${on ? '欠席済' : '欠席'}</button>`
+    : '';
   return `<div class="nc" data-id="${x.c.id}">` +
-    `<b>${esc(nm(x.c))}</b> <small>${esc(x.c.room)}</small>` +
+    `<b>${esc(nm(x.c))}</b> <small>${esc(x.c.room)}</small>` + abs +
     (its.length ? `<div class="nc-items">持ち物：${its.map(i => esc(i.text)).join('、')}</div>` : '') +
     `</div>`;
 }
@@ -594,7 +599,7 @@ function renderNow() {
   // 時間割を使わないときは、予定とバイトだけ
   if (!state.useGrid) {
     const f = todayFlow(now, { ...t, courses: [] });
-    el.innerHTML = `<h2>今日 ${md(now)}</h2>` + (f || '<p class="muted">これからの予定はないよ</p>') +
+    el.innerHTML = `<h2>今日 ${md(now)}</h2>` + examLine(now) + (f || '<p class="muted">これからの予定はないよ</p>') +
       '<button type="button" class="addEv" data-addev>＋ 今日の予定を追加</button>';
     return;
   }
@@ -648,7 +653,7 @@ function renderNow() {
     body += `<h2>次の授業 <small>${DAYS[c.day]}${c.period}・${whenLabel(nxt[0].start, now)}</small></h2>` +
       nxt.map(courseLine).join('');
   }
-  el.innerHTML = h + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>') +
+  el.innerHTML = h + examLine(now) + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>') +
     todayFlow(now, t) + '<button type="button" class="addEv" data-addev>＋ 今日の予定を追加</button>';
 }
 
@@ -889,6 +894,7 @@ function renderAll() {
   renderPack();
   renderTasks();
   renderNotes();
+  renderTomorrow();
   renderGrid();
   renderIntensive();
   if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
@@ -1315,7 +1321,7 @@ let ctEdit = null;     // 変更中の課題 { cid, id, to }
 let ctLastCid = '';    // 前回選んだ授業
 const calPicks = new Set();    // 選んだ日（月をまたいでも残る）
 const EV_PRESET_MAX = 30;
-const EV_LABEL = { job: 'バイト', other: '予定' };
+const EV_LABEL = { job: 'バイト', other: '予定', exam: '試験' };
 let evEditId = null;           // 変更中の予定
 
 function eventsOn(k) {
@@ -3364,6 +3370,7 @@ function openShift() {
   for (const x of state.incomes) if (x.job) jobs.add(x.job);
   $('#shJobList').innerHTML = [...jobs].map(v => `<option value="${esc(v)}">`).join('');
   if (!shiftDlg.open) shiftDlg.showModal();
+  renderShJobs();
 }
 $('#shX').onclick = () => shiftDlg.close();
 
@@ -3486,6 +3493,7 @@ $('#shRun').onclick = async () => {
   state.shiftName = name;
   state.shiftJob = $('#shJob').value.trim();
   state.shiftLayout = layout;
+  rememberShift(state.shiftJob, name, layout);
   save();
   // 名前か表の形が変わったら、読み取り済みのページもやり直す
   const doneKey = name + '|' + layout;
@@ -4421,9 +4429,12 @@ function notifyPlan() {
       const k = ymd(next);
       for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
         if (!x.done && x.due === k) ds.push(x.title);
+      const exs = eventsOn(k).filter(e => e.kind === 'exam')
+        .map(e => (e.start ? e.start + ' ' : '') + (e.title || '試験'));
+      if (exs.length) lines.push('試験：' + exs.join('、'));
       if (its.length) lines.push('持ち物：' + its.join('、'));
       if (ds.length) lines.push('締切：' + ds.join('、'));
-      if (lines.length) out.push({ at, title: `明日 ${md(next)} の準備`, body: lines.join('\n') });
+      if (lines.length) out.push({ at, title: exs.length ? `明日 ${md(next)} は試験！` : `明日 ${md(next)} の準備`, body: lines.join('\n') });
     }
     // バイトの前
     if (n.job > 0) for (const e of eventsOn(ymd(day))) {
@@ -4959,6 +4970,62 @@ $('#helpQ').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.isComposing) $('#helpRun').click();
 });
 
+/* ===== シフト表：バイト先ごとに読み方を覚える ===== */
+const SH_LAYOUT_NAME = { day: '1日ごとの表', grid: '1か月の表' };
+const shMem = () => {
+  const m = state.shiftByJob;
+  return m && typeof m === 'object' && !Array.isArray(m) ? m : (state.shiftByJob = {});
+};
+function rememberShift(job, name, layout) {
+  if (!job) return;
+  shMem()[job] = { name, layout, at: Date.now() };
+  save();
+}
+
+const shJobBox = document.createElement('div');
+shJobBox.className = 'shJobs';
+const shMemHint = document.createElement('p');
+shMemHint.id = 'shMemHint';
+shMemHint.className = 'hint';
+shiftDlg.querySelector('#shJob').closest('label').after(shJobBox, shMemHint);
+
+function renderShJobs() {
+  const m = shMem(), last = new Map();
+  for (const e of state.events) if (e.kind === 'job' && e.title)
+    if ((last.get(e.title) || '') < e.date) last.set(e.title, e.date);
+  for (const k of Object.keys(m)) if (!last.has(k)) last.set(k, '');
+  const jobs = [...last.keys()]
+    .sort((a, b) => (m[b]?.at || 0) - (m[a]?.at || 0) || last.get(b).localeCompare(last.get(a)))
+    .slice(0, 8);
+  shJobBox.innerHTML = jobs.length
+    ? '<p class="hint">カレンダーのバイト（タップで前回の読み方に）</p>' +
+      jobs.map(j => `<button type="button" class="chip${m[j] ? ' mem' : ''}" data-shj="${esc(j)}">${esc(j)}</button>`).join('')
+    : '';
+  syncShMemHint();
+}
+function applyShMem(job) {
+  const x = shMem()[job];
+  if (x) {
+    if (x.name) $('#shName').value = x.name;
+    if (SH_LAYOUT_NAME[x.layout]) $('#shLayout').value = x.layout;
+  }
+  syncShMemHint();
+}
+function syncShMemHint() {
+  const x = shMem()[$('#shJob').value.trim()];
+  shMemHint.textContent = x
+    ? `前回（${md(new Date(x.at))}）は「${x.name}」・${SH_LAYOUT_NAME[x.layout] || ''}で読んだよ`
+    : '';
+  shMemHint.hidden = !x;
+}
+shJobBox.addEventListener('click', e => {
+  const b = e.target.closest('[data-shj]');
+  if (!b) return;
+  $('#shJob').value = b.dataset.shj;
+  applyShMem(b.dataset.shj);
+});
+shiftDlg.querySelector('#shJob').addEventListener('change', e => applyShMem(e.target.value.trim()));
+
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
 const gridBar = document.createElement('div');
@@ -5043,6 +5110,90 @@ function applyMode() {
   document.documentElement.classList.toggle('noGrid', off);
   if (off && curTab === 'grid') showTab('today');
 }
+
+/* ===== 試験 ===== */
+// 種類の並び：バイト → 試験 → その他
+{
+  const sel = $('#evKind');
+  const ex = sel.querySelector('option[value="exam"]') || new Option('試験', 'exam');
+  const other = sel.querySelector('option[value="other"]');
+  other ? sel.insertBefore(ex, other) : sel.add(ex);
+  const job = sel.querySelector('option[value="job"]');
+  if (job) sel.insertBefore(job, sel.firstChild);
+}
+// カレンダーの凡例に「試験」（「その他」の見た目をまねて、その前に入れる）
+{
+  const lg = document.querySelector('.calLegend');
+  const sw = lg?.querySelector('.other');
+  if (sw && !lg.querySelector('.exam')) {
+    const item = sw.textContent.trim() ? sw : sw.parentElement;
+    const cp = item.cloneNode(true);
+    const csw = cp.classList.contains('other') ? cp : cp.querySelector('.other');
+    csw.classList.replace('other', 'exam');
+    const tn = [...cp.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+    if (tn) tn.textContent = '試験'; else csw.textContent = '試験';
+    item.before(cp);
+  }
+}
+
+// ホームに出す「試験まであと◯日」（30日以内・最大3件）
+function examLine(now) {
+  const today = ymd(now), lim = ymd(addDays(now, 30));
+  const xs = state.events
+    .filter(e => e.kind === 'exam' && e.date >= today && e.date <= lim)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.start || '99').localeCompare(b.start || '99'));
+  if (!xs.length) return '';
+  return xs.slice(0, 3).map(e => {
+    const n = evDayDiff(today, e.date);
+    const when = n === 0 ? '今日' : n === 1 ? '明日' : `あと${n}日`;
+    return `<p class="examLine">📝 <b>${when}</b> ${esc(e.title || '試験')}` +
+      ` <small>${md(parseYmd(e.date))}${e.start ? ' ' + esc(e.start) : ''}</small></p>`;
+  }).join('') + (xs.length > 3 ? `<p class="hint">ほかに試験${xs.length - 3}件</p>` : '');
+}
+
+/* ===== 明日の予定（日記の下） ===== */
+const tmrBox = document.createElement('div');
+tmrBox.id = 'tmrBox';
+$('#noteCard').append(tmrBox);
+
+function renderTomorrow() {
+  const tm = addDays(new Date(), 1), k = ymd(tm), t = term();
+  const rows = [];
+  for (const { c, x } of tasksDue(k)) if (!x.done) rows.push({
+    min: -4, time: '締切', cls: 'f-task',
+    label: esc(x.title) + ` <small>${esc(nm(c))}</small>`
+  });
+  const off = state.useGrid && inTerm(tm, t) ? offInfo(tm, t) : null;
+  if (off) rows.push({ min: -3, time: '', cls: 'f-cls', label: `授業なし${off.note ? `（${esc(off.note)}）` : ''}` });
+  else if (state.useGrid) for (const c of coursesOn(tm, t)) {
+    const o = occurrence(c, tm);
+    rows.push({
+      min: o ? o.start.getHours() * 60 + o.start.getMinutes() : 2000 + c.period,
+      time: o ? hm(o.start) : `${c.period}限`, id: c.id, cls: 'f-cls',
+      label: `${c.period}限 ${esc(nm(c))}` + (c.room ? ` <small>${esc(c.room)}</small>` : '')
+    });
+  }
+  for (const c of intensiveOn(k)) rows.push({ min: -2, time: '集中', id: c.id, cls: 'f-cls f-int', label: esc(nm(c)) });
+  for (const e of eventsOn(k)) {
+    const s = toMin(e.start), en = toMin(e.end);
+    const end = e.end ? `〜${en != null && s != null && en <= s ? '翌' : ''}${e.end}` : '';
+    rows.push({
+      min: s ?? -1, time: e.start || '', cls: `f-${e.kind}`,
+      label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : '')
+    });
+  }
+  rows.sort((a, b) => a.min - b.min);
+  tmrBox.innerHTML = `<h3 class="flowH">明日の予定 <small>${md(tm)}</small></h3>` +
+    (rows.length
+      ? '<ul class="flow">' + rows.map(r =>
+          `<li class="${r.cls}"${r.id ? ` data-id="${r.id}"` : ''}>` +
+          `<span class="ft">${esc(r.time)}</span><span class="fl">${r.label}</span></li>`).join('') + '</ul>'
+      : '<p class="muted">明日の予定はまだないよ</p>');
+}
+tmrBox.addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]');
+  if (li) openCourse(li.dataset.id);
+});
 
 state = normalize(readJSON(KEY) || fromV1(readJSON(OLD_KEY)));
 applyTheme(state.theme);

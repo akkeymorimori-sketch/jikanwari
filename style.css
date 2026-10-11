@@ -663,3 +663,23 @@ details.sec > a, #aiBox > a { display: block; }
 }
 .evMove { margin-top: 10px; }
 .evMove .row { gap: 8px; }
+
+/* 試験 */
+.ev.exam { background: #fde4e4; color: #a12622; }
+.flow li.f-exam .ft, .flow li.f-exam .fl { color: #b3261e; font-weight: 700; }
+.examLine { margin: 4px 0; padding: 6px 10px; border-radius: 8px; background: #fde4e4; color: #8a1c18; }
+.examLine b { margin-right: 4px; }
+
+/* 明日の予定 */
+#tmrBox { margin-top: 14px; padding-top: 10px; border-top: 1px solid #ddd; }
+.flow li.f-task .ft { color: #7b3fbf; font-weight: 700; }
+
+/* 凡例の試験 */
+.calLegend .exam { background: #fde4e4; color: #a12622; }
+
+/* シフト表：バイト先ボタン */
+.shJobs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.shJobs .hint { width: 100%; margin: 0; }
+.shJobs .chip { padding: 6px 12px; border: 1px solid #ccc; border-radius: 999px; background: #fff; font-size: 14px; }
+.shJobs .chip.mem { border-color: #2f6fde; color: #2f6fde; }
+#shMemHint { margin: -4px 0 8px; }
