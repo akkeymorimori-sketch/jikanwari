@@ -683,3 +683,12 @@ details.sec > a, #aiBox > a { display: block; }
 .shJobs .chip { padding: 6px 12px; border: 1px solid #ccc; border-radius: 999px; background: #fff; font-size: 14px; }
 .shJobs .chip.mem { border-color: #2f6fde; color: #2f6fde; }
 #shMemHint { margin: -4px 0 8px; }
+
+/* 共有グループ */
+#gList { padding: 0; margin: 8px 0; }
+#gList > li { list-style: none; }
+.gItem { padding: 10px 0; border-bottom: 1px solid #eee; }
+.gMembers { margin: 2px 0 6px; font-size: 13px; color: #666; }
+.gCode { margin: 6px 0; text-align: center; font: 700 28px ui-monospace, monospace; letter-spacing: .2em; }
+#gStatus:empty { display: none; }
+#gJoinCode { text-transform: uppercase; letter-spacing: .15em; }

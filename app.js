@@ -5026,6 +5026,237 @@ shJobBox.addEventListener('click', e => {
 });
 shiftDlg.querySelector('#shJob').addEventListener('change', e => applyShMem(e.target.value.trim()));
 
+/* ===== 共有グループ（Firebase） ===== */
+const FB_VER = '13.0.0';
+const FB_CONFIG = {
+  apiKey: 'AIzaSyC_6pfg-scXIoqwJ5g-RdCuohEzudiLitM',
+  authDomain: 'gakulog-39fb5.firebaseapp.com',
+  projectId: 'gakulog-39fb5',
+  storageBucket: 'gakulog-39fb5.firebasestorage.app',
+  messagingSenderId: '543768102440',
+  appId: '1:543768102440:web:f968e065445a54de1a571d'
+};
+const APP_URL = 'https://akkeymorimori-sketch.github.io/jikanwari/';
+const GR_KEY = 'gakulog-group-v1'; // 自分の名前（この端末だけに保存）
+const grMe = () => { try { return JSON.parse(localStorage.getItem(GR_KEY))?.name || ''; } catch { return ''; } };
+const setGrMe = name => localStorage.setItem(GR_KEY, JSON.stringify({ name }));
+
+// Firebaseは使うときだけ読み込む
+let fb = null, fbLoading = null;
+function fbInit() {
+  if (fb) return Promise.resolve(fb);
+  return fbLoading ??= (async () => {
+    const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
+    const [{ initializeApp }, A, F] = await Promise.all([
+      import(base + 'firebase-app.js'),
+      import(base + 'firebase-auth.js'),
+      import(base + 'firebase-firestore.js')
+    ]);
+    const app = initializeApp(FB_CONFIG);
+    // アプリ版でも固まらない書き方
+    const auth = A.initializeAuth(app, { persistence: A.indexedDBLocalPersistence });
+    await auth.authStateReady();
+    if (!auth.currentUser) await A.signInAnonymously(auth);
+    fb = { db: F.getFirestore(app), uid: auth.currentUser.uid, F };
+    return fb;
+  })().catch(err => { fbLoading = null; throw err; });
+}
+function fbErr(err) {
+  const c = String(err?.code || '');
+  if (c.includes('permission-denied')) return 'できなかった（権限がないみたい）';
+  if (c.includes('operation-not-allowed') || c.includes('admin-restricted')) return 'Firebaseの「匿名」ログインがオフになってるかも';
+  if (c.includes('unavailable') || c.includes('network') || err instanceof TypeError) return 'ネットにつながってないかも';
+  return `うまくいかなかった（${c || err?.message || 'エラー'}）`;
+}
+
+// 画面
+const groupDlg = document.createElement('dialog');
+groupDlg.id = 'groupDlg';
+groupDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2>共有グループ</h2><button type="button" class="x" id="gX" aria-label="閉じる">×</button></div>' +
+  '<p class="hint">共有した予定だけがネット（Googleのサーバー）に上がるよ。時間割や日記、収入は今までどおりスマホの中だけ。</p>' +
+  '<label>自分の名前（グループの人に見える）<input id="gMe" maxlength="20" placeholder="例：あきと"></label>' +
+  '<p id="gStatus" class="hint"></p>' +
+  '<ul id="gList"></ul>' +
+  '<h3>グループを作る</h3>' +
+  '<div class="row"><input id="gNew" maxlength="20" placeholder="例：家族" aria-label="グループの名前"><button type="button" id="gCreate">作る</button></div>' +
+  '<h3>招待コードで入る</h3>' +
+  '<div class="row"><input id="gJoinCode" maxlength="6" autocapitalize="characters" autocomplete="off" placeholder="6文字" aria-label="招待コード"><button type="button" id="gJoin">入る</button></div>' +
+  '</div>';
+document.body.append(groupDlg);
+
+const grBtn = document.createElement('button');
+grBtn.type = 'button';
+grBtn.id = 'groupBtn';
+grBtn.textContent = '👥 共有グループ';
+$('#settingsBtn').before(grBtn);
+
+const gSay = t => { $('#gStatus').textContent = t; };
+let grGroups = [];
+
+async function loadGroups() {
+  const { db, uid, F } = await fbInit();
+  const q = F.query(F.collection(db, 'groups'), F.where('members', 'array-contains', uid));
+  const snap = await F.getDocs(q);
+  grGroups = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+}
+function renderGroups() {
+  const uid = fb?.uid;
+  $('#gList').innerHTML = grGroups.map(g => {
+    const names = (g.members || []).map(m => (g.names?.[m] || '名前なし') + (m === uid ? '（自分）' : ''));
+    return `<li class="gItem"><div><b>${esc(g.name || 'グループ')}</b> <small>${names.length}人</small></div>` +
+      `<div class="gMembers">${esc(names.join('、'))}</div>` +
+      `<div class="row"><button type="button" data-ginv="${g.id}">招待コードを出す</button>` +
+      `<button type="button" class="danger" data-gleave="${g.id}">抜ける</button></div>` +
+      `<div class="gInv" id="gInv-${g.id}" hidden></div></li>`;
+  }).join('') || '<li class="muted">まだグループはないよ</li>';
+}
+async function refreshGroups(msg = '') {
+  await loadGroups();
+  renderGroups();
+  gSay(msg);
+}
+
+async function openGroups() {
+  $('#gMe').value = grMe();
+  $('#gList').innerHTML = '';
+  if (!groupDlg.open) groupDlg.showModal();
+  if (!navigator.onLine) return gSay('ネットにつながってないかも');
+  gSay('読み込み中…');
+  try { await refreshGroups(); } catch (err) { gSay(fbErr(err)); }
+}
+grBtn.onclick = openGroups;
+$('#gX').onclick = () => groupDlg.close();
+
+function needMe() {
+  const n = $('#gMe').value.trim();
+  if (!n) { alert('先に「自分の名前」を入れてね'); $('#gMe').focus(); return ''; }
+  setGrMe(n);
+  return n;
+}
+
+// 名前を変えたら、入ってる全部のグループに反映
+$('#gMe').addEventListener('change', async e => {
+  const n = e.target.value.trim().slice(0, 20);
+  setGrMe(n);
+  if (!n || !fb || !grGroups.length) return;
+  const { db, uid, F } = fb;
+  try {
+    await Promise.all(grGroups.map(g => F.updateDoc(F.doc(db, 'groups', g.id), { [`names.${uid}`]: n })));
+    await refreshGroups('名前を変えたよ');
+  } catch (err) { gSay(fbErr(err)); }
+});
+
+// グループを作る
+$('#gCreate').onclick = async () => {
+  const me = needMe(); if (!me) return;
+  const name = $('#gNew').value.trim().slice(0, 20);
+  if (!name) return alert('グループの名前を入れてね');
+  gSay('作ってるよ…');
+  try {
+    const { db, uid, F } = await fbInit();
+    await F.addDoc(F.collection(db, 'groups'), {
+      name, owner: uid, members: [uid], names: { [uid]: me }, at: F.serverTimestamp()
+    });
+    $('#gNew').value = '';
+    await refreshGroups(`「${name}」を作ったよ。「招待コードを出す」から友達に送ってね`);
+  } catch (err) { gSay(fbErr(err)); }
+};
+
+// 招待コード（見間違えやすい I・O・0・1 は使わない）
+const INV_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => INV_CHARS[b % 32]).join('');
+async function makeInvite(gid) {
+  const { db, uid, F } = await fbInit();
+  const exp = Date.now() + 7 * 864e5;
+  for (let i = 0; i < 4; i++) {
+    const code = newCode();
+    try {
+      await F.setDoc(F.doc(db, 'invites', code), { gid, by: uid, exp: F.Timestamp.fromMillis(exp) });
+      return { code, exp };
+    } catch (err) {
+      // 同じコードがもうあると弾かれるので、作り直す
+      if (!String(err?.code).includes('permission-denied')) throw err;
+    }
+  }
+  throw new Error('コードが作れなかった');
+}
+
+$('#gList').addEventListener('click', async e => {
+  const inv = e.target.closest('[data-ginv]');
+  const sh = e.target.closest('[data-gshare]');
+  const lv = e.target.closest('[data-gleave]');
+
+  if (inv) {
+    const gid = inv.dataset.ginv;
+    const box = $(`#gInv-${gid}`);
+    box.hidden = false;
+    box.textContent = '作ってるよ…';
+    try {
+      const { code, exp } = await makeInvite(gid);
+      const g = grGroups.find(x => x.id === gid);
+      box.innerHTML = `<p class="gCode">${code}</p>` +
+        `<p class="hint">${md(new Date(exp))}まで使えるよ。相手の「共有グループ」→「招待コードで入る」に入れてもらってね</p>` +
+        `<button type="button" data-gshare="${code}" data-gname="${esc(g?.name || '')}">送る</button>`;
+    } catch (err) { box.textContent = fbErr(err); }
+    return;
+  }
+
+  if (sh) {
+    const text = `がくログの共有グループ「${sh.dataset.gname}」に招待するよ。\n` +
+      `「👥 共有グループ」→「招待コードで入る」にこのコードを入れてね：${sh.dataset.gshare}\n` +
+      `（7日間使えるよ）\n${APP_URL}`;
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else { await navigator.clipboard.writeText(text); toast('コピーしたよ。LINEとかに貼ってね'); }
+    } catch (err) {
+      if (err?.name !== 'AbortError') alert(text);
+    }
+    return;
+  }
+
+  if (lv) {
+    const g = grGroups.find(x => x.id === lv.dataset.gleave);
+    if (!g || !confirm(`「${g.name}」から抜ける？\n（もう一度入るには招待コードがいるよ）`)) return;
+    try {
+      const { db, uid, F } = await fbInit();
+      const ref = F.doc(db, 'groups', g.id);
+      if ((g.members || []).length <= 1 && g.owner === uid) await F.deleteDoc(ref);
+      else await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
+      await refreshGroups(`「${g.name}」から抜けたよ`);
+    } catch (err) { gSay(fbErr(err)); }
+  }
+});
+
+// 招待コードで入る
+$('#gJoin').onclick = async () => {
+  const me = needMe(); if (!me) return;
+  const code = $('#gJoinCode').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 6) return alert('招待コードは6文字だよ');
+  const notFound = 'コードが見つからないか、期限が切れてるよ';
+  gSay('確かめてるよ…');
+  try {
+    const { db, uid, F } = await fbInit();
+    let inv;
+    try { inv = await F.getDoc(F.doc(db, 'invites', code)); }
+    catch (err) {
+      if (String(err?.code).includes('permission-denied')) return gSay(notFound);
+      throw err;
+    }
+    if (!inv.exists()) return gSay(notFound);
+    const gid = inv.data().gid;
+    if (grGroups.some(g => g.id === gid)) return gSay('もう入ってるグループだよ');
+    await F.updateDoc(F.doc(db, 'groups', gid), { members: F.arrayUnion(uid), [`names.${uid}`]: me });
+    $('#gJoinCode').value = '';
+    await loadGroups();
+    renderGroups();
+    const g = grGroups.find(x => x.id === gid);
+    gSay(`「${g?.name || 'グループ'}」に入ったよ`);
+  } catch (err) { gSay(fbErr(err)); }
+};
+
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
 const gridBar = document.createElement('div');
