@@ -1325,7 +1325,7 @@ const EV_LABEL = { job: 'バイト', other: '予定', exam: '試験' };
 let evEditId = null;           // 変更中の予定
 
 function eventsOn(k) {
-  return state.events.filter(e => e.date === k)
+  return state.events.concat(window.grShared || []).filter(e => e.date === k)
     .sort((a, b) => (a.start || '99').localeCompare(b.start || '99'));
 }
 function evTime(e) {
@@ -1379,7 +1379,7 @@ function renderCal() {
     for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
     for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
-    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
+    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}"${e.gid ? '' : ` data-evid="${e.id}"`}>${esc(e.title || EV_LABEL[e.kind])}</span>`);
 
     const cls = ['cd', pending.length && 'due',
       date.getMonth() !== m && 'out', off && 'offday',
@@ -1411,7 +1411,7 @@ function renderDay() {
     `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span> <span class="from">${esc(nm(c))}・締切</span></button></li>`);
   for (const e of eventsOn(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
-    `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}</button>` +
+    `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}${e.gid ? grLabel(e) : ''}</button>` +
     (e.img ? `<button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る">📄</button>` : '') +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
@@ -1606,7 +1606,7 @@ function syncEvForm() {
 }
 
 function startEvEdit(id) {
-  const e = state.events.find(x => x.id === id);
+  const e = findAnyEv(id);
   if (!e) return;
   evEditId = id;
   $('#evKind').value = e.kind;
@@ -1615,6 +1615,7 @@ function startEvEdit(id) {
   $('#evEnd').value = e.end;
   $('#evScope').value = 'one';
   $('#evMoveTo').value = e.date;
+  if ($('#evShare')) $('#evShare').value = e.gid || '';
   renderDay(); renderPicks();
   $('#evHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -4429,7 +4430,7 @@ function notifyPlan() {
       const k = ymd(next);
       for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
         if (!x.done && x.due === k) ds.push(x.title);
-      const exs = eventsOn(k).filter(e => e.kind === 'exam')
+      const exs = eventsOn(k).filter(e => e.kind === 'exam' && grIsMine(e))
         .map(e => (e.start ? e.start + ' ' : '') + (e.title || '試験'));
       if (exs.length) lines.push('試験：' + exs.join('、'));
       if (its.length) lines.push('持ち物：' + its.join('、'));
@@ -4438,7 +4439,7 @@ function notifyPlan() {
     }
     // バイトの前
     if (n.job > 0) for (const e of eventsOn(ymd(day))) {
-      if (e.kind !== 'job') continue;
+      if (e.kind !== 'job' || !grIsMine(e)) continue;
       const s = toMin(e.start);
       if (s == null) continue;
       const at2 = new Date(day); at2.setHours(0, s - n.job, 0, 0);
@@ -5100,7 +5101,7 @@ async function loadGroups() {
   const q = F.query(F.collection(db, 'groups'), F.where('members', 'array-contains', uid));
   const snap = await F.getDocs(q);
   grGroups = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja')); grListen();
 }
 function renderGroups() {
   const uid = fb?.uid;
@@ -5256,6 +5257,216 @@ $('#gJoin').onclick = async () => {
     gSay(`「${g?.name || 'グループ'}」に入ったよ`);
   } catch (err) { gSay(fbErr(err)); }
 };
+
+/* ===== 共有した予定（v61） ===== */
+const GREV_KEY = 'gakulog-grev-v1';
+const grEv = new Map();   // id → 共有した予定
+let grNames = {};         // グループID → 名前
+let grMyUid = '';
+try {
+  const c = JSON.parse(localStorage.getItem(GREV_KEY));
+  if (c) {
+    grNames = c.names || {};
+    grMyUid = c.uid || '';
+    for (const e of c.events || []) grEv.set(e.id, e);
+  }
+} catch {}
+window.grShared = [...grEv.values()];
+
+function grSaveCache() {
+  window.grShared = [...grEv.values()];
+  try {
+    localStorage.setItem(GREV_KEY, JSON.stringify({
+      uid: fb?.uid || grMyUid, names: grNames, events: window.grShared
+    }));
+  } catch {}
+}
+function findAnyEv(id) { return state.events.find(x => x.id === id) || grEv.get(id); }
+function grIsMine(e) { return !e.gid || e.own === (fb?.uid || grMyUid); }
+function grLabel(e) {
+  return ` <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
+}
+const grFail = err => alert(fbErr(err));
+
+// サーバーの予定 → アプリの形
+function toGrEv(gid, d) {
+  const x = d.data();
+  return {
+    id: `g_${gid}_${d.id}`, doc: d.id, gid,
+    date: String(x.date || ''),
+    kind: ['job', 'exam', 'other'].includes(x.kind) ? x.kind : 'other',
+    title: String(x.title || '').slice(0, 60),
+    start: String(x.start || ''), end: String(x.end || ''),
+    own: String(x.own || ''), by: String(x.by || ''), byName: String(x.byName || '')
+  };
+}
+
+// グループごとに見張る（変わったらすぐ届く）
+const grUnsub = new Map();
+function grListen() {
+  if (!fb) return;
+  const { db, F } = fb;
+  grMyUid = fb.uid;
+  const ids = new Set(grGroups.map(g => g.id));
+  grNames = Object.fromEntries(grGroups.map(g => [g.id, g.name || 'グループ']));
+  for (const [gid, un] of grUnsub) if (!ids.has(gid)) { un(); grUnsub.delete(gid); }
+  for (const e of [...grEv.values()]) if (!ids.has(e.gid)) grEv.delete(e.id);
+  const from = ymd(addDays(new Date(), -60));
+  for (const gid of ids) {
+    if (grUnsub.has(gid)) continue;
+    const q = F.query(F.collection(db, 'groups', gid, 'events'), F.where('date', '>=', from));
+    grUnsub.set(gid, F.onSnapshot(q, snap => {
+      for (const ch of snap.docChanges()) {
+        const id = `g_${gid}_${ch.doc.id}`;
+        if (ch.type === 'removed') grEv.delete(id);
+        else grEv.set(id, toGrEv(gid, ch.doc));
+      }
+      grSaveCache(); grRedraw();
+    }, err => console.warn('共有した予定', err)));
+  }
+  grSaveCache(); grRedraw();
+}
+
+let grTimer = 0;
+function grRedraw() {
+  clearTimeout(grTimer);
+  grTimer = setTimeout(() => {
+    if (evEditId && !findAnyEv(evEditId)) endEvEdit();
+    renderShareSel();
+    renderAll();
+    scheduleNotify();
+  }, 300);
+}
+
+// 書き込み
+function grData(v) {
+  return {
+    date: v.date, kind: v.kind, title: v.title || '', start: v.start || '', end: v.end || '',
+    by: fb.uid, byName: grMe(), at: fb.F.serverTimestamp()
+  };
+}
+async function grAdd(gid, v) {
+  const { db, F } = await fbInit();
+  return F.addDoc(F.collection(db, 'groups', gid, 'events'), { ...grData(v), own: fb.uid });
+}
+async function grUpdate(e, v) {
+  const { db, F } = await fbInit();
+  return F.updateDoc(F.doc(db, 'groups', e.gid, 'events', e.doc), grData({ ...e, ...v }));
+}
+async function grDelete(e) {
+  const { db, F } = await fbInit();
+  return F.deleteDoc(F.doc(db, 'groups', e.gid, 'events', e.doc));
+}
+
+// 予定の入力欄に「共有」
+const evShareRow = document.createElement('label');
+evShareRow.id = 'evShareRow';
+evShareRow.innerHTML = '共有<select id="evShare"></select>';
+($('#evEnd').closest('.row') || $('#evEnd')).after(evShareRow);
+function renderShareSel() {
+  const sel = $('#evShare'), v = sel.value;
+  sel.innerHTML = '<option value="">しない（自分だけ）</option>' +
+    Object.entries(grNames).map(([id, n]) => `<option value="${id}">👥 ${esc(n)}</option>`).join('');
+  sel.value = grNames[v] ? v : '';
+  evShareRow.hidden = !Object.keys(grNames).length;
+}
+const evForm = () => ({
+  kind: $('#evKind').value, title: $('#evTitle').value.trim(),
+  start: $('#evStart').value, end: $('#evEnd').value
+});
+
+// 追加
+const evAddLocal = $('#evAdd').onclick;
+$('#evAdd').onclick = () => {
+  const gid = $('#evShare').value;
+  if (!gid) return evAddLocal();
+  if (!grMe()) return alert('先に「👥 共有グループ」で自分の名前を入れてね');
+  const v = evForm();
+  let dates;
+  if (calMulti) {
+    dates = [...calPicks].sort();
+    if (!dates.length) return alert('カレンダーで日付を選んでね');
+  } else {
+    const n = $('#evWeekly').checked ? 4 : 1;
+    dates = Array.from({ length: n }, (_, k) => ymd(addDays(parseYmd(calSel), 7 * k)));
+  }
+  for (const date of dates) grAdd(gid, { ...v, date }).catch(grFail);
+  rememberPreset(v);
+  $('#evTitle').value = '';
+  $('#evWeekly').checked = false;
+  calMulti = false; calPicks.clear();
+  renderEvSuggest(); renderCal(); renderDay();
+  renderPicks(`「${grNames[gid]}」に${dates.length > 1 ? dates.length + '日' : ''}共有したよ`);
+};
+
+// 変更
+const evSaveLocal = $('#evSave').onclick;
+$('#evSave').onclick = () => {
+  const e = findAnyEv(evEditId), gid = $('#evShare').value;
+  if (!e || (!e.gid && !gid)) return evSaveLocal();
+  const v = evForm();
+  if (!e.gid) {
+    // 自分だけの予定 → グループに共有
+    if (!grMe()) return alert('先に「👥 共有グループ」で自分の名前を入れてね');
+    const ts = evTargets($('#evScope').value);
+    for (const x of ts) grAdd(gid, { ...x, ...v }).catch(grFail);
+    const ids = new Set(ts.map(x => x.id));
+    state.events = state.events.filter(x => !ids.has(x.id));
+    save();
+    toast(`${ts.length > 1 ? ts.length + '件を' : ''}「${grNames[gid]}」に共有したよ`);
+  } else if (gid === e.gid) {
+    grUpdate(e, v).catch(grFail);
+  } else if (!gid) {
+    // 共有をやめて自分だけに
+    if (!confirm('グループから外して、自分だけの予定にする？\n（グループの人の画面からは消えるよ）')) return;
+    state.events.push({ id: uid(), date: e.date, ...v });
+    save();
+    grDelete(e).catch(grFail);
+  } else {
+    // 別のグループへ
+    grAdd(gid, { ...e, ...v }).then(() => grDelete(e)).catch(grFail);
+  }
+  rememberPreset(v);
+  endEvEdit(); renderCal();
+};
+
+// 削除
+const grDelAsk = e => confirm(`「${grNames[e.gid] || 'グループ'}」の予定を消す？\nグループの全員の画面から消えるよ`);
+const evDelLocal = $('#evDel').onclick;
+$('#evDel').onclick = () => {
+  const e = findAnyEv(evEditId);
+  if (!e?.gid) return evDelLocal();
+  if (!grDelAsk(e)) return;
+  grDelete(e).catch(grFail);
+  endEvEdit();
+};
+$('#dayList').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-evdel]');
+  const e = b && grEv.get(b.dataset.evdel);
+  if (!e) return;
+  ev.stopImmediatePropagation();
+  if (!grDelAsk(e)) return;
+  if (e.id === evEditId) endEvEdit();
+  grDelete(e).catch(grFail);
+}, true);
+
+// 移動先の日付
+const evMoveLocal = $('#evMove').onclick;
+$('#evMove').onclick = () => {
+  const e = findAnyEv(evEditId);
+  if (!e?.gid) return evMoveLocal();
+  const to = $('#evMoveTo').value;
+  if (!to || to === e.date) return;
+  grUpdate(e, { date: to }).catch(grFail);
+  endEvEdit();
+  toast(`${md(parseYmd(to))}に移動したよ`);
+};
+
+renderShareSel();
+// グループに入ってる人は、起動したら見張りを始める
+if (grMe()) setTimeout(() => {
+  if (navigator.onLine) loadGroups().catch(err => console.warn('共有グループ', err));
+}, 2000);
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
