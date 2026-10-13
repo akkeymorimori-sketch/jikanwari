@@ -697,3 +697,13 @@ details.sec > a, #aiBox > a { display: block; }
 .ev.shared { box-shadow: inset 0 0 0 1.5px currentColor; }
 #evShareRow { display: block; margin: 6px 0; }
 #evShareRow select { display: block; width: 100%; margin-top: 4px; }
+
+/* 共有グループ：縦に並べる */
+#gList > li.gItem { display: block; padding: 12px 0; }
+.gItem > div { display: block; }
+.gItem .gMembers { margin: 4px 0 8px; }
+.gItem .row { display: flex; align-items: center; gap: 8px; }
+.gItem .row [data-gleave] { margin-left: auto; padding: 6px 12px; font-size: 14px; }
+.gInv { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(127, 127, 127, .12); text-align: center; }
+.gInv .hint { margin: 4px 0 8px; text-align: left; }
+.gInv [data-gshare] { width: 100%; }
