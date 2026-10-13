@@ -1379,7 +1379,7 @@ function renderCal() {
     for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
     for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
-    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}"${e.gid ? '' : ` data-evid="${e.id}"`}>${esc(e.title || EV_LABEL[e.kind])}</span>`);
+    for (const e of eventsOn(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
 
     const cls = ['cd', pending.length && 'due',
       date.getMonth() !== m && 'out', off && 'offday',
@@ -1615,7 +1615,7 @@ function startEvEdit(id) {
   $('#evEnd').value = e.end;
   $('#evScope').value = 'one';
   $('#evMoveTo').value = e.date;
-  if ($('#evShare')) $('#evShare').value = e.gid || '';
+  if ($('#evShare')) { $('#evShare').value = e.gid || ''; $('#evLock').checked = !!e.lock; syncLockUI(); }
   renderDay(); renderPicks();
   $('#evHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1623,6 +1623,7 @@ function startEvEdit(id) {
 function endEvEdit() {
   evEditId = null;
   for (const id of ['evTitle', 'evStart', 'evEnd']) $('#' + id).value = '';
+  if ($('#evShare') && $('#evLock')) { $('#evShare').value = ''; $('#evLock').checked = false; syncLockUI(); }
   renderDay(); renderPicks();
 }
 
@@ -4027,7 +4028,7 @@ imgDlg.addEventListener('close', () => {
 // どの予定にも使われてない画像を消す（起動して少したってから）
 async function cleanShiftImgs() {
   try {
-    const used = new Set(state.events.map(e => e.img).filter(Boolean));
+    const used = new Set(state.events.map(e => e.img).filter(Boolean).concat('wall'));
     for (const k of await imgKeys()) if (!used.has(k)) await imgDel(k);
   } catch {}
 }
@@ -4724,7 +4725,7 @@ function moveGhost(x, y) {
 $('#calGrid').addEventListener('pointerdown', e => {
   const lb = e.target.closest('[data-evid]');
   if (!lb || calMulti) return;
-  const ev = state.events.find(x => x.id === lb.dataset.evid);
+  const ev = findAnyEv(lb.dataset.evid);
   if (!ev) return;
   endDrag();
   const x0 = e.clientX, y0 = e.clientY;
@@ -4758,6 +4759,10 @@ document.addEventListener('pointerup', () => {
   dragSkipClick = Date.now();
   const to = over?.dataset.date;
   if (!to || to === ev.date) return;
+  if (ev.gid) {
+    if (grLocked(ev)) return alert(grLockMsg(ev));
+    return grMove(ev, to);
+  }
   if (ev.src === 'cal') return alert(CAL_SRC_MSG);
   calSel = to;
   moveEvents(new Set([ev.id]), evDayDiff(ev.date, to), `${md(parseYmd(to))}に移動したよ`);
@@ -5284,7 +5289,7 @@ function grSaveCache() {
 function findAnyEv(id) { return state.events.find(x => x.id === id) || grEv.get(id); }
 function grIsMine(e) { return !e.gid || e.own === (fb?.uid || grMyUid); }
 function grLabel(e) {
-  return ` <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
+  return ` <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.lock ? '🔒' : ''}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
 }
 const grFail = err => alert(fbErr(err));
 
@@ -5297,7 +5302,8 @@ function toGrEv(gid, d) {
     kind: ['job', 'exam', 'other'].includes(x.kind) ? x.kind : 'other',
     title: String(x.title || '').slice(0, 60),
     start: String(x.start || ''), end: String(x.end || ''),
-    own: String(x.own || ''), by: String(x.by || ''), byName: String(x.byName || '')
+    own: String(x.own || ''), by: String(x.by || ''), byName: String(x.byName || ''),
+    lock: x.lock === true
   };
 }
 
@@ -5342,6 +5348,7 @@ function grRedraw() {
 function grData(v) {
   return {
     date: v.date, kind: v.kind, title: v.title || '', start: v.start || '', end: v.end || '',
+    lock: (evEditId || !v.doc) ? $('#evLock')?.checked === true : v.lock === true,
     by: fb.uid, byName: grMe(), at: fb.F.serverTimestamp()
   };
 }
@@ -5368,7 +5375,8 @@ function renderShareSel() {
   sel.innerHTML = '<option value="">しない（自分だけ）</option>' +
     Object.entries(grNames).map(([id, n]) => `<option value="${id}">👥 ${esc(n)}</option>`).join('');
   sel.value = grNames[v] ? v : '';
-  evShareRow.hidden = !Object.keys(grNames).length;
+  evShareRow.hidden = !Object.keys(grNames).length; syncLockUI();
+
 }
 const evForm = () => ({
   kind: $('#evKind').value, title: $('#evTitle').value.trim(),
@@ -5467,6 +5475,70 @@ renderShareSel();
 if (grMe()) setTimeout(() => {
   if (navigator.onLine) loadGroups().catch(err => console.warn('共有グループ', err));
 }, 2000);
+
+/* ===== 共有した予定：動かす・ロック（v63） ===== */
+function grLocked(e) { return !!e?.gid && e.lock === true && !grIsMine(e); }
+function grLockMsg(e) {
+  const n = grGroups.find(g => g.id === e.gid)?.names?.[e.own];
+  return `🔒 ${n ? n + 'さん' : '作った人'}がロックしてる予定だよ。\n変えたり消したりできるのは作った人だけ`;
+}
+
+// 日付だけ変える（ほかの人の変更を上書きしない）
+async function grPatch(e, patch) {
+  const { db, F } = await fbInit();
+  return F.updateDoc(F.doc(db, 'groups', e.gid, 'events', e.doc),
+    { ...patch, by: fb.uid, byName: grMe(), at: F.serverTimestamp() });
+}
+function grMove(e, to) {
+  const from = e.date;
+  calSel = to;
+  grPatch(e, { date: to }).catch(grFail);
+  toast(`${md(parseYmd(to))}に移動したよ`, () => grPatch(e, { date: from }).catch(grFail));
+}
+
+// 「🔒 ロックする」の欄
+const evLockRow = document.createElement('label');
+evLockRow.id = 'evLockRow';
+evLockRow.innerHTML = '<input type="checkbox" id="evLock"> 🔒 ロックする（ほかの人は変更・削除できない）';
+evShareRow.after(evLockRow);
+function syncLockUI() {
+  const row = $('#evLockRow');
+  if (!row) return;
+  const e = evEditId ? findAnyEv(evEditId) : null;
+  row.hidden = $('#evShareRow').hidden || !$('#evShare').value;
+  $('#evLock').disabled = !!e?.gid && !grIsMine(e);
+}
+$('#evShare').addEventListener('change', syncLockUI);
+syncLockUI();
+
+// ロックされてたら止める：保存・削除
+for (const id of ['evSave', 'evDel']) {
+  const base = $('#' + id).onclick;
+  $('#' + id).onclick = () => {
+    const e = findAnyEv(evEditId);
+    if (grLocked(e)) return alert(grLockMsg(e));
+    return base();
+  };
+}
+// 移動先の日付（共有した予定にも「元に戻す」）
+const evMoveV61 = $('#evMove').onclick;
+$('#evMove').onclick = () => {
+  const e = findAnyEv(evEditId);
+  if (!e?.gid) return evMoveV61();
+  if (grLocked(e)) return alert(grLockMsg(e));
+  const to = $('#evMoveTo').value;
+  if (!to || to === e.date) return;
+  endEvEdit();
+  grMove(e, to);
+};
+// 一覧の「×」
+document.addEventListener('click', ev => {
+  const b = ev.target.closest?.('#dayList [data-evdel]');
+  const e = b && grEv.get(b.dataset.evdel);
+  if (!grLocked(e)) return;
+  ev.stopPropagation(); ev.preventDefault();
+  alert(grLockMsg(e));
+}, true);
 
 /* ===== 起動 ===== */
 /* ===== 時間割タブの画像読み込み ===== */
@@ -5664,3 +5736,445 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
+
+/* ===== 壁紙 ===== */
+const WALLS = [
+  ['none', 'なし'], ['photo', '写真'], ['dots', 'ドット'], ['gingham', 'ギンガム'], ['stripe', 'ストライプ']
+];
+const wallBg = document.createElement('div');
+wallBg.id = 'wallBg';
+document.body.prepend(wallBg);
+let wallUrl = '';
+
+function wallState() {
+  const w = state.wall && typeof state.wall === 'object' ? state.wall : {};
+  if (!WALLS.some(([k]) => k === w.type)) w.type = 'none';
+  const d = Math.round(+w.dim);
+  w.dim = Number.isFinite(d) ? Math.min(80, Math.max(0, d)) : 30;
+  return state.wall = w;
+}
+
+// 保存してある写真を読む（なければ空）
+async function wallLoad() {
+  if (wallUrl) return wallUrl;
+  try {
+    const b = await imgGet('wall');
+    if (b) wallUrl = URL.createObjectURL(b);
+  } catch {}
+  return wallUrl;
+}
+
+async function applyWall() {
+  const w = wallState();
+  wallBg.className = w.type === 'none' ? '' : 'wp-' + w.type;
+  wallBg.style.setProperty('--wdim', w.dim / 100);
+  wallBg.style.backgroundImage = '';
+  if (w.type === 'photo') {
+    const u = await wallLoad();
+    if (u) wallBg.style.backgroundImage = `url("${u}")`;
+  }
+  document.documentElement.classList.toggle('hasWall', w.type !== 'none');
+}
+
+// 大きい写真は縮めて保存（長いほうを1600pxまで）
+async function wallShrink(file, max = 1600) {
+  const bmp = await createImageBitmap(file);
+  const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(bmp.width * r);
+  cv.height = Math.round(bmp.height * r);
+  cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+  bmp.close?.();
+  return new Promise((ok, ng) => cv.toBlob(b => b ? ok(b) : ng(new Error('blob')), 'image/jpeg', 0.85));
+}
+
+const wallDlg = document.createElement('dialog');
+wallDlg.id = 'wallDlg';
+wallDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2>🖼 壁紙</h2><button type="button" class="x big" data-wclose aria-label="閉じる">×</button></div>' +
+  '<div class="wallTiles">' + WALLS.map(([k, n]) =>
+    `<button type="button" class="wallTile" data-wall="${k}"><i class="wp-${k}"></i><span>${n}</span></button>`).join('') +
+  '</div>' +
+  '<label class="fileBtn" id="wallPick"><span id="wallPickT">📷 写真を選ぶ</span>' +
+  '<input type="file" accept="image/*" class="vh" id="wallFile"></label>' +
+  '<label class="wallDim">背景の薄さ<input type="range" id="wallDim" min="0" max="80" step="5"><b id="wallDimV"></b></label>' +
+  '<p class="hint">選ぶとすぐに変わるよ。写真はこの端末の中だけに保存されて、バックアップの書き出しには入らない</p>' +
+  '</div>';
+document.body.append(wallDlg);
+
+function renderWall() {
+  const w = wallState();
+  for (const b of wallDlg.querySelectorAll('[data-wall]')) b.classList.toggle('on', b.dataset.wall === w.type);
+  wallDlg.querySelector('i.wp-photo').style.backgroundImage = wallUrl ? `url("${wallUrl}")` : '';
+  $('#wallPickT').textContent = wallUrl ? '📷 写真を変える' : '📷 写真を選ぶ';
+  $('#wallDim').value = w.dim;
+  $('#wallDimV').textContent = w.dim + '%';
+}
+
+async function openWall() {
+  await wallLoad();
+  renderWall();
+  wallDlg.showModal();
+}
+
+wallDlg.addEventListener('click', async e => {
+  if (e.target.closest('[data-wclose]')) return wallDlg.close();
+  const k = e.target.closest('[data-wall]')?.dataset.wall;
+  if (!k) return;
+  // 写真がまだなければ、そのまま選ぶ画面へ
+  if (k === 'photo' && !wallUrl) return $('#wallFile').click();
+  state.wall.type = k;
+  save();
+  await applyWall();
+  renderWall();
+});
+
+$('#wallFile').onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  try {
+    const b = await wallShrink(f);
+    await imgPut('wall', b);
+    if (wallUrl) URL.revokeObjectURL(wallUrl);
+    wallUrl = URL.createObjectURL(b);
+    state.wall.type = 'photo';
+    save();
+    await applyWall();
+    renderWall();
+  } catch {
+    alert('写真を読み込めなかった。別の写真で試してみて');
+  }
+};
+
+$('#wallDim').oninput = e => {
+  state.wall.dim = +e.target.value;
+  $('#wallDimV').textContent = e.target.value + '%';
+  wallBg.style.setProperty('--wdim', state.wall.dim / 100);
+};
+$('#wallDim').onchange = () => save();
+
+// その他タブのボタン（共有グループの下）
+{
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.id = 'wallBtn';
+  b.innerHTML = '🖼 壁紙<small>写真やかわいい柄を背景にする</small>';
+  b.onclick = openWall;
+  const gb = $('#groupBtn');
+  if (gb) gb.after(b); else $('#termBtn')?.closest('.menu')?.append(b);
+}
+
+applyWall();
+
+/* ===== 整理：その他タブ ===== */
+{
+  const put = (id, html, before) => {
+    const b = $('#' + id);
+    if (!b || !$(before)) return;
+    b.innerHTML = html;
+    $(before).before(b);
+  };
+  put('groupBtn', '<b>👥 共有グループ</b><small>家族やサークルと予定を共有する</small>', '#shareBtn');
+  put('wallBtn', '<b>🖼 壁紙</b><small>写真やかわいい柄を背景にする</small>', '#lookBtn');
+  put('helpBtn', '<b>🔍 機能をさがす</b><small>やりたいことから、どこにあるか探す</small>', '#feedbackBtn');
+}
+
+/* ===== 整理：設定を開いたり閉じたり ===== */
+// 後からJSで足した欄を、それぞれの項目の中へ
+function placeSecs() {
+  const mv = (sel, to) => {
+    const el = $('#settingsDlg ' + sel), box = $(to);
+    if (el && box && el.parentElement !== box) box.append(el);
+  };
+  mv('.leadBox', '#setUse');
+  mv('.nBox', '#setNotify');
+  mv('.csBox', '#setCal');
+  mv('.icsBox', '#setCal');
+  $('#setNotify').hidden = !$('#setNotify .nBox');
+  $('#setCal').hidden = !$('#setCal .csBox, #setCal .icsBox');
+}
+
+// 閉じてても今の状態がわかるように
+function setSums() {
+  const put = (id, t) => {
+    const el = $(`#${id} > summary small`);
+    if (el) el.textContent = t;
+  };
+  const opt = id => $(id)?.selectedOptions[0]?.textContent.trim() || '';
+  put('setUse', $('#sUseGrid').checked ? '時間割あり' : '予定管理だけ');
+  put('setGrid', `${$('#sPeriods').value}限まで・土曜${$('#sSat').checked ? 'あり' : 'なし'}`);
+  put('setLook', `${opt('#sColor')}・${opt('#sFont')}`);
+  if ($('#nOn')) {
+    const job = $('#nJob')?.value !== '0' ? `・バイト${opt('#nJob')}` : '';
+    put('setNotify', $('#nOn').checked ? `前の日 ${$('#nTime').value}${job}` : 'オフ');
+  }
+  const n = state.calSync?.cals?.length || 0;
+  put('setCal', n ? `取り込み ${n}件` : '');
+  const pv = PROVIDERS[$('#sProvider').value];
+  put('aiBox', `${pv ? pv.label.split('（')[0] : ''}・${$('#sKey').value.trim() ? 'キーあり' : 'キーなし'}`);
+  put('setSyl', $('#sSyllabus').value.trim() ? '設定済み' : '未設定');
+  const d = state.lastExport ? new Date(state.lastExport) : null;
+  put('setData', d && !isNaN(d) ? `最後の書き出し ${md(d)}` : 'まだ書き出してない');
+}
+
+// 開いた直後に呼ぶ。target を渡すとその項目を開く
+function setPrep(target) {
+  placeSecs();
+  const el = target ? $(target) : null;
+  const sec = el?.closest('details.set') || null;
+  for (const x of $('#settingsDlg').querySelectorAll('details.set')) x.open = x === sec;
+  if (el?.tagName === 'DETAILS') el.open = true;
+  setSums();
+  if (el && el !== sec) requestAnimationFrame(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+}
+
+// 1つ開いたら、ほかは閉じる
+$('#settingsDlg').addEventListener('toggle', e => {
+  const d = e.target;
+  if (!d.classList?.contains('set') || !d.open) return;
+  for (const x of $('#settingsDlg').querySelectorAll('details.set')) if (x !== d) x.open = false;
+  requestAnimationFrame(() => d.querySelector('summary').scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+}, true);
+$('#settingsDlg').addEventListener('input', setSums);
+$('#settingsDlg').addEventListener('change', setSums);
+
+$('#settingsBtn').onclick = () => { openSettings(); setPrep(); };
+$('#lookBtn').onclick = () => { openSettings(); setPrep('#sColor'); };
+placeSecs();
+
+// 「機能をさがす」から飛んだとき、その項目を開く
+if (typeof FEATURES !== 'undefined') {
+  const SET_GO = {
+    taskLead: '#sLeadU', backup: '#exportBtn', ics: '#icsBtn', notify: '#nOn', calSync: '#csList',
+    theme: '#sColor', icon: '#iconBox', times: '#sTimes', sat: '#sSat', useGrid: '#sUseGrid'
+  };
+  const WHERE = {
+    taskLead: '設定 → 使い方', backup: '設定 → バックアップ', ics: '設定 → カレンダー連携',
+    notify: '設定 → 通知', calSync: '設定 → カレンダー連携', theme: 'その他 → 見た目',
+    icon: '設定 → 見た目', times: '設定 → 授業と時限', sat: '設定 → 授業と時限',
+    useGrid: '設定 → 使い方', ai: '設定 → AI', income: 'その他 → お金', share: 'その他 → だれかと使う'
+  };
+  for (const f of FEATURES) {
+    if (WHERE[f.id]) f.where = WHERE[f.id];
+    const sel = SET_GO[f.id];
+    if (!sel) continue;
+    const go = f.go;
+    f.go = () => { go(); setPrep(sel); };
+  }
+  if (!FEATURES.some(f => f.id === 'group')) FEATURES.push({
+    id: 'group', name: '共有グループ', where: 'その他 → だれかと使う',
+    desc: '家族やサークルと予定を共有する。招待コードで入れて、ロックもかけられる',
+    kw: '共有 グループ 家族 招待 コード ロック 一緒', go: () => $('#groupBtn').click()
+  });
+  if (!FEATURES.some(f => f.id === 'wall')) FEATURES.push({
+    id: 'wall', name: '壁紙', where: 'その他 → 見た目',
+    desc: '写真やドット・ギンガム・ストライプを背景にする。薄さも変えられる',
+    kw: '壁紙 背景 写真 柄 かわいい', go: () => openWall()
+  });
+}
+
+/* ===== 壁紙：カードの濃さ ===== */
+function cardLevel() {
+  const v = Math.round(+state.wall?.card);
+  return Number.isFinite(v) ? Math.min(95, Math.max(20, v)) : 60;
+}
+function applyCard() {
+  document.documentElement.style.setProperty('--cardA', cardLevel() + '%');
+}
+{
+  const lb = document.createElement('label');
+  lb.className = 'wallDim';
+  lb.innerHTML = 'カードの濃さ<input type="range" id="wallCard" min="20" max="95" step="5"><b id="wallCardV"></b>';
+  wallDlg.querySelector('.wallDim').after(lb);
+
+  $('#wallCard').oninput = e => {
+    wallState();
+    state.wall.card = +e.target.value;
+    $('#wallCardV').textContent = e.target.value + '%';
+    applyCard();
+  };
+  $('#wallCard').onchange = () => save();
+
+  // 壁紙の画面を開いたときに、スライダーも今の値にする
+  const renderWall0 = renderWall;
+  renderWall = function () {
+    renderWall0();
+    $('#wallCard').value = cardLevel();
+    $('#wallCardV').textContent = cardLevel() + '%';
+  };
+}
+applyCard();
+
+/* ===== カードと文字の色 ===== */
+const HEX6 = /^#[0-9a-f]{6}$/i;
+const CARD_COLORS = [
+  ['', '自動'], ['#ffffff', '白'], ['#1d1f24', '黒'], ['#ffe3ec', 'ピンク'],
+  ['#e3efff', '水色'], ['#e3f7ea', 'ミント'], ['#efe7ff', 'ラベンダー'], ['#fff6db', 'クリーム']
+];
+const TEXT_COLORS = [
+  ['', '自動'], ['#222222', '黒'], ['#ffffff', '白'], ['#5a3a2e', 'こげ茶'], ['#1f3a68', '紺']
+];
+
+function toHex6(s) {
+  s = String(s || '').trim();
+  if (/^#[0-9a-f]{3}$/i.test(s)) s = '#' + [...s.slice(1)].map(c => c + c).join('');
+  return HEX6.test(s) ? s : '#ffffff';
+}
+function hexLum(h) {
+  const n = parseInt(h.slice(1), 16);
+  const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+  return .2126 * f(n >> 16 & 255) + .7152 * f(n >> 8 & 255) + .0722 * f(n & 255);
+}
+function hexContrast(a, b) {
+  const x = hexLum(a), y = hexLum(b);
+  return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
+}
+
+// 色を画面に反映して、実際のカードの色と文字の色を返す
+function applyCardColor() {
+  const w = wallState(), r = document.documentElement;
+  const c = HEX6.test(w.cardColor || '') ? w.cardColor : '';
+  const t = HEX6.test(w.textColor || '') ? w.textColor
+    : c ? (hexLum(c) > .4 ? '#222222' : '#f2f2f2') : '';
+  if (c) r.style.setProperty('--cardC', c); else r.style.removeProperty('--cardC');
+  if (t) r.style.setProperty('--cardT', t); else r.style.removeProperty('--cardT');
+  r.classList.toggle('cardC', !!c);
+  r.classList.toggle('cardT', !!t);
+  if (t) r.dataset.cardScheme = hexLum(t) < .4 ? 'light' : 'dark';
+  else delete r.dataset.cardScheme;
+  const css = getComputedStyle(r);
+  return {
+    base: c || toHex6(css.getPropertyValue('--surface')),
+    text: t || toHex6(css.getPropertyValue('--text'))
+  };
+}
+
+function cardHint(res) {
+  const el = $('#wallCHint');
+  if (el) el.textContent = hexContrast(res.base, res.text) < 3
+    ? '⚠ 読みにくいかも。文字の色を「自動」にするか、ちがう色にしてみて' : '';
+}
+
+{
+  const box = document.createElement('div');
+  box.className = 'wallColors';
+  box.innerHTML =
+    '<h3>カードの色</h3><div class="swRow" id="wallCC"></div>' +
+    '<h3>文字の色</h3><div class="swRow" id="wallTC"></div>' +
+    '<p class="hint" id="wallCHint"></p>';
+  $('#wallCard').closest('label').after(box);
+}
+
+function renderCardColors() {
+  const w = wallState(), res = applyCardColor();
+  const cc = w.cardColor || '', tc = w.textColor || '';
+  const pick = (key, cur, list) => {
+    const mine = cur && !list.some(([v]) => v === cur);
+    return `<label class="cSw custom${mine ? ' on' : ''}" style="--c:${mine ? cur : 'transparent'}" aria-label="自分で選ぶ">🎨` +
+      `<input type="color" class="vh" data-${key}pick value="${cur || res.base}"></label>`;
+  };
+  $('#wallCC').innerHTML = CARD_COLORS.map(([v, n]) =>
+    `<button type="button" class="cSw${v === cc ? ' on' : ''}" data-cc="${v}" style="--c:${v || 'transparent'}" aria-label="${n}">${v ? '' : '自動'}</button>`
+  ).join('') + pick('cc', cc, CARD_COLORS);
+  $('#wallTC').innerHTML = TEXT_COLORS.map(([v, n]) =>
+    `<button type="button" class="cSw txt${v === tc ? ' on' : ''}" data-tc="${v}" style="--c:${res.base};color:${v || res.text}" aria-label="${n}">${v ? 'あ' : '自動'}</button>`
+  ).join('') + pick('tc', tc, TEXT_COLORS);
+  cardHint(res);
+}
+
+wallDlg.addEventListener('click', e => {
+  const b = e.target.closest('[data-cc], [data-tc]');
+  if (!b) return;
+  wallState();
+  if ('cc' in b.dataset) state.wall.cardColor = b.dataset.cc;
+  else state.wall.textColor = b.dataset.tc;
+  save();
+  renderCardColors();
+});
+// 🎨：動かしてる間はすぐ反映、決めたら保存
+wallDlg.addEventListener('input', e => {
+  const p = e.target;
+  if (!p.matches('[data-ccpick], [data-tcpick]')) return;
+  wallState();
+  state.wall['ccpick' in p.dataset ? 'cardColor' : 'textColor'] = p.value;
+  cardHint(applyCardColor());
+});
+wallDlg.addEventListener('change', e => {
+  if (!e.target.matches('[data-ccpick], [data-tcpick]')) return;
+  save();
+  renderCardColors();
+});
+
+{
+  const renderWall1 = renderWall;
+  renderWall = function () {
+    renderWall1();
+    renderCardColors();
+  };
+}
+// ダークモードが切り替わったら「自動」の色を合わせ直す
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyCardColor());
+applyCardColor();
+
+/* ===== 背景の色 ===== */
+const PAGE_COLORS = [
+  ['', '自動'], ['#f4f5f7', '白'], ['#121316', '黒'], ['#ffd6e4', 'ピンク'],
+  ['#d4e6ff', '水色'], ['#d3f2dd', 'ミント'], ['#e2d6ff', 'ラベンダー'], ['#fff0c2', 'クリーム']
+];
+
+function applyPageColor() {
+  const w = wallState(), r = document.documentElement;
+  const p = HEX6.test(w.pageColor || '') ? w.pageColor : '';
+  if (p) r.style.setProperty('--pageC', p); else r.style.removeProperty('--pageC');
+  r.classList.toggle('pageC', !!p);
+}
+
+$('.wallColors').insertAdjacentHTML('afterbegin', '<h3>背景の色</h3><div class="swRow" id="wallPC"></div>');
+
+function renderPageColors() {
+  const cur = wallState().pageColor || '';
+  const mine = cur && !PAGE_COLORS.some(([v]) => v === cur);
+  const base = cur || toHex6(getComputedStyle(document.documentElement).getPropertyValue('--bg'));
+  $('#wallPC').innerHTML = PAGE_COLORS.map(([v, n]) =>
+    `<button type="button" class="cSw${v === cur ? ' on' : ''}" data-pc="${v}" style="--c:${v || 'transparent'}" aria-label="${n}">${v ? '' : '自動'}</button>`
+  ).join('') +
+    `<label class="cSw custom${mine ? ' on' : ''}" style="--c:${mine ? cur : 'transparent'}" aria-label="自分で選ぶ">🎨` +
+    `<input type="color" class="vh" data-pcpick value="${base}"></label>`;
+}
+
+wallDlg.addEventListener('click', e => {
+  const b = e.target.closest('[data-pc]');
+  if (!b) return;
+  wallState();
+  state.wall.pageColor = b.dataset.pc;
+  save();
+  applyPageColor();
+  renderPageColors();
+});
+wallDlg.addEventListener('input', e => {
+  if (!e.target.matches('[data-pcpick]')) return;
+  wallState();
+  state.wall.pageColor = e.target.value;
+  applyPageColor();
+});
+wallDlg.addEventListener('change', e => {
+  if (!e.target.matches('[data-pcpick]')) return;
+  save();
+  renderPageColors();
+});
+
+{
+  const renderWall2 = renderWall;
+  renderWall = function () {
+    renderWall2();
+    renderPageColors();
+  };
+}
+
+// 名前を「壁紙・色」に
+wallDlg.querySelector('.dlgHead h2').textContent = '🖼 壁紙・色';
+if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>🖼 壁紙・色</b><small>背景の写真や柄、背景・カード・文字の色</small>';
+
+applyPageColor();

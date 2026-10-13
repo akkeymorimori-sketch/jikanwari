@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=62">
+<link rel="stylesheet" href="style.css?v=68">
 </head>
 <body>
 <header>
@@ -109,23 +109,29 @@
 
   <!-- その他 -->
   <section class="view" id="view-more" hidden>
-    <div class="card menu">
-      <h2>時間割</h2>
-      <button id="importBtn"><b>画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
-      <button id="shareBtn"><b>時間割を共有</b><small>共有コードを送る・受け取る</small></button>
+    <div class="card menu gridOnly">
+      <h2>授業</h2>
+      <button id="importBtn"><b>📷 画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
+      <button id="termBtn"><b>🗓 学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
     </div>
     <div class="card menu">
-      <h2>学期</h2>
-      <button id="termBtn"><b>学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
+      <h2>お金</h2>
+      <button id="incomeBtn"><b>💴 収入</b><small>給与の記録、1年の合計、シフトからの見込み</small></button>
     </div>
     <div class="card menu">
-      <h2>バイト</h2>
-      <button id="incomeBtn"><b>収入</b><small>給与の記録と1年の合計</small></button>
+      <h2>だれかと使う</h2>
+      <button id="shareBtn" class="gridOnly"><b>🔗 時間割を共有</b><small>共有コードを送る・受け取る</small></button>
     </div>
     <div class="card menu">
-      <h2>アプリ</h2>
-      <button id="settingsBtn"><b>設定</b><small>時限の時刻、テーマ、シラバス、バックアップ、AI</small></button>
-      <button id="feedbackBtn" hidden><b>意見箱</b><small>名前なしで感想・不具合を送れる</small></button>
+      <h2>見た目</h2>
+      <button id="lookBtn"><b>🎨 テーマの色・文字</b><small>アプリの色、フォント、アイコンの色</small></button>
+    </div>
+    <div class="card menu">
+      <h2>困ったとき</h2>
+      <button id="feedbackBtn" hidden><b>💬 意見箱</b><small>名前なしで感想・不具合を送れる</small></button>
+    </div>
+    <div class="card menu">
+      <button id="settingsBtn"><b>⚙ 設定</b><small>通知、時限、AI、バックアップなど</small></button>
     </div>
   </section>
 </main>
@@ -431,64 +437,73 @@
       <button id="sX" class="x big" aria-label="閉じる">×</button>
     </div>
 
-    <h3>使い方</h3>
-    <label class="inline"><input type="checkbox" id="sUseGrid"> 時間割を使う</label>
-    <p class="hint">オフにすると、時間割・持ち物・学期など授業まわりを隠すよ。データは消えないから、オンに戻せば元通り</p>
-    <h3>表示</h3>
-    <div class="row">
-      <label class="inline">時限数 <input id="sPeriods" type="number" min="1" max="10" class="num"></label>
-      <label class="inline"><input type="checkbox" id="sSat"> 土曜を表示</label>
-    </div>
-
-    <h3>テーマ</h3>
-    <div class="row">
-      <label class="inline">色
-        <select id="sColor" class="narrow" aria-label="テーマの色">
-          <option value="blue">青</option>
-          <option value="green">緑</option>
-          <option value="pink">ピンク</option>
-          <option value="red">赤</option>
-          <option value="purple">紫</option>
-          <option value="yellow">黄</option>
-          <option value="gray">グレー</option>
-        </select>
-      </label>
-      <label class="inline">文字
-        <select id="sFont" class="narrow" aria-label="文字の種類">
-          <option value="system">ふつう</option>
-          <option value="maru">丸ゴシック</option>
-          <option value="mincho">明朝</option>
-        </select>
-      </label>
-    </div>
-    <p class="hint">選ぶとすぐ見た目が変わるよ。キャンセルすれば元に戻る</p>
-
-    <details class="sec" id="iconBox">
-      <summary>アプリアイコンの色</summary>
-      <p class="hint">使いたい色のページを開いて、共有→「ホーム画面に追加」。今あるアイコンは変わらないから、古いほうは消してね</p>
-      <div class="iconLinks">
-        <a href="./" target="_blank" rel="noopener"><img src="apple-touch-icon.png" alt="" loading="lazy">青</a>
-        <a href="green.html" target="_blank" rel="noopener"><img src="icon-green.png" alt="" loading="lazy">緑</a>
-        <a href="pink.html" target="_blank" rel="noopener"><img src="icon-pink.png" alt="" loading="lazy">ピンク</a>
-        <a href="red.html" target="_blank" rel="noopener"><img src="icon-red.png" alt="" loading="lazy">赤</a>
-        <a href="purple.html" target="_blank" rel="noopener"><img src="icon-purple.png" alt="" loading="lazy">紫</a>
-        <a href="yellow.html" target="_blank" rel="noopener"><img src="icon-yellow.png" alt="" loading="lazy">黄</a>
-        <a href="gray.html" target="_blank" rel="noopener"><img src="icon-gray.png" alt="" loading="lazy">グレー</a>
-      </div>
-      <p class="hint">アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
+    <details class="sec set" id="setUse">
+      <summary>使い方 <small></small></summary>
+      <label class="inline"><input type="checkbox" id="sUseGrid"> 時間割を使う</label>
+      <p class="hint">オフにすると、時間割・持ち物・学期など授業まわりを隠すよ。データは消えないから、オンに戻せば元通り</p>
     </details>
 
-    <h3>各時限の時刻</h3>
-    <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
-    <table id="sTimes"></table>
+    <details class="sec set gridOnly" id="setGrid">
+      <summary>授業と時限 <small></small></summary>
+      <div class="row">
+        <label class="inline">時限数 <input id="sPeriods" type="number" min="1" max="10" class="num"></label>
+        <label class="inline"><input type="checkbox" id="sSat"> 土曜を表示</label>
+      </div>
+      <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
+      <table id="sTimes"></table>
+    </details>
 
-    <h3>シラバス検索</h3>
-    <input id="sSyllabus" type="url" inputmode="url" placeholder="シラバス検索ページのURL" aria-label="シラバス検索のURL">
-    <p class="hint">いつもシラバスを検索してるページのURLを入れてね。授業の「開く」を押すと、授業名をコピーしてこのページを開くよ。検索欄に貼り付ければOK</p>
+    <details class="sec set" id="setLook">
+      <summary>見た目 <small></small></summary>
+      <div class="row">
+        <label class="inline">色
+          <select id="sColor" class="narrow" aria-label="テーマの色">
+            <option value="blue">青</option>
+            <option value="green">緑</option>
+            <option value="pink">ピンク</option>
+            <option value="red">赤</option>
+            <option value="purple">紫</option>
+            <option value="yellow">黄</option>
+            <option value="gray">グレー</option>
+          </select>
+        </label>
+        <label class="inline">文字
+          <select id="sFont" class="narrow" aria-label="文字の種類">
+            <option value="system">ふつう</option>
+            <option value="maru">丸ゴシック</option>
+            <option value="mincho">明朝</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">選ぶとすぐ見た目が変わるよ。キャンセルすれば元に戻る。壁紙は「その他」の「見た目」から</p>
 
-    <details id="aiBox">
-      <summary>画像読み取り（AI）の設定</summary>
-      <p class="hint">APIキーを入れると、「その他」に「画像から読み込む」が出るよ</p>
+      <details class="sec" id="iconBox">
+        <summary>アプリアイコンの色</summary>
+        <p class="hint">使いたい色のページを開いて、共有→「ホーム画面に追加」。今あるアイコンは変わらないから、古いほうは消してね</p>
+        <div class="iconLinks">
+          <a href="./" target="_blank" rel="noopener"><img src="apple-touch-icon.png" alt="" loading="lazy">青</a>
+          <a href="green.html" target="_blank" rel="noopener"><img src="icon-green.png" alt="" loading="lazy">緑</a>
+          <a href="pink.html" target="_blank" rel="noopener"><img src="icon-pink.png" alt="" loading="lazy">ピンク</a>
+          <a href="red.html" target="_blank" rel="noopener"><img src="icon-red.png" alt="" loading="lazy">赤</a>
+          <a href="purple.html" target="_blank" rel="noopener"><img src="icon-purple.png" alt="" loading="lazy">紫</a>
+          <a href="yellow.html" target="_blank" rel="noopener"><img src="icon-yellow.png" alt="" loading="lazy">黄</a>
+          <a href="gray.html" target="_blank" rel="noopener"><img src="icon-gray.png" alt="" loading="lazy">グレー</a>
+        </div>
+        <p class="hint">アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
+      </details>
+    </details>
+
+    <details class="sec set" id="setNotify" hidden>
+      <summary>通知 <small></small></summary>
+    </details>
+
+    <details class="sec set" id="setCal">
+      <summary>カレンダー連携 <small></small></summary>
+    </details>
+
+    <details class="sec set" id="aiBox">
+      <summary>AI（画像の読み取り） <small></small></summary>
+      <p class="hint">APIキーを入れると、写真から時間割・シフト表・給与明細を読み取れるよ</p>
       <select id="sProvider" aria-label="使うAI"></select>
       <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
       <p id="sNote" class="hint"></p>
@@ -499,12 +514,20 @@
       <input id="sModel" placeholder="モデルIDを直接入力" aria-label="モデルID" hidden>
     </details>
 
-    <h3>バックアップ</h3>
-    <div class="row">
-      <button id="exportBtn">書き出し</button>
-      <label class="fileBtn">復元<input type="file" id="restoreFile" accept=".json" class="vh"></label>
-    </div>
-    <p class="hint" id="lastExport"></p>
+    <details class="sec set gridOnly" id="setSyl">
+      <summary>シラバス検索 <small></small></summary>
+      <input id="sSyllabus" type="url" inputmode="url" placeholder="シラバス検索ページのURL" aria-label="シラバス検索のURL">
+      <p class="hint">いつもシラバスを検索してるページのURLを入れてね。授業の「開く」を押すと、授業名をコピーしてこのページを開くよ。検索欄に貼り付ければOK</p>
+    </details>
+
+    <details class="sec set" id="setData">
+      <summary>バックアップ <small></small></summary>
+      <div class="row">
+        <button id="exportBtn">書き出し</button>
+        <label class="fileBtn">復元<input type="file" id="restoreFile" accept=".json" class="vh"></label>
+      </div>
+      <p class="hint" id="lastExport"></p>
+    </details>
 
     <div class="row end">
       <button id="sCancel">キャンセル</button>
@@ -514,6 +537,6 @@
 </dialog>
 
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
-<script src="app.js?v=62"></script>
+<script src="app.js?v=68"></script>
 </body>
 </html>

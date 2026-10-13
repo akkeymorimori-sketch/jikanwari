@@ -707,3 +707,159 @@ details.sec > a, #aiBox > a { display: block; }
 .gInv { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(127, 127, 127, .12); text-align: center; }
 .gInv .hint { margin: 4px 0 8px; text-align: left; }
 .gInv [data-gshare] { width: 100%; }
+
+/* ロック */
+#evLockRow { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 14px; }
+#evLockRow input:disabled + * , #evLockRow:has(input:disabled) { opacity: .6; }
+
+/* ===== 壁紙 ===== */
+#wallBg { position: fixed; inset: 0; z-index: -1; background-color: var(--bg); pointer-events: none; }
+#wallBg::after { content: ''; position: absolute; inset: 0; background: var(--bg); opacity: var(--wdim, .3); }
+html:not(.hasWall) #wallBg { display: none; }
+html.hasWall body { background: transparent; }
+
+.wp-photo { background-size: cover; background-position: center; }
+.wp-dots {
+  background-image: radial-gradient(color-mix(in srgb, var(--accent) 40%, transparent) 2.5px, transparent 3px);
+  background-size: 18px 18px;
+}
+.wp-gingham {
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent) 50%, transparent 50%),
+    linear-gradient(color-mix(in srgb, var(--accent) 16%, transparent) 50%, transparent 50%);
+  background-size: 28px 28px;
+}
+.wp-stripe {
+  background-image: repeating-linear-gradient(-45deg,
+    color-mix(in srgb, var(--accent) 16%, transparent) 0 10px, transparent 10px 20px);
+}
+
+/* 壁紙があるときはカードを半透明に */
+html.hasWall .card {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+html.hasWall header, html.hasWall #tabbar {
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+
+/* 壁紙の画面 */
+.wallTiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.wallTile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; font-size: 13px; }
+.wallTile i {
+  display: block; width: 100%; aspect-ratio: 3 / 4; border-radius: 6px;
+  background-color: var(--bg); border: 1px solid var(--line);
+}
+.wallTile.on { border-color: var(--accent-strong); outline: 2px solid var(--accent-strong); }
+#wallPick { text-align: center; }
+.wallDim { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.wallDim input { flex: 1; padding: 0; border: 0; }
+#wallDimV { min-width: 3em; text-align: right; font-weight: normal; }
+
+/* ===== 設定：開いたり閉じたり ===== */
+.set > summary { scroll-margin-top: 60px; }
+.set > summary small { font-weight: normal; color: var(--sub); font-size: 12px; margin-left: 4px; }
+.set > .leadBox, .set > .nBox, .set > .csBox, .set > .icsBox { margin: 0; }
+#setNotify .nBox > h3:first-child { display: none; }
+#setCal .icsBox { padding-top: 10px; border-top: 1px solid var(--line-soft); }
+#iconBox { margin-top: 4px; }
+
+/* ===== 壁紙：カードを透けさせる ===== */
+html.hasWall .card {
+  background: color-mix(in srgb, var(--surface) var(--cardA, 60%), transparent);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  text-shadow: 0 0 4px var(--surface);
+}
+html.hasWall header, html.hasWall #tabbar {
+  background: color-mix(in srgb, var(--surface) min(100%, calc(var(--cardA, 60%) + 20%)), transparent);
+}
+html.hasWall .card :is(input:not([type=checkbox]):not([type=range]), textarea, select) {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+html.hasWall .card .nc { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+html.hasWall .card button:not(.primary):not(.on):not(.flowAbs) {
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+html.hasWall .card .addEv { background: transparent; }
+html.hasWall .card .examLine { background: color-mix(in srgb, #fde4e4 75%, transparent); }
+
+/* 明日の予定の線をテーマの色に */
+#tmrBox { border-top-color: var(--line); }
+
+/* ===== カードと文字の色 ===== */
+html.cardC .card { --surface: var(--cardC); }
+html.cardT .card {
+  --text: var(--cardT);
+  --sub: color-mix(in srgb, var(--cardT) 78%, transparent);
+  --muted: color-mix(in srgb, var(--cardT) 64%, transparent);
+  --line: color-mix(in srgb, var(--cardT) 22%, transparent);
+  --line-soft: color-mix(in srgb, var(--cardT) 12%, transparent);
+  --border: color-mix(in srgb, var(--cardT) 35%, transparent);
+  color: var(--text);
+}
+html.cardT .card ::placeholder { color: var(--muted); }
+html[data-card-scheme="light"] .card { color-scheme: light; }
+html[data-card-scheme="dark"] .card { color-scheme: dark; }
+
+/* 色を選ぶ丸 */
+.wallColors h3 { margin: 10px 0 6px; }
+.swRow { display: flex; flex-wrap: wrap; gap: 8px; }
+.cSw {
+  width: 36px; height: 36px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--c); border: 1px solid var(--line);
+  font-size: 10px; cursor: pointer; position: relative;
+}
+.cSw.txt { font-size: 17px; font-weight: 700; }
+.cSw[data-cc=""], .cSw[data-tc=""] {
+  background: repeating-linear-gradient(45deg, var(--surface) 0 5px, var(--line-soft) 5px 10px);
+  color: var(--sub); font-size: 10px; font-weight: normal;
+}
+.cSw.custom { background: conic-gradient(#f66, #fd5, #6d6, #5cf, #77f, #e6e, #f66); font-size: 15px; }
+.cSw.custom.on { background: var(--c); }
+.cSw.on { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+#wallCHint { color: var(--soon); margin-top: 6px; }
+#wallCHint:empty { display: none; }
+
+/* ===== カードの中のマスや帯も、カードの色に合わせる ===== */
+html.cardC #grid { --surface: var(--cardC); }
+html.cardC :is(.card, #grid) {
+  --bg: color-mix(in srgb, var(--cardC) 90%, var(--cardT));
+  --head: color-mix(in srgb, var(--cardC) 82%, var(--cardT));
+  --accent-soft: color-mix(in srgb, var(--accent-strong) 16%, var(--cardC));
+  --today: color-mix(in srgb, var(--accent-strong) 12%, var(--cardC));
+  --course: color-mix(in srgb, var(--accent-strong) 24%, var(--cardC));
+  --tag-bg: color-mix(in srgb, var(--accent-strong) 16%, var(--cardC));
+}
+html.cardT #grid {
+  --text: var(--cardT);
+  --sub: color-mix(in srgb, var(--cardT) 78%, transparent);
+  --muted: color-mix(in srgb, var(--cardT) 64%, transparent);
+  --line: color-mix(in srgb, var(--cardT) 22%, transparent);
+  --line-soft: color-mix(in srgb, var(--cardT) 12%, transparent);
+  color: var(--text);
+}
+
+/* 明るいカードには濃い色、暗いカードには明るい色の文字 */
+html[data-card-scheme="light"] :is(.card, #grid) {
+  --accent: color-mix(in srgb, var(--accent-strong) 82%, #000);
+  --tag-fg: var(--accent);
+  --danger: #c33; --ok: #2b8a3e; --over: #c92a2a; --soon: #d9480f;
+  --tagn-bg: #fff4e6; --tagn-fg: #c2410c; --item-fg: #8a3b00;
+}
+html[data-card-scheme="dark"] :is(.card, #grid) {
+  --accent: color-mix(in srgb, var(--accent-strong) 65%, #fff);
+  --tag-fg: var(--accent);
+  --danger: #ff6b6b; --ok: #51cf66; --over: #ff6b6b; --soon: #ffa94d;
+  --tagn-bg: #3d2a14; --tagn-fg: #ffc078; --item-fg: #ffc078;
+}
+
+/* ===== 背景の色 ===== */
+html.pageC:not(.hasWall) body { background: var(--pageC); }
+html.pageC #wallBg { background-color: var(--pageC); }
+html.pageC #wallBg::after { background: var(--pageC); }
+.cSw[data-pc=""] {
+  background: repeating-linear-gradient(45deg, var(--surface) 0 5px, var(--line-soft) 5px 10px);
+  color: var(--sub); font-size: 10px;
+}
