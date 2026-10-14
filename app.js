@@ -183,7 +183,7 @@ function normalize(s) {
   s.events = Array.isArray(s.events) ? s.events.filter(e => e && isYmd(e.date)) : [];
   for (const e of s.events) {
     e.id = fixId(e.id);
-    e.kind = e.kind === 'other' ? 'other' : 'job';
+    e.kind = ['job', 'exam', 'other'].includes(e.kind) || /^k-[\w-]{1,40}$/.test(e.kind) ? e.kind : 'job';
     e.title ??= ''; e.start ??= ''; e.end ??= '';
     if (e.src !== 'cal') { delete e.src; delete e.ext; }
     if (typeof e.img !== 'string' || !/^sh-[\w-]+$/.test(e.img)) delete e.img;
@@ -192,7 +192,7 @@ function normalize(s) {
   const hadPresets = Array.isArray(s.evPresets);
   s.evPresets = hadPresets
     ? s.evPresets.filter(p => p && typeof p.title === 'string' && p.title).map(p => ({
-        title: p.title, kind: ['other', 'exam'].includes(p.kind) ? p.kind : 'job', start: p.start || '', end: p.end || ''
+        title: p.title, kind: ['other', 'exam'].includes(p.kind) || /^k-[\w-]{1,40}$/.test(p.kind) ? p.kind : 'job', start: p.start || '', end: p.end || ''
       }))
     : [];
   // 前から入ってる予定があれば、そこから候補を作る（初回だけ）
@@ -202,6 +202,18 @@ function normalize(s) {
         s.evPresets.push({ title: e.title, kind: e.kind, start: e.start, end: e.end });
     }
   }
+
+  // 自分で作った予定の名目
+  s.evKinds = Array.isArray(s.evKinds)
+    ? s.evKinds.filter(k => k && /^k-[\w-]{1,40}$/.test(k.id) && typeof k.name === 'string' && k.name.trim()) : [];
+  for (const k of s.evKinds) {
+    k.name = k.name.trim().slice(0, 10);
+    if (!/^#[0-9a-f]{6}$/i.test(k.color)) k.color = '#8b5cf6';
+  }
+  // 消えた名目の予定は「その他」に
+  const kindIds = new Set(s.evKinds.map(k => k.id));
+  for (const e of s.events) if (e.kind.startsWith('k-') && !kindIds.has(e.kind)) e.kind = 'other';
+  for (const p of s.evPresets) if (p.kind.startsWith('k-') && !kindIds.has(p.kind)) p.kind = 'other';
 
   // バイトの収入（支給日で集計）
   s.incomes = Array.isArray(s.incomes) ? s.incomes.filter(x => x && isYmd(x.date)) : [];
@@ -286,8 +298,25 @@ function normalize(s) {
   s.notify = {
     on: !!nf.on,
     time: /^([01]\d|2[0-3]):[0-5]\d$/.test(nf.time) ? nf.time : '21:00',
-    job: [0, 30, 60, 90, 120].includes(nf.job) ? nf.job : 60
+    job: [0, 30, 60, 90, 120].includes(nf.job) ? nf.job : 60,
+    exam: nf.exam !== false,
+    items: nf.items !== false,
+    tasks: nf.tasks !== false,
+    mTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(nf.mTime) ? nf.mTime : '07:30',
+    habit: nf.habit !== false,
+    fortune: nf.fortune !== false,
+      sign: /^(\d|1[01])$/.test(nf.sign) ? nf.sign : '',
+    anniv: nf.anniv !== false
   };
+  // ○○の日（毎年くり返す）
+  s.annivs = Array.isArray(s.annivs)
+    ? s.annivs.filter(a => a && typeof a.name === 'string' && a.name.trim() && /^\d{2}-\d{2}$/.test(a.md)) : [];
+  for (const a of s.annivs) {
+    a.id = fixId(a.id);
+    a.name = a.name.trim().slice(0, 20);
+    a.pre = [0, 1, 3, 7].includes(a.pre) ? a.pre : 0;
+  }
+
   // カレンダーから取り込むシフト（アプリ版だけ）
   const cs = s.calSync && typeof s.calSync === 'object' ? s.calSync : {};
   s.calSync = {
@@ -4433,10 +4462,11 @@ function notifyPlan() {
         if (!x.done && x.due === k) ds.push(x.title);
       const exs = eventsOn(k).filter(e => e.kind === 'exam' && grIsMine(e))
         .map(e => (e.start ? e.start + ' ' : '') + (e.title || '試験'));
-      if (exs.length) lines.push('試験：' + exs.join('、'));
-      if (its.length) lines.push('持ち物：' + its.join('、'));
-      if (ds.length) lines.push('締切：' + ds.join('、'));
-      if (lines.length) out.push({ at, title: exs.length ? `明日 ${md(next)} は試験！` : `明日 ${md(next)} の準備`, body: lines.join('\n') });
+      const showEx = n.exam && exs.length;
+      if (showEx) lines.push('試験：' + exs.join('、'));
+      if (n.items && its.length) lines.push('持ち物：' + its.join('、'));
+      if (n.tasks && ds.length) lines.push('締切：' + ds.join('、'));
+      if (lines.length) out.push({ at, title: showEx ? `明日 ${md(next)} は試験！` : `明日 ${md(next)} の準備`, body: lines.join('\n') });
     }
     // バイトの前
     if (n.job > 0) for (const e of eventsOn(ymd(day))) {
@@ -4447,7 +4477,34 @@ function notifyPlan() {
       if (at2 > now) out.push({ at: at2, title: `${e.title || 'バイト'} ${e.start}から`, body: `あと${n.job}分で始まるよ` });
     }
   }
-  return out.sort((a, b) => a.at - b.at).slice(0, NOTIFY_MAX);
+
+  // 朝：今日の運勢・○○の日・日課（1通にまとめる）
+  const ftOn = n.fortune && n.sign !== '';
+  const anOn = n.anniv && state.annivs.length > 0;
+  if (n.habit || ftOn || anOn) {
+    const [mh, mi] = n.mTime.split(':').map(Number);
+    const hl = n.habit ? hbLoad().list : [];
+    for (let i = 0; i <= NOTIFY_DAYS; i++) {
+      const day = addDays(today, i);
+      const at = new Date(day); at.setHours(mh, mi, 0, 0);
+      if (at <= now) continue;
+      const k = ymd(day), lines = [], hits = [];
+      if (anOn) for (const a of state.annivs) {
+        if (annMd(a, day) === k.slice(5)) hits.push(a.name);
+        else if (a.pre) {
+          const p = addDays(day, a.pre);
+          if (annMd(a, p) === ymd(p).slice(5)) lines.push(`あと${a.pre}日で${a.name}`);
+        }
+      }
+      if (hits.length) lines.unshift('今日は' + hits.join('・') + '！');
+      if (ftOn) lines.push(ftText(n.sign, k));
+      const hs = hl.filter(h => hbOn(h, day) && !h.done.includes(k)).map(h => h.name);
+      if (hs.length) lines.push('日課：' + hs.join('、'));
+      if (lines.length) out.push({ at, title: `おはよう ${md(day)}`, body: lines.join('\n') });
+    }
+  }
+  out.sort((a, b) => a.at - b.at);
+  return out.slice(0, NOTIFY_MAX);
 }
 
 // 予約を全部消して入れ直す（保存が続いても1回で済むように少し待つ）
@@ -4484,19 +4541,44 @@ if (LN) {
   nBox.className = 'nBox';
   nBox.innerHTML = '<h3>通知</h3>' +
     '<label class="row nRow"><input type="checkbox" id="nOn"> 通知を使う</label>' +
-    '<div class="row nRow">前の日の <input type="time" id="nTime"> に、明日の持ち物と締切</div>' +
+    '<div class="row nRow">前の日の <input type="time" id="nTime"> に知らせる</div>' +
+    '<div class="row nRow nKinds">' +
+    '<label><input type="checkbox" id="nExam"> 試験</label>' +
+    '<label><input type="checkbox" id="nItems"> 持ち物</label>' +
+    '<label><input type="checkbox" id="nTasks"> 課題の締切</label></div>' +
+    '<div class="row nRow">朝の <input type="time" id="nMTime"> に知らせる</div>' +
+    '<div class="row nRow nKinds">' +
+    '<label><input type="checkbox" id="nHabit"> 今日の日課</label>' +
+    '<label><input type="checkbox" id="nFortune"> 今日の運勢</label></div>' +
+    '<div class="row nRow">星座 <select id="nSign"></select></div>' +
+    '<p class="hint">運勢はお遊びの占いだよ</p>' +
+    '<div class="row nRow nKinds"><label><input type="checkbox" id="nAnniv"> ○○の日</label></div>' +
+    '<ul class="annList" id="annList"></ul>' +
+    '<div class="row nRow annAdd">' +
+    '<input id="annName" maxlength="20" placeholder="例：母の誕生日">' +
+    '<input type="date" id="annDate">' +
+    '<select id="annPre"><option value="0">当日だけ</option><option value="1">前日も</option>' +
+    '<option value="3">3日前も</option><option value="7">1週間前も</option></select>' +
+    '<button type="button" id="annAddBtn">追加</button></div>' +
+    '<p class="hint">年は関係なく、毎年その日の朝に知らせるよ</p>' +
     '<div class="row nRow">バイトの <select id="nJob">' +
     '<option value="0">通知しない</option><option value="30">30分前</option>' +
     '<option value="60">1時間前</option><option value="90">1時間半前</option>' +
     '<option value="120">2時間前</option></select></div>' +
     '<button type="button" id="nTest">テスト通知（5秒後）</button>' +
     '<p class="hint">ここは変えるとすぐ保存されるよ。予約するのは今の学期の2週間分で、アプリを開くたびに入れ直す</p>';
-  $('#aiBox').before(nBox);
 
   const syncNotifyUI = () => {
     $('#nOn').checked = state.notify.on;
     $('#nTime').value = state.notify.time;
     $('#nJob').value = String(state.notify.job);
+    $('#nExam').checked = state.notify.exam;
+    $('#nItems').checked = state.notify.items;
+    $('#nTasks').checked = state.notify.tasks;
+    $('#nMTime').value = state.notify.mTime;
+    $('#nHabit').checked = state.notify.habit;
+    $('#nFortune').checked = state.notify.fortune;
+    $('#nAnniv').checked = state.notify.anniv;
   };
   setTimeout(syncNotifyUI, 0);
 
@@ -4522,6 +4604,45 @@ if (LN) {
       schedule: { at: new Date(Date.now() + 5000), allowWhileIdle: true }
     }] });
     toast('5秒後に届くよ。アプリを閉じて待ってみて');
+  };
+
+// 通知の種類（変えたらすぐ予約し直す）
+for (const [id, key] of [['nExam', 'exam'], ['nItems', 'items'], ['nTasks', 'tasks']]) {
+  $('#' + id).onchange = e => { state.notify[key] = e.target.checked; save(); };
+}
+
+$('#nHabit').onchange = e => { state.notify.habit = e.target.checked; save(); };
+$('#nMTime').onchange = e => {
+  if (!/^\d\d:\d\d$/.test(e.target.value)) return syncNotifyUI();
+  state.notify.mTime = e.target.value;
+  save();
+};
+
+  // ○○の日
+  const renderAnn = () => {
+    $('#annList').innerHTML = state.annivs.slice().sort((a, b) => a.md.localeCompare(b.md)).map(a =>
+      `<li><span>${+a.md.slice(0, 2)}/${+a.md.slice(3)} ${esc(a.name)}` +
+      (a.pre ? ` <small>${a.pre}日前にも</small>` : '') + '</span>' +
+      `<button type="button" class="x" data-anndel="${a.id}" aria-label="削除">×</button></li>`
+    ).join('') || '<li class="muted">まだないよ</li>';
+  };
+  renderAnn();
+  $('#nAnniv').onchange = e => { state.notify.anniv = e.target.checked; save(); };
+  $('#annAddBtn').onclick = () => {
+    const name = $('#annName').value.trim(), d = $('#annDate').value;
+    if (!name) return $('#annName').focus();
+    if (!isYmd(d)) return alert('日付を選んでね');
+    state.annivs.push({ id: uid(), name: name.slice(0, 20), md: d.slice(5), pre: +$('#annPre').value });
+    $('#annName').value = '';
+    $('#annDate').value = '';
+    save(); renderAnn();
+  };
+  $('#annList').onclick = e => {
+    const id = e.target.closest('[data-anndel]')?.dataset.anndel;
+    const a = state.annivs.find(x => x.id === id);
+    if (!a || !confirm(`「${a.name}」を消す？`)) return;
+    state.annivs = state.annivs.filter(x => x !== a);
+    save(); renderAnn();
   };
 
   // 日付が変わっても予約がずれないように、開くたびに入れ直す
@@ -5229,8 +5350,18 @@ $('#gList').addEventListener('click', async e => {
     try {
       const { db, uid, F } = await fbInit();
       const ref = F.doc(db, 'groups', g.id);
-      if ((g.members || []).length <= 1 && g.owner === uid) await F.deleteDoc(ref);
-      else await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
+      if (g.owner === uid) {
+        // オーナーが抜けるときは、グループごと消す（予定を先に消さないと残っちゃう）
+        if ((g.members || []).length > 1 &&
+            !confirm(`作った人が抜けると「${g.name}」は消えて、みんなの共有予定もなくなるよ。いい？`)) return;
+        const evs = await F.getDocs(F.collection(db, 'groups', g.id, 'events'));
+        for (let i = 0; i < evs.docs.length; i += 400) {
+          const b = F.writeBatch(db);
+          for (const d of evs.docs.slice(i, i + 400)) b.delete(d.ref);
+          await b.commit();
+        }
+        await F.deleteDoc(ref);
+      } else await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
       await refreshGroups(`「${g.name}」から抜けたよ`);
     } catch (err) { gSay(fbErr(err)); }
   }
@@ -5254,7 +5385,7 @@ $('#gJoin').onclick = async () => {
     if (!inv.exists()) return gSay(notFound);
     const gid = inv.data().gid;
     if (grGroups.some(g => g.id === gid)) return gSay('もう入ってるグループだよ');
-    await F.updateDoc(F.doc(db, 'groups', gid), { members: F.arrayUnion(uid), [`names.${uid}`]: me });
+    await F.updateDoc(F.doc(db, 'groups', gid), { members: F.arrayUnion(uid), [`names.${uid}`]: me, join: code });
     $('#gJoinCode').value = '';
     await loadGroups();
     renderGroups();
@@ -6178,3 +6309,707 @@ wallDlg.querySelector('.dlgHead h2').textContent = '🖼 壁紙・色';
 if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>🖼 壁紙・色</b><small>背景の写真や柄、背景・カード・文字の色</small>';
 
 applyPageColor();
+
+/* ===== ポイント ===== */
+const PT_DAY = 1;
+const PT_BONUS = [[7, 5], [30, 30]]; // [何日連続ごと, もらえるポイント]
+// 交換できるもの（あとで足す）例：{ id: 'icon-mint', name: 'ミントのアイコン', desc: '…', cost: 50 }
+const SHOP = [];
+
+function ptState() {
+  const p = state.points && typeof state.points === 'object' ? state.points : {};
+  const n = v => Number.isFinite(+v) && +v >= 0 ? Math.floor(+v) : 0;
+  p.pt = n(p.pt); p.days = n(p.days); p.streak = n(p.streak); p.best = n(p.best);
+  p.last = isYmd(p.last) ? p.last : '';
+  p.owned = Array.isArray(p.owned) ? p.owned.filter(x => typeof x === 'string') : [];
+  p.log = Array.isArray(p.log) ? p.log.filter(x => x && isYmd(x.date)).slice(0, 30) : [];
+  return state.points = p;
+}
+const ptOwned = id => ptState().owned.includes(id);
+
+// その日はじめて開いたときだけポイントを足す
+function ptCheckIn() {
+  const p = ptState(), today = todayStr();
+  if (p.last && p.last >= today) return null; // 今日はもらった（時計が戻ったときも何もしない）
+  const gap = p.last ? dayDiff(parseYmd(today), parseYmd(p.last)) : 0;
+  p.streak = gap === 1 ? p.streak + 1 : 1;
+  p.days += 1;
+  p.best = Math.max(p.best, p.streak);
+  p.last = today;
+  let get = PT_DAY;
+  const bonus = [];
+  for (const [k, v] of PT_BONUS) if (p.streak % k === 0) { get += v; bonus.push(`${k}日連続 +${v}p`); }
+  p.pt += get;
+  p.log.unshift({ date: today, get, streak: p.streak, bonus: bonus.join('・') });
+  p.log = p.log.slice(0, 30);
+  save();
+  return { get, bonus, streak: p.streak };
+}
+
+// 開いたときのお知らせ
+function ptPop(r) {
+  const el = document.createElement('div');
+  el.className = 'ptPop';
+  el.innerHTML = `<b>+${r.get}p</b> 連続${r.streak}日目` +
+    (r.bonus.length ? `<small>🎉 ${esc(r.bonus.join('・'))}</small>` : '');
+  el.onclick = () => { el.remove(); openPoints(); };
+  document.body.append(el);
+  setTimeout(() => el.classList.add('out'), 3200);
+  setTimeout(() => el.remove(), 3700);
+}
+
+const ptDlg = document.createElement('dialog');
+ptDlg.id = 'ptDlg';
+ptDlg.innerHTML =
+  '<div class="dlg">' +
+  '<div class="dlgHead"><h2>🎁 ポイント</h2><button type="button" class="x big" data-ptclose aria-label="閉じる">×</button></div>' +
+  '<div id="ptBody"></div></div>';
+document.body.append(ptDlg);
+
+function renderPoints() {
+  const p = ptState();
+  const next = PT_BONUS.map(([k, v]) => {
+    const left = k - (p.streak % k);
+    return { k, v, left, rate: Math.round((k - left) / k * 100) };
+  });
+  $('#ptBody').innerHTML =
+    `<p class="ptNow"><b>${p.pt}</b>p</p>` +
+    '<div class="ptStats">' +
+    `<div><b>${p.streak}</b>日<small>連続ログイン</small></div>` +
+    `<div><b>${p.days}</b>日<small>総ログイン</small></div>` +
+    `<div><b>${p.best}</b>日<small>最長連続</small></div></div>` +
+
+    '<h3>次のボーナス</h3>' + next.map(n =>
+      `<div class="ptNext"><div class="row split"><span>${n.k}日連続 +${n.v}p</span><small>あと${n.left}日</small></div>` +
+      `<div class="bar"><i style="width:${n.rate}%"></i></div></div>`).join('') +
+
+    '<h3>交換所</h3>' + (SHOP.length
+      ? '<ul class="ptShop">' + SHOP.map(s => {
+          const got = p.owned.includes(s.id);
+          return `<li><div><b>${esc(s.name)}</b>${s.desc ? `<small>${esc(s.desc)}</small>` : ''}</div>` +
+            (got ? '<span class="ptGot">交換済み</span>'
+              : `<button type="button" data-buy="${s.id}"${p.pt < s.cost ? ' disabled' : ''}>${s.cost}p</button>`) + '</li>';
+        }).join('') + '</ul>'
+      : '<p class="muted">交換できるものは準備中。ポイントは貯めておけるよ</p>') +
+
+    '<h3>最近もらったポイント</h3><ul class="ptLog">' + (p.log.slice(0, 10).map(x =>
+      `<li><span>${md(parseYmd(x.date))} 連続${x.streak}日目${x.bonus ? ` <small>🎉 ${esc(x.bonus)}</small>` : ''}</span><b>+${x.get}p</b></li>`
+    ).join('') || '<li class="muted">まだないよ</li>') + '</ul>' +
+
+    '<p class="hint">毎日1回アプリを開くと1p。7日連続ごとに+5p、30日連続ごとに+30p。1日あくと連続は1日目から数え直しになるけど、貯めたポイントは減らないよ</p>';
+}
+
+function openPoints() {
+  renderPoints();
+  ptDlg.showModal();
+}
+
+ptDlg.addEventListener('click', e => {
+  if (e.target.closest('[data-ptclose]')) return ptDlg.close();
+  const id = e.target.closest('[data-buy]')?.dataset.buy;
+  const s = SHOP.find(x => x.id === id);
+  if (!s) return;
+  const p = ptState();
+  if (p.owned.includes(s.id)) return;
+  if (p.pt < s.cost) return alert(`あと${s.cost - p.pt}p 足りないよ`);
+  if (!confirm(`${s.cost}pで「${s.name}」と交換する？`)) return;
+  p.pt -= s.cost;
+  p.owned.push(s.id);
+  save();
+  s.onGet?.();
+  renderPoints(); renderPtBtn();
+});
+
+// その他タブのいちばん上
+{
+  const card = document.createElement('div');
+  card.className = 'card menu';
+  card.innerHTML = '<h2>ポイント</h2><button type="button" id="ptBtn"></button>';
+  $('#view-more').prepend(card);
+  $('#ptBtn').onclick = openPoints;
+}
+function renderPtBtn() {
+  const p = ptState();
+  $('#ptBtn').innerHTML = `<b>🎁 ${p.pt}p</b><small>連続${p.streak}日・総ログイン${p.days}日</small>`;
+}
+
+function ptRun() {
+  const r = ptCheckIn();
+  renderPtBtn();
+  if (ptDlg.open) renderPoints();
+  if (r) ptPop(r);
+}
+// 開いたまま日付をまたいだときも、戻ってきたら数える
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ptRun(); });
+
+if (typeof FEATURES !== 'undefined' && !FEATURES.some(f => f.id === 'points')) FEATURES.push({
+  id: 'points', name: 'ポイント', where: 'その他 → ポイント',
+  desc: '毎日開くとポイントが貯まる。連続ログイン・総ログインの日数も見られる',
+  kw: 'ポイント ログイン ボーナス 連続 交換 ごほうび', go: () => openPoints()
+});
+
+ptRun();
+
+/* ===== 日課 ===== */
+const HB_KEY = 'gakulog-habit-v1';
+const HB_WD = ['日', '月', '火', '水', '木', '金', '土'];
+function hbLoad() {
+  try { return JSON.parse(localStorage.getItem(HB_KEY)) || { list: [] }; }
+  catch { return { list: [] }; }
+}
+let hb = hbLoad();
+const hbSave = () => localStorage.setItem(HB_KEY, JSON.stringify(hb));
+const hbOn = (h, d) => !h.days || h.days.includes(d.getDay());
+function hbStreak(h) {
+  const d = new Date();
+  let n = 0;
+  if (!h.done.includes(ymd(d))) d.setDate(d.getDate() - 1); // 今日まだなら昨日から数える
+  for (let i = 0; i < 400; i++, d.setDate(d.getDate() - 1)) {
+    if (!hbOn(h, d)) continue;
+    if (h.done.includes(ymd(d))) n++; else break;
+  }
+  return n;
+}
+
+const hbCard = document.createElement('section');
+hbCard.className = 'card';
+hbCard.id = 'habitCard';
+const hbAnchor = $('#diaryInput')?.closest('.card, section');
+if (hbAnchor) hbAnchor.before(hbCard); else $('#view-today').append(hbCard);
+let hbEdit = false;
+
+function renderHabits() {
+  const now = new Date(), k = ymd(now);
+  const today = hb.list.filter(h => hbOn(h, now));
+  const left = today.filter(h => !h.done.includes(k)).length;
+  let html = '<div class="hbHead"><h2>日課 <small>' +
+    (today.length ? (left ? `あと${left}つ` : 'ぜんぶできた') : '') + '</small></h2>' +
+    `<button type="button" class="hbEditBtn">${hbEdit ? '完了' : '編集'}</button></div>`;
+  if (hbEdit) {
+    html += '<ul class="hbList">' + hb.list.map(h =>
+      `<li><span>${esc(h.name)} <small>${h.days ? h.days.map(i => HB_WD[i]).join('') : '毎日'}</small></span>` +
+      `<button type="button" data-hbup="${h.id}" aria-label="上へ">↑</button>` +
+      `<button type="button" class="x" data-hbdel="${h.id}" aria-label="削除">×</button></li>`).join('') + '</ul>' +
+      '<div class="hbAdd"><input id="hbName" maxlength="30" placeholder="例：英単語10個">' +
+      '<div class="hbDays">' + HB_WD.map((w, i) =>
+        `<label><input type="checkbox" value="${i}" checked>${w}</label>`).join('') + '</div>' +
+      '<button type="button" class="primary" id="hbAddBtn">追加</button></div>';
+  } else if (!hb.list.length) {
+    html += '<p class="muted">「編集」から日課を追加できるよ</p>';
+  } else if (!today.length) {
+    html += '<p class="muted">今日の日課はお休み</p>';
+  } else {
+    html += '<ul class="hbList">' + today.map(h => {
+      const on = h.done.includes(k), s = hbStreak(h);
+      return `<li class="${on ? 'on' : ''}" data-hb="${h.id}"><span class="hbChk">${on ? '✓' : ''}</span>` +
+        `<span class="hbName">${esc(h.name)}</span>` +
+        (s >= 2 ? `<small class="hbStreak">${s}日連続</small>` : '') + '</li>';
+    }).join('') + '</ul>';
+  }
+  hbCard.innerHTML = html;
+}
+
+hbCard.addEventListener('click', e => {
+  const t = e.target;
+  if (t.closest('.hbEditBtn')) { hbEdit = !hbEdit; return renderHabits(); }
+  const li = t.closest('[data-hb]');
+  if (li) {
+    const h = hb.list.find(x => x.id === li.dataset.hb);
+    if (!h) return;
+    const k = todayStr(), i = h.done.indexOf(k);
+    if (i >= 0) h.done.splice(i, 1);
+    else {
+      h.done.push(k);
+      if (h.done.length > 400) h.done = h.done.slice(-400);
+    }
+    hbSave();
+    return renderHabits();
+  }
+  const del = t.closest('[data-hbdel]');
+  if (del) {
+    const h = hb.list.find(x => x.id === del.dataset.hbdel);
+    if (h && confirm(`「${h.name}」を消す？記録も消えるよ`)) {
+      hb.list = hb.list.filter(x => x !== h);
+      hbSave();
+      renderHabits();
+    }
+    return;
+  }
+  const up = t.closest('[data-hbup]');
+  if (up) {
+    const i = hb.list.findIndex(x => x.id === up.dataset.hbup);
+    if (i > 0) {
+      [hb.list[i - 1], hb.list[i]] = [hb.list[i], hb.list[i - 1]];
+      hbSave();
+      renderHabits();
+    }
+    return;
+  }
+  if (t.id === 'hbAddBtn') {
+    const name = $('#hbName').value.trim();
+    if (!name) return $('#hbName').focus();
+    const days = [...hbCard.querySelectorAll('.hbDays input:checked')].map(c => +c.value);
+    if (!days.length) return alert('曜日を1つ以上選んでね');
+    hb.list.push({ id: Date.now().toString(36), name, days: days.length === 7 ? null : days, done: [] });
+    hbSave();
+    renderHabits();
+    $('#hbName').focus();
+  }
+});
+hbCard.addEventListener('keydown', e => {
+  if (e.target.id === 'hbName' && e.key === 'Enter' && !e.isComposing) $('#hbAddBtn').click();
+});
+
+let hbDay = todayStr();
+function hbTick() {
+  if (todayStr() === hbDay) return;
+  hbDay = todayStr();
+  renderHabits();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) hbTick(); });
+setInterval(hbTick, 60000);
+renderHabits();
+
+// 共有した予定：🔒のチェックはその場で保存する
+$('#evLock')?.addEventListener('change', e => {
+  const ev = evEditId ? findAnyEv(evEditId) : null;
+  if (!ev?.gid || !grIsMine(ev)) return; // 新しく追加するときは「追加」で保存
+  const on = e.target.checked;
+  grPatch(ev, { lock: on })
+    .then(() => toast(on ? '🔒 ロックしたよ' : 'ロックを外したよ'))
+    .catch(err => { e.target.checked = !on; grFail(err); });
+});
+
+/* ===== 今日の運勢（お遊び） ===== */
+const ZODIAC = ['おひつじ座', 'おうし座', 'ふたご座', 'かに座', 'しし座', 'おとめ座',
+  'てんびん座', 'さそり座', 'いて座', 'やぎ座', 'みずがめ座', 'うお座'];
+const ZODIAC_DATE = ['3/21〜4/19', '4/20〜5/20', '5/21〜6/21', '6/22〜7/22', '7/23〜8/22', '8/23〜9/22',
+  '9/23〜10/23', '10/24〜11/22', '11/23〜12/21', '12/22〜1/19', '1/20〜2/18', '2/19〜3/20'];
+const FT_GOOD = [
+  '気になってた課題、今日なら一気に進むかも',
+  '思い切って質問すると、いい答えが返ってくる日',
+  '新しいお店や道を試すと当たりを引けそう',
+  '集中力が高め。むずかしい授業ほど得るものが多い',
+  '人に親切にすると、あとでちゃんと返ってくる',
+  'ひらめきが冴える日。メモを手元に置いておこう',
+  '予定がサクサク進んで、自由な時間ができそう',
+  '久しぶりの人に連絡すると、うれしい話が聞けるかも',
+  'ちょっと背伸びしたことに挑戦するとうまくいく',
+  '朝のうちに一つ片付けると、一日ずっと調子がいい'
+];
+const FT_MID = [
+  'いつものペースがいちばん。無理に急がなくて大丈夫',
+  '持ち物をもう一回確認しておくと安心',
+  '小さな「ありがとう」が、いい空気を作ってくれる',
+  '迷ったら、先に手を動かしたほうが早い',
+  '休み時間にちゃんと休むと、午後がラクになる',
+  '机の上を少し片付けると、頭もスッキリする',
+  '締め切りが近いものから順番にやるとうまく回る',
+  '話を聞く側に回ると、いいヒントがもらえそう',
+  '水分をこまめにとると調子が上がる',
+  '今日やらなくていいことは、明日に回してOK'
+];
+const FT_LOW = [
+  '今日はのんびりモード。早めに寝ると明日がいい日に',
+  'うっかりに注意。時間割と持ち物を一度だけ見直そう',
+  'うまくいかなくても気にしない。明日は運が上向き',
+  'ひとりの時間をゆっくり楽しむと回復できる',
+  '好きなものを食べて、気分を上げていこう',
+  'あわてると空回りしがち。深呼吸してから動こう',
+  '小さなことでいいから一つ終わらせると、気持ちが軽くなる',
+  'いつもより10分早く家を出ると安心',
+  '今日は守りの日。新しいことは週末に回してもいい',
+  '誰かに頼ると、思ったよりすんなり助けてもらえる'
+];
+const FT_ITEM = ['付箋', 'イヤホン', '青いペン', 'ハンカチ', 'あめ', '折りたたみ傘', 'モバイルバッテリー',
+  'マスキングテープ', '水筒', 'メモ帳', '消しゴム', 'チョコレート', '腕時計', 'リップクリーム',
+  'ルーズリーフ', '缶コーヒー', 'お気に入りの靴下', 'エコバッグ', '定期入れ', 'ヘアゴム'];
+
+// 日付の文字列から、毎回同じ乱数を作る
+function ftRand(seed) {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  return () => {
+    h = Math.imul(h ^ h >>> 16, 2246822507);
+    h = Math.imul(h ^ h >>> 13, 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+}
+// その日の順位（a[0] が1位の星座）
+function ftRank(k) {
+  const r = ftRand('rank-' + k), a = [...Array(12).keys()];
+  for (let i = 11; i > 0; i--) {
+    const j = Math.floor(r() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function ftText(sign, k) {
+  const s = +sign, rank = ftRank(k).indexOf(s) + 1;
+  const r = ftRand(k + '-' + s);
+  const pick = a => a[Math.floor(r() * a.length)];
+  const msg = pick(rank <= 4 ? FT_GOOD : rank <= 8 ? FT_MID : FT_LOW);
+  return `${ZODIAC[s]} ${rank}位：${msg}／ラッキーアイテム：${pick(FT_ITEM)}`;
+}
+
+// 設定画面
+if ($('#nSign')) {
+  $('#nSign').innerHTML = '<option value="">選んでね</option>' +
+    ZODIAC.map((z, i) => `<option value="${i}">${z}（${ZODIAC_DATE[i]}）</option>`).join('');
+  $('#nSign').value = state.notify.sign;
+  $('#nSign').onchange = e => {
+    state.notify.sign = e.target.value;
+    save();
+    if (e.target.value !== '') toast(ftText(e.target.value, todayStr()));
+  };
+  $('#nFortune').onchange = e => { state.notify.fortune = e.target.checked; save(); };
+}
+
+/* ===== 欠席の上限をまとめて設定 ===== */
+{
+  const box = document.createElement('div');
+  box.className = 'absBulk';
+  box.innerHTML = '<h3>欠席の上限をまとめて設定</h3>' +
+    '<div class="row">' +
+    '<span id="abNBox">全 <input type="number" id="abN" min="1" max="40" value="15"> 回のうち</span> ' +
+    '<select id="abR"><option value="3">1/3</option><option value="4">1/4</option>' +
+    '<option value="5">1/5</option><option value="0">回数で決める</option></select> ' +
+    '<span id="abCBox" hidden><input type="number" id="abC" min="0" max="40" value="5"> 回まで</span></div>' +
+    '<p class="hint" id="abInfo"></p>' +
+    '<label class="row"><input type="checkbox" id="abOver"> 設定済みの授業も上書きする</label>' +
+    '<button type="button" id="abRun">今の学期の授業に反映</button>';
+  ($('#setGrid') || $('#settingsDlg')).append(box);
+
+  const abMax = () => {
+    const r = +$('#abR').value;
+    return r ? Math.floor(+$('#abN').value / r) : Math.max(0, Math.floor(+$('#abC').value) || 0);
+  };
+  const abSync = () => {
+    const r = +$('#abR').value;
+    $('#abNBox').hidden = !r;
+    $('#abCBox').hidden = !!r;
+    $('#abInfo').textContent = `→ ${abMax()}回まで休める設定にするよ。「以上で不可」か「超えたら不可」かはシラバスで確かめてね`;
+  };
+  box.addEventListener('input', abSync);
+  abSync();
+
+  $('#abRun').onclick = () => {
+    const max = abMax(), over = $('#abOver').checked;
+    const list = courses().filter(c => over || c.maxAbsence === '');
+    if (!list.length) return alert('反映する授業がないよ（全部設定済み）');
+    if (!confirm(`${list.length}個の授業を「${max}回まで」にする？`)) return;
+    withUndo(`${list.length}個の授業に反映したよ`, () => { for (const c of list) c.maxAbsence = max; });
+  };
+}
+
+/* ===== APIキーをかんたんに貼る ===== */
+{
+  const KEY_FMT = [
+    ['claude', /^sk-ant-[\w-]{20,}$/],
+    ['openrouter', /^sk-or-[\w-]{20,}$/],
+    ['gemini', /^AIza[\w-]{30,}$/]
+  ];
+  const keyKind = s => KEY_FMT.find(([, re]) => re.test(s))?.[0] || '';
+  $('#sKey').insertAdjacentHTML('afterend', '<button type="button" id="sKeyPaste">📋 貼り付け</button>');
+
+  // 余計な空白・改行は消す
+  $('#sKey').addEventListener('input', e => {
+    const v = e.target.value.replace(/\s+/g, '');
+    if (v !== e.target.value) e.target.value = v;
+  });
+
+  $('#sKeyPaste').onclick = async () => {
+    let s = '';
+    try { s = (await navigator.clipboard.readText()).replace(/\s+/g, ''); }
+    catch { return alert('クリップボードを読めなかった。キーの欄を長押しして貼り付けてね'); }
+    const p = keyKind(s);
+    if (!p) return alert('コピーしてる中身がAPIキーの形じゃないみたい。もう一回キーをコピーしてみて');
+    if (p !== $('#sProvider').value) {
+      if (!confirm(`${PROVIDERS[p].label} のキーみたい。そっちに切り替えて入れる？`)) return;
+      stashProviderFields();
+      fillProviderFields(p);
+    }
+    $('#sKey').value = s;
+    toast('キーを入れたよ。「保存」を押してね');
+  };
+}
+
+/* ===== 日記を月ごとに見る ===== */
+{
+  const dyDlg = document.createElement('dialog');
+  dyDlg.id = 'diaryDlg';
+  dyDlg.innerHTML =
+    '<div class="dyHead"><button type="button" data-dym="-1" aria-label="前の月">‹</button>' +
+    '<b id="dyTitle"></b><button type="button" data-dym="1" aria-label="次の月">›</button></div>' +
+    '<div class="dyWrap"><table class="dyTbl" id="dyTbl"></table></div>' +
+    '<button type="button" id="dyClose">閉じる</button>';
+  document.body.append(dyDlg);
+  $('#diaryInput').insertAdjacentHTML('afterend',
+    '<button type="button" class="more" id="diaryListBtn">📖 月ごとに見る</button>');
+
+  let dyM = 1; // 1〜12月
+  const renderDiaryList = () => {
+    const mm = pad(dyM), thisY = new Date().getFullYear();
+    const ys = [...new Set(Object.keys(state.diary).map(k => +k.slice(0, 4)).concat(thisY))]
+      .sort((a, b) => b - a).slice(0, 5);
+    $('#dyTitle').textContent = `${dyM}月`;
+    let h = '<tr><th></th>' + ys.map(y => `<th>${y}</th>`).join('') + '</tr>', rows = 0;
+    const last = new Date(2024, dyM, 0).getDate(); // うるう年で数えて 2/29 も出す
+    for (let d = 1; d <= last; d++) {
+      const ks = ys.map(y => `${y}-${mm}-${pad(d)}`);
+      if (!ks.some(k => state.diary[k])) continue;
+      rows++;
+      h += `<tr><th>${d}日</th>` + ks.map(k =>
+        `<td${state.diary[k] ? ` data-dyk="${k}"` : ''}>${esc(state.diary[k] || '')}</td>`).join('') + '</tr>';
+    }
+    $('#dyTbl').innerHTML = rows ? h : '<tr><td class="muted">この月の日記はまだないよ</td></tr>';
+  };
+
+  $('#diaryListBtn').onclick = () => {
+    dyM = new Date().getMonth() + 1;
+    renderDiaryList();
+    dyDlg.showModal();
+  };
+  dyDlg.addEventListener('click', e => {
+    if (e.target.id === 'dyClose') return dyDlg.close();
+    const m = e.target.closest('[data-dym]');
+    if (m) { dyM = (dyM + 11 + +m.dataset.dym) % 12 + 1; return renderDiaryList(); }
+    const c = e.target.closest('[data-dyk]');
+    if (!c) return;
+    const k = c.dataset.dyk;
+    const v = prompt(`${k.slice(0, 4)}年${md(parseYmd(k))}の一言日記`, state.diary[k] || '');
+    if (v == null) return;
+    if (v.trim()) state.diary[k] = v.trim(); else delete state.diary[k];
+    save(); renderDiaryList(); renderNotes();
+    if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
+  });
+}
+
+/* ===== 予定の名目を自分で作る ===== */
+const KIND_COLORS = ['#f97316', '#10b981', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#eab308', '#64748b'];
+const kindStyle = document.createElement('style');
+document.head.append(kindStyle);
+
+// 名前・色・選ぶ欄を今の名目に合わせる
+function applyKinds() {
+  for (const k of Object.keys(EV_LABEL)) if (k.startsWith('k-')) delete EV_LABEL[k];
+  for (const k of state.evKinds) EV_LABEL[k.id] = k.name;
+  kindStyle.textContent = state.evKinds.map(k =>
+    `.ev.${k.id}{background:${k.color};color:#fff}` +
+    `.flow li.f-${k.id} .ft{color:${k.color}}`).join('');
+  const sel = $('#evKind'), v = sel.value;
+  sel.querySelectorAll('option[value^="k-"], option[value^="__"]').forEach(o => o.remove());
+  for (const k of state.evKinds) sel.add(new Option(k.name, k.id));
+  sel.add(new Option('＋ 新しい名目を作る', '__newkind'));
+  if (state.evKinds.length) sel.add(new Option('⚙ 名目の整理', '__editkind'));
+  sel.value = [...sel.options].some(o => o.value === v) ? v : 'job';
+}
+
+let kindPrev = 'job';
+$('#evKind').addEventListener('focus', e => { kindPrev = e.target.value; });
+$('#evKind').addEventListener('change', e => {
+  const v = e.target.value;
+  if (!v.startsWith('__')) { kindPrev = v; return; }
+  e.target.value = kindPrev;
+  if (v === '__editkind') return openKindDlg();
+  const name = prompt('新しい名目の名前（例：サークル、通院）', '')?.trim();
+  if (!name) return;
+  if (Object.values(EV_LABEL).includes(name)) return alert('同じ名前の名目がもうあるよ');
+  const k = { id: 'k-' + uid(), name: name.slice(0, 10), color: KIND_COLORS[state.evKinds.length % KIND_COLORS.length] };
+  state.evKinds.push(k);
+  save(); applyKinds();
+  e.target.value = kindPrev = k.id;
+  toast(`「${k.name}」を作ったよ`);
+});
+
+// 名目の整理（名前・色を変える、消す）
+const kindDlg = document.createElement('dialog');
+kindDlg.id = 'kindDlg';
+kindDlg.innerHTML = '<h3>名目の整理</h3><ul class="kindList" id="kindList"></ul>' +
+  '<p class="hint">名目を消すと、その予定は「その他」になるよ</p>' +
+  '<button type="button" id="kindClose">閉じる</button>';
+document.body.append(kindDlg);
+
+function renderKindList() {
+  $('#kindList').innerHTML = state.evKinds.map(k =>
+    `<li><input type="color" value="${k.color}" data-kcolor="${k.id}" aria-label="色">` +
+    `<input value="${esc(k.name)}" maxlength="10" data-kname="${k.id}" aria-label="名前">` +
+    `<button type="button" class="x" data-kdel="${k.id}" aria-label="削除">×</button></li>`).join('')
+    || '<li class="muted">まだないよ</li>';
+}
+function openKindDlg() { renderKindList(); kindDlg.showModal(); }
+
+kindDlg.addEventListener('change', e => {
+  const t = e.target, k = state.evKinds.find(x => x.id === (t.dataset.kcolor || t.dataset.kname));
+  if (!k) return;
+  if (t.dataset.kcolor) k.color = t.value;
+  else {
+    const v = t.value.trim().slice(0, 10);
+    if (!v) { t.value = k.name; return; }
+    k.name = v;
+  }
+  save(); applyKinds(); renderAll();
+});
+kindDlg.addEventListener('click', e => {
+  if (e.target.id === 'kindClose') return kindDlg.close();
+  const id = e.target.closest('[data-kdel]')?.dataset.kdel;
+  const k = state.evKinds.find(x => x.id === id);
+  if (!k) return;
+  const n = state.events.filter(x => x.kind === id).length;
+  if (!confirm(`「${k.name}」を消す？` + (n ? `\n入ってる予定${n}件は「その他」になるよ` : ''))) return;
+  state.evKinds = state.evKinds.filter(x => x !== k);
+  for (const x of state.events) if (x.kind === id) x.kind = 'other';
+  for (const p of state.evPresets) if (p.kind === id) p.kind = 'other';
+  save(); applyKinds(); renderKindList(); renderAll();
+});
+
+applyKinds();
+renderAll();
+
+/* ===== シラバスの画像から課題・試験を読む ===== */
+{
+  const SY_PROMPT = c => `これは大学の授業「${c.name || '（名前なし）'}」のシラバス（授業計画）の画像です。課題・レポートの締切と、試験（小テスト・中間・期末）の予定だけを探して、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
+形式: [{"kind":"exam","title":"中間試験","month":11,"day":20,"lesson":7}]
+ルール:
+- kind は試験なら "exam"、課題・レポート・提出物なら "task"。
+- title は20文字以内で、何の試験・課題かわかる名前にする。
+- 日付が書いてあれば month と day を数字で。書いてなければ 0。年は書かない。
+- 「第7回」のように授業の回数で書いてあれば lesson にその数字を入れる。なければ 0。
+- 「毎回」「随時」のように日付も回数も決まらないものは、month・day・lesson を 0 にする。
+- 成績評価の欄にだけ書いてある試験やレポートも出力してよい。ただし日付は推測しない。
+- 授業の内容・テーマ・教科書の説明は出力しない。
+- 見つからなければ [] だけを出力する。読めない部分を推測で埋めない。`;
+
+  // 「第n回」の日付（学期の初めから数える。休みと休講は飛ばす）
+  const syLessonDate = (c, n, t = term()) => {
+    if (c.day === -1) {
+      const s = parseYmd(c.from);
+      if (!s) return '';
+      const d = ymd(addDays(s, n - 1));
+      return !c.to || d <= c.to ? d : '';
+    }
+    const s = parseYmd(t.start);
+    if (!s) return '';
+    let k = 0;
+    for (let i = 0; i < 200; i++) {
+      const d = addDays(s, i);
+      if (pastEnd(d, t)) break;
+      if (hasClass(c, d, t) && ++k === n) return ymd(d);
+    }
+    return '';
+  };
+
+  // 月日だけの日付に、学期にいちばん近い年を付ける
+  const syMdDate = (m, d, t = term()) => {
+    if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return '';
+    const s = parseYmd(t.start), e = parseYmd(t.end);
+    const mid = s && e ? new Date((+s + +e) / 2) : s || new Date();
+    let best = null;
+    for (const y of [mid.getFullYear() - 1, mid.getFullYear(), mid.getFullYear() + 1]) {
+      const x = new Date(y, m - 1, d);
+      if (x.getMonth() !== m - 1) continue; // 2/30 などはなし
+      if (!best || Math.abs(x - mid) < Math.abs(best - mid)) best = x;
+    }
+    return best ? ymd(best) : '';
+  };
+
+  const syExamTitle = (c, title) => title.includes(nm(c)) ? title : `${nm(c)} ${title}`;
+  const syDup = (c, r) => r.kind === 'task'
+    ? c.tasks.some(k => k.title === r.title && k.due === r.date)
+    : state.events.some(e => e.kind === 'exam' && e.date === r.date && e.title === syExamTitle(c, r.title));
+
+  const syDlg = document.createElement('dialog');
+  syDlg.id = 'syDlg';
+  syDlg.innerHTML = '<h3>シラバスから読み取り</h3>' +
+    '<p class="hint" id="syStatus"></p><div id="syRows"></div>' +
+    '<div class="row syBtns"><button type="button" class="primary" id="syAdd" disabled>チェックした分を追加</button>' +
+    '<button type="button" id="syClose">閉じる</button></div>';
+  document.body.append(syDlg);
+  $('#cSyllabusHint').insertAdjacentHTML('afterend',
+    '<button type="button" id="syBtn">📷 シラバスの画像から課題・試験を読む</button>' +
+    '<input type="file" id="syFile" accept="image/*" multiple hidden>');
+
+  let syList = [];
+  const syRender = () => {
+    $('#syRows').innerHTML = syList.map((r, i) =>
+      `<div class="syRow" data-i="${i}">` +
+      `<input type="checkbox" data-f="on"${r.on ? ' checked' : ''} aria-label="追加する">` +
+      `<select data-f="kind"><option value="task"${r.kind === 'task' ? ' selected' : ''}>課題</option>` +
+      `<option value="exam"${r.kind === 'exam' ? ' selected' : ''}>試験</option></select>` +
+      `<input data-f="title" value="${esc(r.title)}" maxlength="40" aria-label="名前">` +
+      `<input type="date" data-f="date" value="${r.date}" aria-label="日付">` +
+      (r.dup ? '<small class="muted">登録済み</small>' : '') + '</div>').join('');
+    $('#syAdd').disabled = !syList.some(r => r.on);
+  };
+  const syEdit = e => {
+    const row = e.target.closest('.syRow'), f = e.target.dataset.f;
+    if (!row || !f) return;
+    syList[+row.dataset.i][f] = f === 'on' ? e.target.checked : e.target.value;
+    $('#syAdd').disabled = !syList.some(r => r.on);
+  };
+  $('#syRows').addEventListener('input', syEdit);
+  $('#syRows').addEventListener('change', syEdit);
+
+  $('#syBtn').onclick = () => $('#syFile').click();
+  $('#syFile').onchange = async e => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    const c = cur();
+    if (!files.length || !c) return;
+    syList = []; syRender();
+    const st = $('#syStatus');
+    syDlg.showModal();
+    try {
+      for (const [i, f] of files.entries()) {
+        st.textContent = `${i + 1}/${files.length}枚目を読み取り中…`;
+        const txt = await callVision(await fileToJpegBase64(f), SY_PROMPT(c), st);
+        const s = txt.indexOf('['), en = txt.lastIndexOf(']');
+        if (s < 0 || en < s) throw new Error(`${i + 1}枚目の結果がうまく読めなかった`);
+        for (const x of JSON.parse(txt.slice(s, en + 1))) {
+          if (!x || typeof x.title !== 'string' || !x.title.trim()) continue;
+          const kind = x.kind === 'exam' ? 'exam' : 'task';
+          const date = syMdDate(+x.month, +x.day) || (+x.lesson > 0 ? syLessonDate(c, +x.lesson) : '');
+          const r = { kind, title: x.title.trim().slice(0, 40), date };
+          if (syList.some(y => y.kind === r.kind && y.title === r.title && y.date === r.date)) continue;
+          r.dup = syDup(c, r);
+          r.on = !r.dup && (kind === 'task' || !!date);
+          syList.push(r);
+        }
+        syRender();
+      }
+      st.textContent = syList.length
+        ? '中身を確かめて、追加するものにチェックしてね。日付が空の試験は、日付を入れてから追加してね'
+        : '課題や試験の予定は見つからなかった';
+    } catch (err) {
+      st.textContent = 'うまくいかなかった：' + (err?.message || err);
+    }
+  };
+
+  $('#syAdd').onclick = () => {
+    const c = cur();
+    const list = syList.filter(r => r.on && r.title.trim());
+    if (!c || !list.length) return;
+    if (list.some(r => r.kind === 'exam' && !isYmd(r.date)))
+      return alert('日付が空の試験があるよ。日付を入れるか、チェックを外してね');
+    withUndo(`シラバスから${list.length}件追加したよ`, () => {
+      for (const r of list) {
+        const title = r.title.trim();
+        if (r.kind === 'task') {
+          c.tasks.push({ id: uid(), title, due: isYmd(r.date) ? r.date : '', done: false, lead: '' });
+          continue;
+        }
+        // 授業のある日なら、その時限の時刻を入れる
+        const tm = c.day >= 0 && hasClass(c, parseYmd(r.date), term()) ? state.times[c.period - 1] : null;
+        state.events.push({ id: uid(), date: r.date, kind: 'exam', title: syExamTitle(c, title),
+          start: tm?.start || '', end: tm?.end || '' });
+      }
+    });
+    courseBackup = courseSnap(c); // 閉じるときの「変更を捨てる」で消えないように
+    renderDetail();
+    syDlg.close();
+  };
+  $('#syClose').onclick = () => syDlg.close();
+}
