@@ -1,5 +1,7 @@
 'use strict';
 
+window.addEventListener('error', e => alert(`エラー：${e.message}\n${e.lineno}行目`));
+
 /* ===== 基本 ===== */
 const $ = s => document.querySelector(s);
 const DAYS = ['月', '火', '水', '木', '金', '土'];
@@ -4567,6 +4569,8 @@ if (LN) {
     '<option value="120">2時間前</option></select></div>' +
     '<button type="button" id="nTest">テスト通知（5秒後）</button>' +
     '<p class="hint">ここは変えるとすぐ保存されるよ。予約するのは今の学期の2週間分で、アプリを開くたびに入れ直す</p>';
+  $('#aiBox').before(nBox);
+
 
   const syncNotifyUI = () => {
     $('#nOn').checked = state.notify.on;
@@ -4626,7 +4630,7 @@ $('#nMTime').onchange = e => {
       `<button type="button" class="x" data-anndel="${a.id}" aria-label="削除">×</button></li>`
     ).join('') || '<li class="muted">まだないよ</li>';
   };
-  renderAnn();
+  setTimeout(renderAnn, 0);
   $('#nAnniv').onchange = e => { state.notify.anniv = e.target.checked; save(); };
   $('#annAddBtn').onclick = () => {
     const name = $('#annName').value.trim(), d = $('#annDate').value;
