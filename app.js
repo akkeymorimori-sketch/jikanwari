@@ -256,6 +256,7 @@ function normalize(s) {
       c.tag = typeof c.tag === 'string' ? c.tag : '';
       c.items ??= []; c.memos ??= []; c.tasks ??= [];
       c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
+      c.lates = Array.isArray(c.lates) ? c.lates.filter(isYmd) : [];
       c.maxAbsence ??= '';
       if (c.maxAbsence !== '' && !Number.isFinite(+c.maxAbsence)) c.maxAbsence = '';
       for (const i of c.items) {
@@ -295,6 +296,8 @@ function normalize(s) {
   const okLead = v => v === 'all' || /^\d{1,2}[dwm]$/.test(v);
   s.taskLead = okLead(s.taskLead) ? s.taskLead : '2w';
   s.useGrid = s.useGrid !== false; // 時間割を使うか（最初はON）
+  s.lateRule = [0, 2, 3, 4].includes(s.lateRule) ? s.lateRule : 0; // 遅刻何回で欠席1回か（0は数えない）
+
   // 通知（アプリ版だけ）
   const nf = s.notify && typeof s.notify === 'object' ? s.notify : {};
   s.notify = {
@@ -340,6 +343,7 @@ function save() {
     localStorage.setItem(KEY, JSON.stringify(state));
     saveWarned = false;
     scheduleNotify();
+    wgPush();
   } catch {
     if (!saveWarned) alert('保存できなかった。空き容量がないか、プライベートブラウズかも。設定から書き出しておいてね');
     saveWarned = true;
@@ -562,9 +566,11 @@ function suggestTerm(now) {
 
 // 欠席の集計
 function absInfo(c) {
-  const n = c.absences.length;
+  const late = (c.lates || []).length;
+  const r = state.lateRule;
+  const n = c.absences.length + (r ? Math.floor(late / r) : 0);
   const max = c.maxAbsence === '' ? null : +c.maxAbsence;
-  return { n, max, left: max == null ? null : max - n };
+  return { n, max, left: max == null ? null : max - n, late };
 }
 
 /* ===== シラバス ===== */
@@ -2779,7 +2785,7 @@ function renderIncome() {
     `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(n)}</small></p>` +
     (est ? `<p class="hint">総支給がわからない${est}件は手取りで数えてるよ（*の月）。本当の総支給はこれより少し多いはず</p>` : '') +
     lim +
-    (jobs.size > 1 ? `<p class="hint">${[...jobs].map(([j, v]) => `${esc(j)} ${yen(v)}`).join('・')}</p>` : '');
+    (jobs.size > 1 ? jobPie(jobs, g) : '');
 
   // 月ごと（支給日の月）
   $('#inMonths').innerHTML = '<tr><th>月</th><th>総支給</th><th>手取り</th></tr>' +
@@ -6025,9 +6031,10 @@ function placeSecs() {
   };
   mv('.leadBox', '#setUse');
   mv('.nBox', '#setNotify');
+  mv('.wgBox', '#setNotify');
   mv('.csBox', '#setCal');
   mv('.icsBox', '#setCal');
-  $('#setNotify').hidden = !$('#setNotify .nBox');
+  $('#setNotify').hidden = !$('#setNotify .nBox, #setNotify .wgBox');
   $('#setCal').hidden = !$('#setCal .csBox, #setCal .icsBox');
 }
 
@@ -6318,7 +6325,23 @@ applyPageColor();
 const PT_DAY = 1;
 const PT_BONUS = [[7, 5], [30, 30]]; // [何日連続ごと, もらえるポイント]
 // 交換できるもの（あとで足す）例：{ id: 'icon-mint', name: 'ミントのアイコン', desc: '…', cost: 50 }
-const SHOP = [];
+// 交換できるもの：ウィジェットのデザイン [id, 名前, 説明, ポイント]
+var WG_THEMES = [
+  ['wg-mint', 'ミント', '🌿 さわやかな緑', 10],
+  ['wg-sakura', 'さくら', '🌸 やわらかいピンク', 20],
+  ['wg-sky', 'そらいろ', '☁️ 晴れた日の青', 30],
+  ['wg-sunset', 'ゆうやけ', '🌇 オレンジから紫', 50],
+  ['wg-night', 'よぞら', '🌙 深い紺に黄色', 80],
+  ['wg-gold', 'こがね', '👑 ちょっと特別な金', 150],
+];
+const SHOP = WG_THEMES.map(([id, name, desc, cost]) => ({
+  id, name: `ウィジェット「${name}」`, desc, cost,
+  onGet() {
+    state.widget = { ...(state.widget || {}), theme: id };
+    save();
+    window.syncWgUI?.();
+  },
+}));
 
 function ptState() {
   const p = state.points && typeof state.points === 'object' ? state.points : {};
@@ -6391,6 +6414,7 @@ function renderPoints() {
       ? '<ul class="ptShop">' + SHOP.map(s => {
           const got = p.owned.includes(s.id);
           return `<li><div><b>${esc(s.name)}</b>${s.desc ? `<small>${esc(s.desc)}</small>` : ''}</div>` +
+            `<button type="button" class="wgPrevBtn" data-wgprev="${s.id}">見る</button>` +
             (got ? '<span class="ptGot">交換済み</span>'
               : `<button type="button" data-buy="${s.id}"${p.pt < s.cost ? ' disabled' : ''}>${s.cost}p</button>`) + '</li>';
         }).join('') + '</ul>'
@@ -7016,4 +7040,549 @@ renderAll();
     syDlg.close();
   };
   $('#syClose').onclick = () => syDlg.close();
+}
+
+/* ===== ウィジェット用（設定とデータ） ===== */
+const WG_DAYS = [3, 7, 14, 30];
+
+// 設定を読む（入ってなければ初期値）
+function wgCfg() {
+  const w = state.widget || {};
+  const own = state.points?.owned || [];
+  return {
+    after: w.after === 'end' ? 'end' : 'next',
+    days: WG_DAYS.includes(w.days) ? w.days : 7,
+    theme: own.includes(w.theme) ? w.theme : ''
+  };
+}
+
+// ウィジェットに渡すデータ（今日から7日後まで）
+function wgData() {
+  const cfg = wgCfg(), t = term(), now = new Date();
+  const today = addDays(now, 0);
+  const days = [];
+  for (let i = 0; i <= 7; i++) {
+    const d = addDays(today, i), k = ymd(d);
+    const classes = (state.useGrid ? coursesOn(d, t) : []).map(c => {
+      const o = occurrence(c, d);
+      const tm = state.times[c.period - 1] || {};
+      return {
+        period: c.period,
+        name: nm(c),
+        room: c.room || '',
+        start: o ? tm.start : '',
+        end: o ? tm.end : '',
+        items: itemsFor(c, o ? o.start : d).map(x => x.text.trim()).filter(Boolean)
+      };
+    });
+    const events = eventsOn(k).map(e => ({
+      kind: (typeof EV_LABEL !== 'undefined' && EV_LABEL[e.kind]) || 'その他',
+      title: e.title || '',
+      start: e.start || '',
+      end: e.end || ''
+    })).sort((a, b) => (a.start || '99').localeCompare(b.start || '99'));
+    days.push({ date: k, label: md(d), classes, events });
+  }
+  // 締め切りが近い課題（過ぎたものも入れる）
+  const lim = ymd(addDays(today, cfg.days));
+  const tasks = [];
+  for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
+    if (!x.done && x.due && x.due <= lim)
+      tasks.push({ title: x.title || '', due: x.due, from: c.short || c.name || '' });
+  tasks.sort((a, b) => a.due.localeCompare(b.due));
+  return { v: 1, made: now.toISOString(), after: cfg.after, taskDays: cfg.days, theme: cfg.theme, days, tasks: tasks.slice(0, 20) };
+}
+window.wgData = wgData;
+
+// 設定画面の「ウィジェット」欄（「通知とウィジェット」の中に入る）
+{
+  const wBox = document.createElement('div');
+  wBox.className = 'wgBox';
+  wBox.innerHTML =
+    '<h3 class="wgHead">ウィジェット</h3>' +
+    '<div class="row nRow">授業が全部終わったら <select id="wAfter">' +
+    '<option value="next">明日の1限を出す</option>' +
+    '<option value="end">「今日はおしまい」と出す</option></select></div>' +
+    '<div class="row nRow">課題の締め切り <select id="wDays">' +
+    WG_DAYS.map(n => `<option value="${n}">${n}日以内</option>`).join('') +
+    '</select></div>' +
+    '<p class="hint">締め切りを過ぎた課題も出すよ</p>' +
+    '<div class="row nRow">デザイン <select id="wTheme"></select></div>' +
+    '<p class="hint">ポイントの交換所でデザインが増えるよ</p>';
+  // いったん置いておけば、設定を開いたときに placeSecs が通知の項目へ移す
+  $('#aiBox').before(wBox);
+
+  // 項目の名前を「通知とウィジェット」に
+  const ns = $('#setNotify > summary');
+  if (ns) {
+    const sml = ns.querySelector('small');
+    const lab = [...ns.childNodes].find(n => n !== sml && !n.contains?.(sml) && n.textContent.trim());
+    if (lab) lab.textContent = '通知とウィジェット ';
+  }
+
+  const syncWgUI = () => {
+    const c = wgCfg();
+    const own = state.points?.owned || [];
+    $('#wAfter').value = c.after;
+    $('#wDays').value = String(c.days);
+    $('#wTheme').innerHTML = '<option value="">📘 シンプル</option>' +
+      WG_THEMES.filter(t => own.includes(t[0]))
+        .map(t => `<option value="${t[0]}">${t[2].split(' ')[0]} ${t[1]}</option>`).join('');
+    $('#wTheme').value = c.theme;
+  };
+  window.syncWgUI = syncWgUI;
+  $('#wAfter').onchange = e => { state.widget = { ...wgCfg(), after: e.target.value }; save(); };
+  $('#wDays').onchange = e => { state.widget = { ...wgCfg(), days: Number(e.target.value) }; save(); };
+  $('#wTheme').onchange = e => { state.widget = { ...wgCfg(), theme: e.target.value }; save(); };
+  setTimeout(syncWgUI, 0);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) syncWgUI(); });
+}
+
+/* ===== ウィジェットへデータを渡す ===== */
+const WG_GROUP = 'group.io.github.akkeymorimori.gakulog';
+async function wgPush() {
+  const WB = window.Capacitor?.Plugins?.WidgetBridgePlugin;
+  if (!WB) return; // Web版では何もしない
+  try {
+    await WB.setItem({ key: 'gakulog', group: WG_GROUP, value: JSON.stringify(wgData()) });
+    await WB.reloadAllTimelines();
+  } catch (e) { console.warn('widget', e); }
+}
+setTimeout(wgPush, 0);
+document.addEventListener('visibilitychange', () => { if (document.hidden) wgPush(); });
+
+/* ===== 収入：バイト先ごとの円グラフ ===== */
+function jobPie(jobs, total) {
+  const COLORS = ['#2f6fde', '#2b8a3e', '#e8590c', '#7048e8', '#d6336c', '#0c8599', '#f59f00', '#868e96'];
+  const list = [...jobs].sort((a, b) => b[1] - a[1]);
+  let acc = 0;
+  const segs = list.map(([, v], i) => {
+    const from = acc;
+    acc += total ? v / total * 100 : 0;
+    return `${COLORS[i % COLORS.length]} ${from}% ${acc}%`;
+  });
+  return `<div class="pie"><div class="pieChart" style="background:conic-gradient(${segs.join(',')})">` +
+    `<span>${yen(total)}</span></div><ul class="pieLegend">` +
+    list.map(([j, v], i) =>
+      `<li><i style="background:${COLORS[i % COLORS.length]}"></i><span>${esc(j)}</span>` +
+      `<b>${yen(v)}</b><small>${total ? Math.round(v / total * 100) : 0}%</small></li>`).join('') +
+    '</ul></div>';
+}
+
+/* ===== 収入：年の切り替えを年間の合計のすぐ上へ ===== */
+{
+  const yr = $('#inYear')?.parentElement;
+  const sum = $('#inSummary');
+  if (yr && sum && yr !== sum.parentElement) sum.before(yr);
+}
+
+/* ===== 遅刻 ===== */
+{
+  // 授業詳細：欠席の「追加」の横に「遅刻」ボタン、欠席一覧の下に遅刻一覧
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.id = 'lateAdd'; btn.textContent = '遅刻';
+  $('#absAdd').after(btn);
+  const sum = document.createElement('p');
+  sum.id = 'lateSummary'; sum.className = 'hint';
+  const ul = document.createElement('ul');
+  ul.id = 'lateList';
+  $('#absList').after(sum, ul);
+
+  btn.onclick = () => {
+    const d = $('#absDate').value;
+    if (!d) return alert('遅刻した日を選んでね');
+    const c = cur();
+    c.lates ??= [];
+    if (c.lates.includes(d)) return alert('その日の遅刻はもう記録してあるよ');
+    if (c.absences.includes(d)) return alert('その日は欠席で記録してあるよ');
+    c.lates.push(d);
+    save(); renderDetail(); renderGrid();
+  };
+  ul.addEventListener('click', e => {
+    const d = e.target.dataset.ldel;
+    if (!d) return;
+    cur().lates = cur().lates.filter(x => x !== d);
+    save(); renderDetail(); renderGrid();
+  });
+
+  // 授業詳細を描くたびに遅刻の欄も描く
+  const baseDetail = renderDetail;
+  renderDetail = function () {
+    baseDetail();
+    const c = cur();
+    if (!c) return;
+    const a = absInfo(c), r = state.lateRule;
+    $('#lateSummary').textContent = `遅刻 ${a.late}回` +
+      (r ? `（${r}回で欠席1回。今は欠席${Math.floor(a.late / r)}回ぶん）` : '（欠席には数えない設定）');
+    $('#lateList').innerHTML = (c.lates || []).slice().sort().map(d =>
+      `<li><span>${md(parseYmd(d))} 遅刻</span><button class="x" data-ldel="${d}" aria-label="削除">×</button></li>`).join('');
+    if (a.late) $('#cMoreSum').textContent += `・遅刻${a.late}回`;
+  };
+
+  // 設定：「欠席の上限をまとめて設定」の下に換算ルール
+  const box = $('.absBulk');
+  if (box) {
+    const row = document.createElement('div');
+    row.className = 'row lateRule';
+    row.innerHTML = '<span>遅刻は</span><select id="lateRule">' +
+      '<option value="0">欠席に数えない</option>' +
+      '<option value="2">2回で欠席1回</option>' +
+      '<option value="3">3回で欠席1回</option>' +
+      '<option value="4">4回で欠席1回</option></select>';
+    box.append(row);
+    $('#lateRule').onchange = e => {
+      state.lateRule = +e.target.value;
+      save(); renderAll();
+    };
+    // state を読み込んだあとに今の設定を入れる
+    setTimeout(() => { $('#lateRule').value = String(state.lateRule); }, 0);
+  }
+}
+
+/* ===== 共有グループ：自分で作った名目も送る ===== */
+const grKinds = new Map(); // 相手の名目 id → { name, color }
+const okKindId = v => typeof v === 'string' && /^k-[\w-]{1,40}$/.test(v);
+const okKindColor = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v);
+const grKindStyle = document.createElement('style');
+document.head.append(grKindStyle);
+
+function kindMeta(id) {
+  const k = state.evKinds.find(x => x.id === id);
+  if (k) return { name: k.name, color: k.color };
+  return grKinds.get(id) || null;
+}
+
+// 共有された予定の中にある、相手の名目を使えるようにする
+function grKindsSync() {
+  grKinds.clear();
+  for (const e of window.grShared || []) {
+    if (!okKindId(e.kind) || !e.kName) continue;
+    if (state.evKinds.some(k => k.id === e.kind)) continue;
+    grKinds.set(e.kind, { name: e.kName, color: okKindColor(e.kColor) ? e.kColor : '#8b5cf6' });
+  }
+  for (const [id, m] of grKinds) EV_LABEL[id] = m.name;
+  grKindStyle.textContent = [...grKinds].map(([id, m]) =>
+    `.ev.${id}{background:${m.color};color:#fff}` +
+    `.flow li.f-${id} .ft{color:${m.color}}`).join('');
+  // 予定を変えるときに選べるように
+  const sel = $('#evKind');
+  if (!sel) return;
+  const v = sel.value;
+  sel.querySelectorAll('option[data-gr]').forEach(o => o.remove());
+  const before = sel.querySelector('option[value="__newkind"]');
+  for (const [id, m] of grKinds) {
+    const o = new Option(`${m.name}（共有）`, id);
+    o.dataset.gr = '1';
+    sel.add(o, before);
+  }
+  if ([...sel.options].some(o => o.value === v)) sel.value = v;
+}
+
+// 送るとき：名目の名前と色もつける
+{
+  const base = grData;
+  grData = function (v) {
+    const o = base(v);
+    const m = okKindId(o.kind) ? kindMeta(o.kind) : null;
+    if (m) { o.kName = m.name; o.kColor = m.color; }
+    return o;
+  };
+}
+
+// 受け取るとき：自分の名目と同じなら自分の名目で、ちがえば相手の名目で出す
+{
+  const base = toGrEv;
+  toGrEv = function (gid, d) {
+    const e = base(gid, d), x = d.data();
+    if (!okKindId(x.kind)) return e;
+    const name = String(x.kName || '').trim().slice(0, 10);
+    const mine = state.evKinds.find(k => k.id === x.kind) ||
+      (name && state.evKinds.find(k => k.name === name));
+    if (mine) e.kind = mine.id;
+    else if (name) {
+      e.kind = x.kind;
+      e.kName = name;
+      e.kColor = okKindColor(x.kColor) ? x.kColor : '#8b5cf6';
+    }
+    return e;
+  };
+}
+
+// 共有の予定が届いたとき・名目を作り直したときに入れ直す
+{
+  const baseCache = grSaveCache;
+  grSaveCache = function () { baseCache(); grKindsSync(); };
+  const baseKinds = applyKinds;
+  applyKinds = function () { baseKinds(); grKindsSync(); };
+}
+setTimeout(() => { grKindsSync(); renderAll(); }, 0);
+
+/* ===== 時間割の共有：QRコード ===== */
+{
+  // 送る側：「送る」の下に「QRコードを出す」
+  const qBtn = document.createElement('button');
+  qBtn.type = 'button'; qBtn.id = 'shareQrBtn'; qBtn.textContent = 'QRコードを出す';
+  const qBox = document.createElement('div');
+  qBox.id = 'shareQr'; qBox.hidden = true;
+  $('#shareSend').after(qBtn, qBox);
+
+  const closeQr = () => { qBox.hidden = true; qBtn.textContent = 'QRコードを出す'; };
+  qBtn.onclick = () => {
+    if (!qBox.hidden) return closeQr();
+    if (!shareCode) return alert('共有コードを作ってる途中だよ。少し待ってもう一回押してね');
+    if (typeof qrcode !== 'function') return alert('QRコードの部品が読み込めてないみたい');
+    const text = `${SHARE_TAG}.${shareCode}`;
+    try {
+      const qr = qrcode(0, 'L');
+      qr.addData(text);
+      qr.make();
+      qBox.innerHTML = qr.createSvgTag(4, 4) +
+        '<p class="hint">相手のがくログで「📷 QRコードを読む」を押して、これを撮ってもらってね</p>';
+    } catch {
+      return alert('授業が多すぎてQRコードに入りきらなかった。「送る」のほうを使ってね');
+    }
+    qBox.hidden = false;
+    qBtn.textContent = 'QRコードを閉じる';
+  };
+  // 持ち物・休みを入れるかを変えたら、古いQRは閉じる
+  for (const id of ['#shareItems', '#shareOff']) $(id)?.addEventListener('change', closeQr);
+  $('#shareSec').addEventListener('toggle', e => { if (!e.target.open) closeQr(); });
+
+  // 読む側：「読み込む」の横に「QRコードを読む」
+  const rBtn = document.createElement('label');
+  rBtn.className = 'fileBtn';
+  rBtn.innerHTML = '📷 QRコードを読む<input type="file" accept="image/*" class="vh" id="shareQrIn">';
+  $('#shareRead').after(rBtn);
+
+  $('#shareQrIn').onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (typeof jsQR !== 'function') return alert('QRコードの部品が読み込めてないみたい');
+    const url = URL.createObjectURL(f);
+    try {
+      const img = await new Promise((ok, ng) => {
+        const i = new Image();
+        i.onload = () => ok(i); i.onerror = ng; i.src = url;
+      });
+      // 大きすぎる写真は縮める（細かいQRがつぶれない程度に）
+      const sc = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.naturalWidth * sc);
+      cv.height = Math.round(img.naturalHeight * sc);
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      const r = jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
+      if (!r || !r.data.includes(SHARE_TAG))
+        return alert('共有のQRコードが見つからなかった。QRを大きめに、ピントを合わせて撮り直してね');
+      $('#shareIn').value = r.data;
+      $('#shareRead').click();
+    } catch {
+      alert('画像を開けなかった。別の画像で試してみて');
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+}
+
+/* ===== 空きコママッチ ===== */
+{
+  const fmDlg = document.createElement('dialog');
+  fmDlg.id = 'freeDlg';
+  fmDlg.innerHTML =
+    '<b>空きコママッチ</b>' +
+    '<p class="hint">緑はみんな空いてるコマ。数字は空いてる人数。マスをタップすると名前が出るよ</p>' +
+    '<div class="fmPeople" id="fmPeople"></div>' +
+    '<div class="fmWrap"><table class="fmTbl" id="fmTbl"></table></div>' +
+    '<button type="button" id="fmClose">閉じる</button>';
+  document.body.append(fmDlg);
+  $('#shareRead').insertAdjacentHTML('afterend',
+    '<button type="button" id="fmAdd">🤝 空きコマを比べる</button>');
+
+  let fmList = [];
+  const busyOf = cs => new Set(cs.filter(c => c.day >= 0).map(c => c.day + '-' + c.period));
+
+  const renderFree = () => {
+    const all = [{ name: '自分', busy: busyOf(courses()) }, ...fmList];
+    const sat = state.showSat || all.some(p => [...p.busy].some(k => k.startsWith('5-')));
+    const days = sat ? 6 : 5;
+    const maxP = Math.max(state.periods,
+      ...all.flatMap(p => [...p.busy].map(k => +k.split('-')[1])));
+    $('#fmPeople').innerHTML = all.map((p, i) =>
+      `<span class="fmChip">${esc(p.name)}` +
+      (i ? `<button type="button" data-fmdel="${i - 1}" aria-label="外す">×</button>` : '') +
+      '</span>').join('');
+    let h = '<tr><th></th>' + DAYS.slice(0, days).map(d => `<th>${d}</th>`).join('') + '</tr>';
+    for (let p = 1; p <= maxP; p++) {
+      h += `<tr><th>${p}</th>`;
+      for (let d = 0; d < days; d++) {
+        const free = all.filter(x => !x.busy.has(d + '-' + p));
+        const cls = free.length === all.length ? 'all' : free.length ? 'some' : '';
+        h += `<td class="${cls}" data-fm="${esc(`${DAYS[d]}${p}限：` +
+          (free.length ? free.map(x => x.name).join('、') : '空いてる人はいないよ'))}">${free.length}</td>`;
+      }
+      h += '</tr>';
+    }
+    $('#fmTbl').innerHTML = h;
+  };
+
+  $('#fmAdd').onclick = async () => {
+    const raw = $('#shareIn').value.replace(/\s+/g, '');
+    const m = raw.match(new RegExp(`${SHARE_TAG}\\.([zp])\\.([A-Za-z0-9_-]+)`));
+    if (!m) return alert('先に友だちの共有コードを貼るか、QRコードを読んでね');
+    let d;
+    try { d = parseShare(JSON.parse(await unpackText(m[1], m[2]))); }
+    catch { return alert('コードが途中で切れてるか、壊れてるみたい'); }
+    const name = (prompt('誰の時間割？', `友だち${fmList.length + 1}`) || '').trim().slice(0, 10);
+    if (!name) return;
+    fmList.push({ name, busy: busyOf(d.courses) });
+    $('#shareIn').value = '';
+    renderFree();
+    if (!fmDlg.open) fmDlg.showModal();
+  };
+
+  fmDlg.onclick = e => {
+    const del = e.target.closest('[data-fmdel]');
+    if (del) { fmList.splice(+del.dataset.fmdel, 1); renderFree(); return; }
+    const td = e.target.closest('td[data-fm]');
+    if (td) alert(td.dataset.fm);
+  };
+  $('#fmClose').onclick = () => { fmDlg.close(); fmList = []; };
+}
+
+/* ===== 他のアプリから共有された画像・PDFを受け取る（アプリ版だけ） ===== */
+{
+  const ST = window.Capacitor?.Plugins?.CapacitorShareTarget;
+  // [種類, ボタンの文字, 説明, 入れる欄, PDFが読めるか, 複数枚いけるか]
+  const ROUTES = [
+    ['shift', '💼 シフト表', '自分の勤務をカレンダーに追加', '#shFile', true, true],
+    ['grid', '📚 時間割', '授業をまとめて登録', '#imgFile', false, false],
+    ['pay', '💴 給与明細', '支給日と金額を収入に記録', '#scanFile', false, false],
+  ];
+  const inDlg = document.createElement('dialog');
+  inDlg.id = 'inShareDlg';
+  inDlg.innerHTML =
+    '<div class="dlg">' +
+    '<div class="dlgHead"><h2>届いたファイル</h2>' +
+    '<button type="button" class="x" id="inShareX" aria-label="閉じる">×</button></div>' +
+    '<p class="hint" id="inShareInfo"></p>' +
+    ROUTES.map(([k, l, d]) =>
+      `<button type="button" class="phOpt" data-inshare="${k}"><b>${l}</b><small>${d}</small></button>`).join('') +
+    '</div>';
+  document.body.append(inDlg);
+
+  let inFiles = [];
+  const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  const toFile = async f => {
+    const res = await fetch(window.Capacitor.convertFileSrc(f.uri));
+    const b = await res.blob();
+    return new File([b], f.name || 'shared', { type: f.mimeType || b.type });
+  };
+  const putFiles = (sel, files) => {
+    const inp = $(sel);
+    if (!inp) return alert('読み込み先が見つからなかった');
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  if (ST) ST.addListener('shareReceived', async ev => {
+    // バックアップ（JSON）が届いたら復元へ
+    const js = (ev.files || []).find(f =>
+      /json/.test(f.mimeType || '') || /\.json$/i.test(f.name || ''));
+    if (js) {
+      try { putFiles('#restoreFile', [await toFile(js)]); }
+      catch { alert('ファイルを開けなかった。もう一回送ってみてね'); }
+      return;
+    }
+    const fs = (ev.files || []).filter(f =>
+      /^image\/|pdf$/.test(f.mimeType || '') || /\.pdf$/i.test(f.name || ''));
+    if (!fs.length) return;
+    try { inFiles = await Promise.all(fs.map(toFile)); }
+    catch { return alert('ファイルを開けなかった。もう一回送ってみてね'); }
+    const pdf = inFiles.some(isPdf);
+    inDlg.querySelectorAll('[data-inshare]').forEach(b => {
+      b.hidden = pdf && !ROUTES.find(r => r[0] === b.dataset.inshare)[4];
+    });
+    $('#inShareInfo').textContent = `${inFiles.length}件届いたよ。何として読む？` +
+      (pdf ? '（PDFはシフト表だけ読めるよ）' : '');
+    if (!inDlg.open) inDlg.showModal();
+  });
+
+  inDlg.onclick = e => {
+    const b = e.target.closest('[data-inshare]');
+    if (!b) return;
+    const [kind, , , sel, , multi] = ROUTES.find(r => r[0] === b.dataset.inshare);
+    const files = multi ? inFiles : inFiles.slice(0, 1);
+    inDlg.close();
+    inFiles = [];
+    if (!hasKey()) return openPhoto('guide');
+    goPhoto(kind);
+    setTimeout(() => putFiles(sel, files), 50);
+  };
+  $('#inShareX').onclick = () => { inDlg.close(); inFiles = []; };
+}
+
+/* ===== ウィジェットのプレビュー ===== */
+var WG_LOOK = {
+  '':          { bg: ['#ffffff', '#f2f2f7'], fg: '#111827', ac: '#2563eb', icon: '📘' },
+  'wg-mint':   { bg: ['#D9F7EC', '#A7E8D0'], fg: '#134E3A', ac: '#059669', icon: '🌿' },
+  'wg-sakura': { bg: ['#FFE4EC', '#FBCFE8'], fg: '#831843', ac: '#DB2777', icon: '🌸' },
+  'wg-sky':    { bg: ['#E0F2FE', '#BAE6FD'], fg: '#0C4A6E', ac: '#0284C7', icon: '☁️' },
+  'wg-sunset': { bg: ['#FDBA74', '#C084FC'], fg: '#3B0764', ac: '#C2410C', icon: '🌇' },
+  'wg-night':  { bg: ['#312E81', '#0F172A'], fg: '#F1F5F9', ac: '#FACC15', icon: '🌙' },
+  'wg-gold':   { bg: ['#FEF3C7', '#FCD34D'], fg: '#78350F', ac: '#B45309', icon: '👑' }
+};
+{
+  const dlg = document.createElement('dialog');
+  dlg.id = 'wgPrevDlg';
+  document.body.append(dlg);
+  const toM = s => { const m = /^(\d\d?):(\d\d)$/.exec(s || ''); return m ? +m[1] * 60 + +m[2] : null; };
+
+  // widget.swift の makeContent と同じ決め方
+  function prevContent() {
+    const d = wgData(), now = new Date(), nowM = now.getHours() * 60 + now.getMinutes();
+    const [dT, dM] = d.days;
+    let title = '次の授業', msg = '';
+    let next = dT.classes.find(c => (toM(c.start) ?? 1e9) > nowM);
+    if (!next) {
+      if (d.after === 'next' && dM?.classes[0]) { next = dM.classes[0]; title = '明日'; }
+      else msg = d.after === 'next' ? '明日は授業なし' : '今日はおしまい';
+    }
+    const today = dT.events.filter(e => { const x = toM(e.end || e.start); return x == null || x > nowM; })
+      .map(e => (e.start ? e.start + ' ' : '') + (e.title || e.kind));
+    return { title, next, msg, today };
+  }
+
+  function prevHTML(id, size) {
+    const L = WG_LOOK[id] || WG_LOOK[''], c = prevContent(), max = size === 's' ? 2 : 3;
+    const head = `<div class="wpH" style="color:${L.ac}">${esc(c.title)}</div>`;
+    const nx = c.next
+      ? `<div class="wpN"><span class="wpP" style="background:${L.ac}">${c.next.period}限</span><b>${esc(c.next.name)}</b></div>` +
+        `<small>${esc([c.next.start, c.next.room].filter(Boolean).join('・'))}</small>`
+      : `<div>${esc(c.msg)}</div>`;
+    const list = `<div class="wpH" style="color:${L.ac}">今日の予定</div>` +
+      (c.today.length ? c.today.slice(0, max).map(t =>
+        `<div class="wpL"><i style="background:${L.ac}"></i>${esc(t)}</div>`).join('') : '<small>なし</small>') +
+      (c.today.length > max ? `<small>ほか${c.today.length - max}件</small>` : '');
+    return `<div class="wp wp-${size}" style="background:linear-gradient(135deg,${L.bg[0]},${L.bg[1]});color:${L.fg}">` +
+      (size === 's' ? head + nx + list : `<div class="wpCol">${head + nx}</div><div class="wpCol">${list}</div>`) +
+      `<span class="wpI">${L.icon}</span></div>`;
+  }
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-wgprev]');
+    if (!b) return;
+    const s = WG_THEMES.find(t => t[0] === b.dataset.wgprev);
+    if (!s) return;
+    dlg.innerHTML =
+      `<div class="dlgHead"><h2>${esc(s[1])}</h2><button type="button" class="x big" data-wpclose aria-label="閉じる">×</button></div>` +
+      '<div class="wpWrap">' + prevHTML(s[0], 's') + prevHTML(s[0], 'm') + '</div>' +
+      `<p class="hint">今日の中身で表示してるよ。${s[3]}pで交換できる</p>`;
+    dlg.showModal();
+  });
+  dlg.addEventListener('click', e => {
+    if (e.target.closest('[data-wpclose]') || e.target === dlg) dlg.close();
+  });
 }

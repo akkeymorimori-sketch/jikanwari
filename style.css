@@ -943,3 +943,103 @@ html.pageC #wallBg::after { background: var(--pageC); }
 .syRow input[type="date"] { grid-column: 2 / 4; }
 .syRow small { grid-column: 2 / 4; }
 .syBtns { display: flex; gap: 8px; margin-top: 10px; }
+
+.wgHead { font-size: 1em; margin: 12px 0 6px; }
+.nBox ~ .wgBox { margin-top: 12px; padding-top: 4px; border-top: 1px solid rgba(128, 128, 128, .3); }
+
+/* ===== ダイアログをステータスバーの下から始める ===== */
+dialog {
+  margin-top: calc(env(safe-area-inset-top) + 8px);
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+}
+/* ×を指で押しやすい大きさに */
+.dlgHead .x.big {
+  min-width: 44px; min-height: 44px;
+  margin-right: -8px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* 開いた瞬間に×に付く青い枠を消す */
+.dlgHead .x:focus { outline: none; }
+
+/* ===== 収入：バイト先の行を2段に ===== */
+.fcList li { display: block; }
+.fcRow { align-items: baseline; }
+.fcRow > span { min-width: 0; }
+.fcRow small { white-space: nowrap; }
+.fcRow b { white-space: nowrap; }
+.fcIn input { width: 6.5em; }
+
+/* ===== 収入：円グラフ ===== */
+.pie { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+.pieChart {
+  flex: none; position: relative;
+  width: 120px; height: 120px; border-radius: 50%;
+  display: grid; place-items: center;
+}
+.pieChart::before {
+  content: ''; position: absolute; inset: 20px;
+  border-radius: 50%; background: var(--surface);
+}
+.pieChart span { position: relative; font-size: 12px; font-weight: bold; }
+.pieLegend { flex: 1; min-width: 0; }
+.pieLegend li { justify-content: flex-start; gap: 6px; font-size: 13px; }
+.pieLegend i { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.pieLegend span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pieLegend b { margin-left: auto; white-space: nowrap; font-weight: normal; }
+.pieLegend small { flex: none; width: 2.8em; text-align: right; color: var(--sub); }
+
+/* ===== 欠席の上限をまとめて設定 ===== */
+.absBulk .row { flex-wrap: wrap; }
+#abNBox, #abCBox {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+}
+#abR { flex: 1; min-width: 6em; }
+.absBulk label.row { justify-content: flex-start; }
+.absBulk label.row > input { flex: none; }
+
+/* ===== 時限の時刻：枠からはみ出さないように ===== */
+#sTimes { table-layout: fixed; }
+#sTimes input { min-width: 0; width: 100%; }
+
+/* ===== 壁紙：％の太さをそろえる ===== */
+.wallDim b { min-width: 3em; text-align: right; font-weight: normal; }
+
+/* 遅刻 */
+.lateRule { margin-top: 10px; }
+.lateRule > span { flex: none; }
+#lateSummary { margin-top: 6px; }
+
+/* 共有のQRコード */
+#shareQr svg {
+  display: block; width: 100%; max-width: 300px; height: auto;
+  margin: 8px auto; background: #fff; border-radius: 8px;
+}
+#shareQr .hint { text-align: center; }
+#shareQrBtn { margin-top: 6px; }
+
+/* 空きコママッチ */
+.fmPeople { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.fmChip { background: #eef2ff; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.fmChip button { border: 0; background: none; padding: 0 0 0 6px; flex: none; }
+.fmTbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.fmTbl th, .fmTbl td { border: 1px solid #ddd; text-align: center; padding: 8px 0; font-size: 13px; }
+.fmTbl td { color: #aaa; }
+.fmTbl td.some { background: #fef9c3; color: #333; }
+.fmTbl td.all { background: #bbf7d0; color: #333; font-weight: bold; }
+#fmClose { margin-top: 10px; width: 100%; }
+
+/* ウィジェットのプレビュー */
+.wgPrevBtn { margin-right: 6px; }
+.wpWrap { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 8px 0; }
+.wp { position: relative; box-sizing: border-box; overflow: hidden; padding: 14px; border-radius: 22px; font-size: 12px; line-height: 1.35; }
+.wp-s { width: 158px; height: 158px; }
+.wp-m { display: flex; gap: 12px; width: 338px; max-width: 100%; height: 158px; }
+.wpCol { flex: 1; min-width: 0; }
+.wp b, .wp div, .wp small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wp small { display: block; opacity: .7; }
+.wpH { margin-top: 4px; font-size: 11px; font-weight: bold; }
+.wpN { display: flex; align-items: center; gap: 4px; font-size: 15px; }
+.wpP { flex: none; padding: 1px 6px; border-radius: 99px; color: #fff; font-size: 10px; font-weight: bold; }
+.wpL { display: flex; align-items: center; gap: 4px; }
+.wpL i { flex: none; width: 5px; height: 5px; border-radius: 50%; }
+.wpI { position: absolute; right: 8px; bottom: 4px; font-size: 40px; opacity: .25; }
