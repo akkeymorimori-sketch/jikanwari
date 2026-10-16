@@ -307,6 +307,8 @@ function normalize(s) {
     exam: nf.exam !== false,
     items: nf.items !== false,
     tasks: nf.tasks !== false,
+    events: nf.events !== false,
+    tDays: [1, 3, 7].includes(nf.tDays) ? nf.tDays : 3,
     mTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(nf.mTime) ? nf.mTime : '07:30',
     habit: nf.habit !== false,
     fortune: nf.fortune !== false,
@@ -4466,12 +4468,21 @@ function notifyPlan() {
         }
       }
       const k = ymd(next);
-      for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
-        if (!x.done && x.due === k) ds.push(x.title);
+      const dk = Array.from({ length: n.tDays }, (_, j) => ymd(addDays(next, j)));
+      const dl = [];
+      for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks) {
+        const j = x.done ? -1 : dk.indexOf(x.due);
+        if (j >= 0) dl.push([j, x.title + (j ? `（あと${j + 1}日）` : '（明日）')]);
+      }
+      dl.sort((a, b) => a[0] - b[0]);
+      ds.push(...dl.map(a => a[1]));
       const exs = eventsOn(k).filter(e => e.kind === 'exam' && grIsMine(e))
         .map(e => (e.start ? e.start + ' ' : '') + (e.title || '試験'));
+      const evs = eventsOn(k).filter(e => e.kind !== 'exam' && grIsMine(e))
+        .map(e => (e.start ? e.start + ' ' : '') + (e.title || EV_LABEL[e.kind] || '予定'));
       const showEx = n.exam && exs.length;
       if (showEx) lines.push('試験：' + exs.join('、'));
+      if (n.events && evs.length) lines.push('予定：' + evs.join('、'));
       if (n.items && its.length) lines.push('持ち物：' + its.join('、'));
       if (n.tasks && ds.length) lines.push('締切：' + ds.join('、'));
       if (lines.length) out.push({ at, title: showEx ? `明日 ${md(next)} は試験！` : `明日 ${md(next)} の準備`, body: lines.join('\n') });
@@ -4553,7 +4564,8 @@ if (LN) {
     '<div class="row nRow nKinds">' +
     '<label><input type="checkbox" id="nExam"> 試験</label>' +
     '<label><input type="checkbox" id="nItems"> 持ち物</label>' +
-    '<label><input type="checkbox" id="nTasks"> 課題の締切</label></div>' +
+    '<label><input type="checkbox" id="nTasks"> 課題の締切</label><label><input type="checkbox" id="nEvents"> 予定</label></div>' +
+    '<div class="row nRow">課題の締切は <select id="nTDays"><option value="1">明日だけ</option><option value="3">3日以内</option><option value="7">1週間以内</option></select> を知らせる</div>' +
     '<div class="row nRow">朝の <input type="time" id="nMTime"> に知らせる</div>' +
     '<div class="row nRow nKinds">' +
     '<label><input type="checkbox" id="nHabit"> 今日の日課</label>' +
@@ -4585,6 +4597,8 @@ if (LN) {
     $('#nExam').checked = state.notify.exam;
     $('#nItems').checked = state.notify.items;
     $('#nTasks').checked = state.notify.tasks;
+    $('#nEvents').checked = state.notify.events;
+    $('#nTDays').value = String(state.notify.tDays);
     $('#nMTime').value = state.notify.mTime;
     $('#nHabit').checked = state.notify.habit;
     $('#nFortune').checked = state.notify.fortune;
@@ -4617,10 +4631,10 @@ if (LN) {
   };
 
 // 通知の種類（変えたらすぐ予約し直す）
-for (const [id, key] of [['nExam', 'exam'], ['nItems', 'items'], ['nTasks', 'tasks']]) {
+for (const [id, key] of [['nExam', 'exam'], ['nItems', 'items'], ['nTasks', 'tasks'], ['nEvents', 'events']]) {
   $('#' + id).onchange = e => { state.notify[key] = e.target.checked; save(); };
 }
-
+  $('#nTDays').onchange = e => { state.notify.tDays = Number(e.target.value); save(); };
 $('#nHabit').onchange = e => { state.notify.habit = e.target.checked; save(); };
 $('#nMTime').onchange = e => {
   if (!/^\d\d:\d\d$/.test(e.target.value)) return syncNotifyUI();
