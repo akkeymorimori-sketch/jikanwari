@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=92">
+<link rel="stylesheet" href="style.css?v=182">
 </head>
 <body>
 <header>
@@ -38,6 +38,10 @@
 
   <!-- カレンダー -->
   <section class="view" id="view-cal" hidden>
+    <!-- 画像の日付を読むので、選んでる日とは関係ない。時間割タブと同じく上に置く -->
+    <div class="gridBar calBar" id="calBar">
+      <button type="button" id="evPhoto">📷 画像から予定を追加</button>
+    </div>
     <div class="card calCard">
       <div class="row calNav">
         <button id="calPrev" aria-label="前の月">‹</button>
@@ -48,7 +52,13 @@
       <p class="hint calLegend">
         <span class="ev task">課題</span><span class="ev job">バイト</span><span class="ev other">予定</span><span class="ev int">集中講義</span><span class="ev off">休み</span>
       </p>
-      <label class="inline" id="calPickBox"><input type="checkbox" id="calMulti"> 日付を複数選ぶ</label>
+      <div class="calOpts">
+        <label class="inline" id="calPickBox"><input type="checkbox" id="calMulti"> 日付を複数選ぶ</label>
+        <!-- 設定の「使い方」と同じ値（state.weekStart）。ここで変えてもすぐ保存 -->
+        <label class="inline calWeek">週のはじまり
+          <select id="calWeekStart" aria-label="カレンダーの週のはじまり"><option value="mon">月曜</option><option value="sun">日曜</option></select>
+        </label>
+      </div>
       <p class="hint" id="calPickInfo"></p>
     </div>
 
@@ -56,7 +66,14 @@
       <h3 id="dayTitle"></h3>
       <ul id="dayList"></ul>
 
-      <div id="taskBox">
+      <!-- 押したフォームだけ下に出す -->
+      <div class="dayAddBar" id="dayAddBar">
+        <button type="button" data-dayadd="todo" aria-expanded="false">＋ ToDo</button>
+        <button type="button" data-dayadd="task" aria-expanded="false">＋ 課題</button>
+        <button type="button" data-dayadd="ev" aria-expanded="false">＋ 予定</button>
+      </div>
+
+      <div id="taskBox" hidden>
         <h3 id="ctHead">この日が締切の課題を追加</h3>
         <select id="ctCourse" aria-label="授業"></select>
         <input id="ctTitle" placeholder="課題（例：レポート第1回）" aria-label="課題の内容" autocomplete="off">
@@ -69,6 +86,7 @@
         </div>
       </div>
 
+      <div id="evBox" hidden>
       <h3 id="evHead">この日に予定を追加</h3>
       <div class="row">
         <select id="evKind" class="narrow" aria-label="種類">
@@ -77,19 +95,30 @@
         </select>
         <input id="evTitle" autocomplete="off" placeholder="例: カフェ（空でもOK）" aria-label="予定のタイトル">
       </div>
+      <label class="evDateRow" id="evDateRow" hidden>日付 <input type="date" id="evDate" aria-label="予定の日付"></label>
+      <!-- 試験のときだけ：どの授業の試験か（試験前モードでノートを見返すため） -->
+      <label class="evDateRow" id="evCourseRow" hidden>授業 <select id="evCourse" aria-label="試験の授業"></select></label>
       <div id="evChips" class="chips"></div>
-      <p class="hint">候補は長押しで消せるよ</p>
+      <p class="hint" id="evChipsHint">候補は長押しで消せるよ</p>
       <div class="row">
         <input type="time" id="evStart" aria-label="開始時刻">
         <span class="hint">〜</span>
         <input type="time" id="evEnd" aria-label="終了時刻">
         <button id="evAdd">追加</button>
       </div>
-      <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
+      <details class="evMore" id="evMore">
+        <summary>くわしく（メモ・まとめて追加など）</summary>
+        <textarea id="evMemo" rows="2" placeholder="メモ（持ち物、場所など）" aria-label="予定のメモ"></textarea>
+        <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
+      </details>
       <div id="evEditBox" hidden>
-        <div class="row">
-          <select id="evScope" aria-label="変更する範囲"></select>
-        </div>
+        <!-- 同じ予定が2件以上あるときだけ出す -->
+        <fieldset class="evScopeBox" id="evScopeBox" hidden>
+          <legend>変更する範囲</legend>
+          <select id="evScope" hidden aria-hidden="true"></select>
+          <div id="evScopeList"></div>
+          <p class="hint">同じ予定＝種類・名前・時間が同じもの（毎週のバイトなど）</p>
+        </fieldset>
         <div class="row split">
           <button id="evDel" class="danger">削除</button>
           <div class="row">
@@ -97,6 +126,7 @@
             <button id="evSave" class="primary">変更を保存</button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   </section>
@@ -109,7 +139,8 @@
 
   <!-- その他 -->
   <section class="view" id="view-more" hidden>
-    <div class="card menu gridOnly">
+    <!-- 授業：どちらも時間割タブの上にあるので出さない（ボタンはJSから使うので残す） -->
+    <div class="card menu gridOnly" hidden>
       <h2>授業</h2>
       <button id="importBtn"><b>📷 画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
       <button id="termBtn"><b>🗓 学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
@@ -133,6 +164,7 @@
     <div class="card menu">
       <button id="settingsBtn"><b>⚙ 設定</b><small>通知、時限、AI、バックアップなど</small></button>
     </div>
+    <button type="button" id="privacyBtn" class="privacyBtn">🔒 プライバシーポリシー</button>
   </section>
 </main>
 
@@ -163,17 +195,18 @@
       <h2 tabindex="-1" autofocus>授業の詳細</h2>
       <button id="cX" class="x big" aria-label="閉じる">×</button>
     </div>
+    <!-- 入れたあとも何の欄か分かるように、上に小さく見出し -->
     <div class="row">
-      <input id="cName" placeholder="授業名" aria-label="授業名">
-      <input id="cShort" class="short" placeholder="略名（任意）" aria-label="略名">
+      <label class="fld"><span>授業名</span><input id="cName" placeholder="例：線形代数学"></label>
+      <label class="fld short"><span>略名</span><input id="cShort" placeholder="なくてもOK"></label>
     </div>
     <div class="row">
-      <select id="cDay" aria-label="曜日"></select>
-      <select id="cPeriod" aria-label="時限"></select>
+      <label class="fld"><span>曜日</span><select id="cDay"></select></label>
+      <label class="fld"><span>時限</span><select id="cPeriod"></select></label>
     </div>
     <div class="row">
-      <input id="cTeacher" placeholder="教員" aria-label="教員">
-      <input id="cRoom" placeholder="教室" aria-label="教室">
+      <label class="fld"><span>先生</span><input id="cTeacher" placeholder="例：田中"></label>
+      <label class="fld"><span>教室</span><input id="cRoom" placeholder="例：A101"></label>
     </div>
     <div class="row" id="cIntRow" hidden>
       <span class="hint">日程</span>
@@ -279,13 +312,13 @@
     </div>
 
     <details class="sec">
-      <summary>学期</summary>
+      <summary>学期 <small id="termSum"></small></summary>
       <ul id="termList"></ul>
       <p class="hint">開始日より前は授業がない扱いになるよ。終了日は空でもOK</p>
     </details>
 
     <details class="sec">
-      <summary id="offTitle">授業がない日</summary>
+      <summary><span id="offTitle">授業がない日</span> <small id="offSum"></small></summary>
       <ul id="offList"></ul>
       <div class="row">
         <input type="date" id="offFrom" aria-label="休みの開始日">
@@ -300,7 +333,7 @@
     </details>
 
     <details class="sec">
-      <summary>曜日の振替</summary>
+      <summary>曜日の振替 <small id="swapSum"></small></summary>
       <ul id="swapList"></ul>
       <div class="row">
         <input type="date" id="swapDate" aria-label="振替する日">
@@ -437,10 +470,34 @@
       <button id="sX" class="x big" aria-label="閉じる">×</button>
     </div>
 
+    <!-- 機能のオン/オフ（オフにするとアプリのどこにも出ない。データは消えない） -->
+    <details class="sec set" id="setFeat">
+      <summary>機能 <small></small></summary>
+      <p class="hint">使わない機能はオフにすると、アプリのどこにも出なくなるよ。データは消えないから、オンに戻せば元通り</p>
+      <div class="featList">
+        <label class="feat"><input type="checkbox" id="sUseGrid"><span><b>📚 時間割</b><small>授業・持ち物・学期・欠席・ミニノート</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="job"><span><b>💼 バイト・収入</b><small>バイトの予定、シフト表・給与明細の読み取り、収入</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="group"><span><b>👥 共有グループ</b><small>家族やサークルと予定を共有、コメント</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="share"><span><b>🔗 時間割の見せ合い</b><small>共有コード・QR、友達の時間割、空きコマ</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="diary"><span><b>📖 一言日記</b><small>今日の画面とカレンダーの日記</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="todo"><span><b>✅ ToDo</b><small>今日の画面とカレンダーのToDo</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="memo"><span><b>🗒 メモ</b><small>今日の画面とカレンダーのメモ</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="habit"><span><b>🔁 日課</b><small>毎日やることのチェック</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="points"><span><b>🎁 ポイント</b><small>ログインポイント、交換所、はじめにやること</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="alarm"><span><b>⏰ 目覚まし</b><small>上の⏰（アプリ版）</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="exam"><span><b>📝 試験前モード</b><small>試験の7日前から、その授業のノートや写真をすぐ見返せる</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="ai"><span><b>📷 写真から読み取り（AI）</b><small>シフト表・時間割・給与明細・予定が書いてある画像やスクショ</small></span></label>
+      </div>
+    </details>
+
     <details class="sec set" id="setUse">
       <summary>使い方 <small></small></summary>
-      <label class="inline"><input type="checkbox" id="sUseGrid"> 時間割を使う</label>
-      <p class="hint">オフにすると、時間割・持ち物・学期など授業まわりを隠すよ。データは消えないから、オンに戻せば元通り</p>
+      <label class="inline">カレンダーの週のはじまり
+        <select id="sWeekStart" class="narrow" aria-label="週のはじまり">
+          <option value="mon">月曜</option>
+          <option value="sun">日曜</option>
+        </select>
+      </label>
     </details>
 
     <details class="sec set gridOnly" id="setGrid">
@@ -539,6 +596,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=92"></script>
+<script src="app.js?v=182"></script>
 </body>
 </html>

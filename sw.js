@@ -16,7 +16,14 @@ self.addEventListener('fetch', e => {
     const net = fetch(req).then(res => {
       if (res.status === 200) {
         const copy = res.clone();
-        e.waitUntil(caches.open(CACHE).then(c => c.put(req, copy)));
+        e.waitUntil(caches.open(CACHE).then(async c => {
+          // 「app.js?v=150」みたいに ?v= だけ違う古い版は消す（更新のたびに溜まらないように）
+          if (url.search) for (const k of await c.keys()) {
+            const u = new URL(k.url);
+            if (u.pathname === url.pathname && u.search !== url.search) await c.delete(k);
+          }
+          await c.put(req, copy);
+        }));
       }
       return res;
     });
