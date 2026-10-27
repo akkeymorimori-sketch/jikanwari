@@ -2537,6 +2537,15 @@ $('#importBtn').onclick = () => {
   $('#importDlg').showModal();
 };
 $('#importClose').onclick = () => $('#importDlg').close();
+function clearImportImgs() {
+  $('#imgFile').value = '';
+  $('#imgPreview').style.display = 'none';
+  $('#imgPreview').removeAttribute('src');
+  for (const img of $('#imgThumbs').querySelectorAll('img')) URL.revokeObjectURL(img.src);
+  $('#imgThumbs').innerHTML = '';
+  $('#imgThumbs').hidden = true;
+  $('#ocrResult').innerHTML = '';
+}
 // 時間割の画像：何枚でも（前期と後期、曜日で分かれたスクショなど）。2枚以上は小さく並べる
 $('#imgFile').onchange = e => {
   const fs = [...e.target.files];
@@ -2681,6 +2690,7 @@ function applyImport(replace) {
   if (rows.some(r => r.day === 5)) state.showSat = true;
   scheduleChanged();
   $('#importDlg').close();
+  clearImportImgs(); // 次に開いたとき、同じ画像をまた読み取って二重に入れないように
   if (!backup && skipped) toast(`もう登録してある${skipped}件は飛ばしたよ`);
   if (backup) toast('時間割を置き換えたよ', () => {
     t.courses = backup.courses;
@@ -3561,8 +3571,15 @@ $('#inSave').onclick = () => {
   save(); resetInForm(); renderJobChips(); renderIncome();
   $('#scanStatus').textContent = '';
   toast(x ? '変更したよ' : '追加したよ');
-  // 給与明細を何枚か選んでたら、次の写真へ
-  if (!x && scanQueue.length) scanNext();
+  // 給与明細を何枚か選んでたら、次の写真へ。最後の1枚（1枚だけのときも）を保存したら写真を片づける（同じ明細を二重に入れないように）
+  if (!x && scanImg) {
+    if (scanQueue.length) scanNext();
+    else {
+      const n = scanTotal;
+      resetScan();
+      $('#scanStatus').textContent = n > 1 ? `${n}枚とも終わったよ` : '';
+    }
+  }
 };
 $('#inCancel').onclick = () => { resetInForm(); renderIncome(); };
 
@@ -4311,6 +4328,8 @@ $('#shResult').addEventListener('click', async e => {
 
   if (!add.length && !pages.size) return alert('全部もうカレンダーに入ってるよ');
   shiftDlg.close();
+  shReset(); // 次に開いたとき、同じシフトをまた追加しないように
+  $('#shFile').value = '';
   const msg = add.length
     ? `${add.length}件のシフトを追加したよ` + (skipped ? `（${skipped}件は入ってたので飛ばした）` : '')
     : `入ってた${skipped}件にシフト表をつけたよ`;
@@ -10496,11 +10515,24 @@ if (window.Capacitor?.isNativePlatform?.()) {
   list.before(box);
   box.append(list);
 
+  // 月ごとの表も同じく開け閉めできるように（12か月ぶん並ぶとごちゃつくので、最初は閉じる。開けたかは覚えておく）
+  const mt = $('#inMonths');
+  const mbox = document.createElement('details');
+  mbox.className = 'inRec';
+  mbox.id = 'inMonthsBox';
+  mbox.innerHTML = '<summary>月ごと <small id="inMonthsN"></small></summary>';
+  mt.before(mbox);
+  mbox.append(mt);
+  try { mbox.open = localStorage.getItem('inMonthsOpen') === '1'; } catch {}
+  mbox.addEventListener('toggle', () => { try { localStorage.setItem('inMonthsOpen', mbox.open ? '1' : '0'); } catch {} });
+
   const _ri = renderIncome;
   renderIncome = function () {
     _ri.apply(this, arguments);
-    const n = incomesOf(inYear).length;
+    const xs = incomesOf(inYear), n = xs.length;
     $('#inRecN').textContent = n ? `${n}件` : '';
+    const months = new Set(xs.map(x => x.date.slice(5, 7))).size;
+    $('#inMonthsN').textContent = months ? `${months}か月分` : 'まだなし';
   };
 }
 
