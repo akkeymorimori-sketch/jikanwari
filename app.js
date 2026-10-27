@@ -524,6 +524,12 @@ function normalize(s) {
   s.weekStart = s.weekStart === 'sun' ? 'sun' : 'mon'; // カレンダーの週のはじまり（最初は月曜）
   // カレンダーに出さない予定の出どころ（'me' = 自分の予定、ほかはグループID）。新しいグループは出す
   s.shiftJoin = s.shiftJoin !== false; // シフト表：続いてるコマを1つにまとめる（最初はまとめる）
+  // 予定の名前ごとの「いつもの場所」（画像から読んだ予定に場所が書いてないときに使う）
+  s.evPlaces = s.evPlaces && typeof s.evPlaces === 'object' && !Array.isArray(s.evPlaces)
+    ? Object.fromEntries(Object.entries(s.evPlaces).filter(([k, v]) => k.trim() && typeof v === 'string' && v.trim())
+        .slice(0, 100).map(([k, v]) => [k.trim().slice(0, 60), v.trim().slice(0, 60)]))
+    : {};
+  s.evTapSeen = s.evTapSeen === true; // 「予定をタップすると変更できる」のヒントを見終わった（一度変更した）
   s.calHide = Array.isArray(s.calHide) ? [...new Set(s.calHide.filter(x => typeof x === 'string' && x))].slice(0, 50) : [];
   if (!s.shiftDefaultOn) { s.shiftTimes = true; s.shiftDefaultOn = true; } // 時刻ずらしは最初ON
   s.syllabusSearch ??= '';
@@ -1825,6 +1831,23 @@ function eventsOn(k) {
     .filter(e => e.date === k && (job || e.kind !== 'job') && (group || !e.gid))
     .sort((a, b) => (a.start || '99').localeCompare(b.start || '99'));
 }
+// 予定の場所：メモの「📍 〜」の行に入れる。予定の名前ごとの「いつもの場所」は state.evPlaces
+const PIN = '📍';
+const placeOf = memo => (String(memo || '').split('\n').find(l => l.startsWith(PIN)) || '').slice(PIN.length).trim();
+const evPlaceDefault = title => (state.evPlaces || {})[String(title || '').trim()] || '';
+function setEvPlace(title, place) {
+  title = String(title || '').trim().slice(0, 60);
+  place = String(place || '').trim().slice(0, 60);
+  if (!title) return;
+  if (place) state.evPlaces[title] = place; else delete state.evPlaces[title];
+}
+// メモの先頭に場所の行を入れる（もうあれば置きかえる）。place が空ならメモはそのまま
+function memoWithPlace(memo, place) {
+  place = String(place || '').trim().slice(0, 60);
+  if (!place) return String(memo || '');
+  const rest = String(memo || '').split('\n').filter(l => !l.startsWith(PIN));
+  return [PIN + ' ' + place, ...rest].join('\n').trim();
+}
 // カレンダー（月・この日の予定）だけの絞り込み。今日の画面・通知などはそのまま
 function calEvents(k) {
   const hide = state.calHide || [];
@@ -1916,7 +1939,7 @@ function renderDay() {
     `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span> <span class="from">${esc(nm(c))}・締切</span></button></li>`);
   for (const e of calEvents(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
-    `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}${e.gid ? grLabel(e) : ''}${e.memo ? '<span class="evMemoMk" aria-label="メモあり">📝</span>' : ''}</button>` +
+    `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}${e.gid ? grLabel(e) : ''}${placeOf(e.memo) ? ` <span class="from evPlace">${PIN}${esc(placeOf(e.memo))}</span>` : ''}${e.memo ? '<span class="evMemoMk" aria-label="メモあり">📝</span>' : ''}</button>` +
     (e.img ? `<button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る">📄</button>` : '') +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   if (featOn('memo')) for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
@@ -2086,6 +2109,8 @@ function evTargets(scope) {
   const base = state.events.find(x => x.id === evEditId);
   if (!base) return [];
   if (scope === 'one') return [base];
+  // 種類と名前だけ同じ（時間は見ない）：時間が日によって違うバイトなど
+  if (scope === 'name') return state.events.filter(e => e.kind === base.kind && e.title === base.title);
   return state.events.filter(e => sameEv(e, base) && (
     scope === 'all' ||
     (scope === 'after' && e.date >= base.date) ||
@@ -2098,14 +2123,20 @@ function renderEvScope() {
   const base = state.events.find(x => x.id === evEditId);
   const opts = [['one', 'この予定だけ'], ['after', `${base ? md(parseYmd(base.date)) : 'この日'}以降の同じ予定`], ['all', '同じ予定すべて']];
   if (calMulti && calPicks.size) opts.push(['picks', '選んだ日の同じ予定']);
+  // 時間が違う同じ名前の予定があるときだけ「種類・名前が同じ予定すべて」を出す
+  const byName = evTargets('name').length;
+  if (base?.title && byName > evTargets('all').length) opts.push(['name', '種類・名前が同じ予定すべて']);
   sel.innerHTML = opts.map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
   // 同じ予定が1件だけ（共有した予定も）なら、選ぶものがないので出さない
-  const many = evTargets('all').length > 1;
+  const many = Math.max(evTargets('all').length, base?.title ? byName : 0) > 1;
   sel.value = many && opts.some(o => o[0] === v) ? v : 'one';
   $('#evScopeBox').hidden = !many;
   $('#evScopeList').innerHTML = many ? opts.map(([k, l]) =>
     `<label class="inline"><input type="radio" name="evScopeR" value="${k}"${k === sel.value ? ' checked' : ''}>` +
     `${l}${k === 'one' ? '' : `（${evTargets(k).length}件）`}</label>`).join('') : '';
+  $('#evScopeHint').textContent = opts.some(o => o[0] === 'name')
+    ? '同じ予定＝種類・名前・時間が同じもの。「種類・名前が同じ」は時間が違っても入って、変えた所だけ全部に入る（時間を変えなければ時間はそれぞれのまま）'
+    : '同じ予定＝種類・名前・時間が同じもの（毎週のバイトなど）';
 }
 $('#evScopeList').addEventListener('change', e => {
   if (e.target.name === 'evScopeR') $('#evScope').value = e.target.value;
@@ -2506,12 +2537,20 @@ $('#importBtn').onclick = () => {
   $('#importDlg').showModal();
 };
 $('#importClose').onclick = () => $('#importDlg').close();
+// 時間割の画像：何枚でも（前期と後期、曜日で分かれたスクショなど）。2枚以上は小さく並べる
 $('#imgFile').onchange = e => {
-  const f = e.target.files[0];
-  if (!f) return;
-  const p = $('#imgPreview');
-  p.src = URL.createObjectURL(f);
-  p.style.display = 'block';
+  const fs = [...e.target.files];
+  const p = $('#imgPreview'), th = $('#imgThumbs');
+  for (const img of th.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+  th.innerHTML = '';
+  th.hidden = fs.length < 2;
+  p.style.display = fs.length === 1 ? 'block' : 'none';
+  if (fs.length === 1) p.src = URL.createObjectURL(fs[0]);
+  if (fs.length > 1) {
+    th.innerHTML = fs.map(() => '<img alt="">').join('');
+    th.querySelectorAll('img').forEach((img, i) => { img.src = URL.createObjectURL(fs[i]); });
+    $('#ocrStatus').textContent = `${fs.length}枚選んだよ。まとめて読み取って1つの表にするよ`;
+  }
 };
 
 function friendlyError(err) {
@@ -2524,21 +2563,36 @@ function friendlyError(err) {
 let ocrRunning = false;
 $('#runOcr').onclick = async () => {
   if (ocrRunning) return;
-  const f = $('#imgFile').files[0];
-  if (!f) return alert('画像を選んでね');
+  const fs = [...$('#imgFile').files];
+  if (!fs.length) return alert('画像を選んでね');
   ocrRunning = true;
   $('#runOcr').disabled = true;
   aiBegin('#runOcr');
-  $('#ocrStatus').textContent = `読み取り中…（${PROVIDERS[state.provider].label}）`;
+  const st = $('#ocrStatus');
+  // 何枚でも読んで1つの表にする。同じ曜日・時限・授業名は1つにまとめる（スクショが重なってても大丈夫なように）
+  const all = [], seen = new Set();
+  let done = 0;
   try {
-    const txt = await callVision(await fileToJpegBase64(f));
-    const s = txt.indexOf('['), e = txt.lastIndexOf(']');
-    if (s < 0 || e < s) throw new Error('結果がうまく読めなかった。別のモデルで試してみて');
-    const arr = JSON.parse(txt.slice(s, e + 1));
-    showRows(arr);
-    $('#ocrStatus').textContent = `${arr.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
+    for (const [i, f] of fs.entries()) {
+      if (i > 0) await aiSleep(2000); // 回数制限にかからないように間をあける
+      st.textContent = `読み取り中…（${PROVIDERS[state.provider].label}${fs.length > 1 ? `・${i + 1}/${fs.length}枚目` : ''}）`;
+      const txt = await callVision(await fileToJpegBase64(f), PROMPT, st);
+      const s = txt.indexOf('['), e = txt.lastIndexOf(']');
+      if (s < 0 || e < s) throw new Error(`${fs.length > 1 ? `${i + 1}枚目の` : ''}結果がうまく読めなかった。別のモデルで試してみて`);
+      for (const c of JSON.parse(txt.slice(s, e + 1))) {
+        const key = [String(c?.day ?? '').trim().charAt(0), +c?.period || 1, String(c?.name ?? '').trim()].join('|');
+        if (seen.has(key)) continue;
+        seen.add(key); all.push(c);
+      }
+      done++;
+    }
+    showRows(all);
+    st.textContent = `${fs.length > 1 ? `${fs.length}枚から` : ''}${all.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
   } catch (err) {
-    $('#ocrStatus').textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
+    // 途中まで読めた分は出しておく
+    if (all.length) showRows(all);
+    const part = done && fs.length > 1 ? `（${done}枚目までは読めたので下に出したよ）` : '';
+    st.textContent = (isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err)) + part;
   } finally {
     aiEnd('#runOcr');
     ocrRunning = false;
@@ -3507,6 +3561,8 @@ $('#inSave').onclick = () => {
   save(); resetInForm(); renderJobChips(); renderIncome();
   $('#scanStatus').textContent = '';
   toast(x ? '変更したよ' : '追加したよ');
+  // 給与明細を何枚か選んでたら、次の写真へ
+  if (!x && scanQueue.length) scanNext();
 };
 $('#inCancel').onclick = () => { resetInForm(); renderIncome(); };
 
@@ -3562,6 +3618,7 @@ $('#modeMask').onclick = () => setScanMode('mask');
 function resetScan() {
   if (scanUrl) URL.revokeObjectURL(scanUrl);
   scanImg = null; scanUrl = ''; scanCrop = null; scanMasks = []; scanHist = []; scanDrag = null;
+  scanQueue = []; scanTotal = 0; syncScanQueue();
   $('#scanFile').value = '';
   $('#scanBox').hidden = true;
   $('#scanStatus').textContent = '';
@@ -3574,8 +3631,29 @@ function resetScan() {
   setScanMode('crop');
 }
 
+// 給与明細：何枚か選んだら1枚ずつ。読み取って「追加」で保存すると次の写真に進む
+let scanQueue = [], scanTotal = 0;
+function syncScanQueue() {
+  const q = $('#scanQueue');
+  q.hidden = scanTotal < 2;
+  if (scanTotal < 2) return;
+  const n = scanTotal - scanQueue.length;
+  q.innerHTML = `${n}/${scanTotal}枚目。` + (scanQueue.length
+    ? '保存すると次の写真に進むよ <button type="button" id="scanSkip">この写真を飛ばす</button>'
+    : 'これが最後の写真だよ');
+}
+async function scanNext() {
+  const f = scanQueue.shift();
+  if (f) await loadScanFile(f);
+  syncScanQueue();
+}
+$('#scanQueue').addEventListener('click', e => { if (e.target.id === 'scanSkip') scanNext(); });
 $('#scanFile').onchange = async e => {
-  const f = e.target.files[0];
+  scanQueue = [...e.target.files];
+  scanTotal = scanQueue.length;
+  await scanNext();
+};
+async function loadScanFile(f) {
   if (!f) return;
   if (scanUrl) URL.revokeObjectURL(scanUrl);
   scanUrl = URL.createObjectURL(f);
@@ -3592,7 +3670,7 @@ $('#scanFile').onchange = async e => {
   $('#scanBox').hidden = false;
   $('#scanStatus').textContent = '';
   drawScan();
-};
+}
 
 const rectOf = (a, b) =>
   ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
@@ -3865,13 +3943,14 @@ async function loadPdfLib() {
 }
 
 const shiftPrompt = name => `これはアルバイトのシフト表の画像です（1日分の表のことも、1か月分の表のこともあります）。「${name}」さんの勤務だけを探して、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
-形式: [{"month":10,"day":17,"start":"09:30","end":"15:00"}]
+形式: [{"month":10,"day":17,"start":"09:30","end":"15:00","place":""}]
 ルール:
 - 名前の欄が「${name}」と完全に同じものだけを使う。名字だけ同じ別の人（例：「鈴木」と「鈴木大介」）や、似た字の名前は使わない。
 - 1日に2回入っている場合（午前と午後の両方など）は、それぞれ別の要素にする。
 - monthとdayは、その勤務の日付（表の上の日付や、日付の列）を数字で。年は書かない。
 - startとendは勤務の入り・退きの時刻で、24時間表記のHH:MM。休憩や時間数（h）の欄は使わない。
 - 「公休」「休み」などの欄に名前があるだけで、時刻がない日は出力しない。
+- placeは、その勤務の店舗・場所が書いてあれば20文字以内で、なければ ""（いつもと違う日だけ書いてある表もある）。
 - 見つからなければ [] だけを出力する。読み取れない部分を推測で埋めない。
 - ほかの人の名前や、行事・メモの欄の内容は出力しない。`;
 // 1か月の表用：日付の行と自分の行を別々に書き出してもらい、対応づけはアプリでやる
@@ -3891,13 +3970,14 @@ JSONだけを出力してください。説明文やコードブロック記号�
 // 名前がない表（自分の分だけ個別に送られてくるシフト・LINEのスクショなど）用：全部の勤務を読む
 // 何人分も書いてある表だったら multi にして、勤務は返さない（ほかの人のシフトを拾わないように）
 const minePrompt = () => `これはアルバイトのシフトが書いてある画像です（1人分だけのシフト表、シフトを知らせるLINEやメールのスクショ、手書きのメモなど）。勤務をすべて書き出して、JSONだけを出力してください。説明文やコードブロック記号は書かないでください。
-形式: {"multi":false,"shifts":[{"month":10,"day":17,"start":"09:30","end":"15:00"}]}
+形式: {"multi":false,"shifts":[{"month":10,"day":17,"start":"09:30","end":"15:00","place":""}]}
 ルール:
 - 何人もの名前が並んでいて、人ごとにシフトが分かれている表なら、だれのものか分からないので {"multi":true,"shifts":[]} だけを出力する。
 - 1日に2回入っている場合（午前と午後の両方など）は、それぞれ別の要素にする。
 - monthとdayは、その勤務の日付を数字で。年は書かない。「明日」などしか書いてなくて日付が分からないものは出力しない。
 - startとendは勤務の入り・退きの時刻で、24時間表記のHH:MM（「17-22」なら "17:00" と "22:00"）。休憩や時間数（h）の欄は使わない。
 - 「休み」「公休」「×」など、時刻がない日は出力しない。
+- placeは、その勤務の店舗・場所が書いてあれば20文字以内で、なければ ""（いつもと違う日だけ書いてあることもある）。
 - 見つからなければ {"multi":false,"shifts":[]} だけを出力する。読み取れない部分を推測で埋めない。`;
 
 // 日付とセルの数が合わない段は、ずれてる可能性が高いので捨てる
@@ -3930,6 +4010,8 @@ shiftDlg.innerHTML =
   '<p class="hint" id="shNameHint">自分のシフトだけが書いてある表やLINEのスクショなら、名前は空欄でOK（表の形も選ばなくていいよ）</p>' +
   '<label>カレンダーに入れる名前<input id="shJob" placeholder="例：バイト先の名前" list="shJobList" autocomplete="off"></label>' +
   '<datalist id="shJobList"></datalist>' +
+  '<label>いつもの場所（なくてもOK）<input id="shPlace" placeholder="例：駅前店" maxlength="60" autocomplete="off"></label>' +
+  '<p class="hint">表に場所が書いてない日は、ここの場所をメモに入れるよ</p>' +
   '<label>表の形<select id="shLayout">' +
   '<option value="day">1日ごとの表・その他</option>' +
   '<option value="grid">1か月の表（名前が縦、日付が横）</option>' +
@@ -3951,6 +4033,7 @@ function openShift() {
   $('#shName').value = state.shiftName || '';
   $('#shJob').value = state.shiftJob || '';
   $('#shLayout').value = state.shiftLayout || 'day';
+  $('#shPlace').value = evPlaceDefault($('#shJob').value);
   syncShName();
   const jobs = new Set();
   for (const p of state.evPresets) if (p.kind === 'job' && p.title) jobs.add(p.title);
@@ -4150,7 +4233,7 @@ function showShRows() {
     const date = shYmd(r?.month, r?.day), start = shTime(r?.start), end = shTime(r?.end);
     if (!date || !start) continue;
     const k = `${date} ${start}`;
-    if (!map.has(k)) map.set(k, { date, start, end, page });
+    if (!map.has(k)) map.set(k, { date, start, end, page, place: String(r?.place || '').trim().slice(0, 60) });
   }
   // 同じ日で、終わりと次の始まりがつながってる勤務は1つにする。
   // 「まとめる」がオンなら、塾のコマみたいに間が SH_JOIN_GAP 分以内の勤務（17:00-17:50、18:00-18:50 など）もつなげる
@@ -4160,7 +4243,7 @@ function showShRows() {
   for (const r of list) {
     const p = shRows[shRows.length - 1];
     const d = p && p.date === r.date && p.end ? toMin(r.start) - toMin(p.end) : -1;
-    if (d >= 0 && d <= gap) { p.end = r.end || p.end; p.n++; }
+    if (d >= 0 && d <= gap) { p.end = r.end || p.end; p.n++; p.place ||= r.place; }
     else shRows.push({ ...r, on: true, n: 1 });
   }
   // 間があいてるコマがあるときだけ「まとめる」のチェックを出す（ぴったり続いてるのはいつもつなげる）
@@ -4174,7 +4257,9 @@ function showShRows() {
         `<li><label class="shDay"><input type="checkbox" data-shr="${i}" checked>${md(parseYmd(r.date))}</label>` +
         `<input type="time" data-sht="${i}" data-k="start" value="${r.start}" aria-label="入り">〜` +
         `<input type="time" data-sht="${i}" data-k="end" value="${r.end}" aria-label="退き">` +
-        (r.n > 1 ? `<small class="muted">${r.n}コマ</small>` : '') + '</li>').join('') +
+        (r.n > 1 ? `<small class="muted">${r.n}コマ</small>` : '') +
+        // 表に場所が書いてあった日だけ出す（ない日は「いつもの場所」）
+        (r.place ? `<input class="shPlace" data-shpl="${i}" value="${esc(r.place)}" maxlength="60" aria-label="場所">` : '') + '</li>').join('') +
       '</ul>' +
       `<button type="button" class="primary" id="shAdd">${shRows.length}件をカレンダーに追加</button>`
     : shDone.size
@@ -4187,6 +4272,7 @@ $('#shResult').addEventListener('change', e => {
   if (t.id === 'shJoin') { state.shiftJoin = t.checked; save(); return showShRows(); }
   if (t.dataset.shr != null) shRows[+t.dataset.shr].on = t.checked;
   if (t.dataset.sht != null) shRows[+t.dataset.sht][t.dataset.k] = t.value;
+  if (t.dataset.shpl != null) shRows[+t.dataset.shpl].place = t.value.trim();
   const n = shRows.filter(r => r.on && r.start).length;
   if ($('#shAdd')) $('#shAdd').textContent = `${n}件をカレンダーに追加`;
 });
@@ -4196,6 +4282,7 @@ $('#shResult').addEventListener('click', async e => {
   const btn = e.target;
   const title = $('#shJob').value.trim();
   state.shiftJob = title;
+  setEvPlace(title, $('#shPlace').value);
   const picks = shRows.filter(r => r.on && r.start);
   if (!picks.length) return alert('追加する勤務を選んでね');
   // 同じ日・同じ名前・同じ時刻のバイトは二重に入れない
@@ -4234,6 +4321,8 @@ $('#shResult').addEventListener('click', async e => {
       if (old) { if (img) old.img = img; continue; } // 入ってた予定には画像だけつける
       const ev = { id: uid(), date: r.date, kind: 'job', title, start: r.start, end: r.end };
       if (img) ev.img = img;
+      const place = r.place || evPlaceDefault(title); // 表に書いてなければ、いつもの場所
+      if (place) ev.memo = memoWithPlace('', place);
       state.events.push(ev);
     }
     if (title) rememberPreset({ title, kind: 'job', start: '', end: '' });
@@ -6171,10 +6260,14 @@ function saveEvEdit() {
     n = ts.length;
     const skip = delta ? ts.filter(x => x.src === 'cal').length : 0;
     const cidv = examCidOf(v.kind);
+    // 「種類・名前が同じ」は時間がそれぞれ違うので、変えた所（種類・名前・時刻・メモ）だけを全部に入れる
+    const byName = $('#evScope').value === 'name';
+    const diff = byName ? Object.fromEntries(Object.entries(v).filter(([key, val]) => e[key] !== val)) : v;
+    const memoChanged = !byName || (e.memo || '') !== memo;
     const apply = () => {
       for (const x of ts) {
-        Object.assign(x, v, { date: moveDate(x) });
-        if (memo) x.memo = memo; else delete x.memo;
+        Object.assign(x, diff, { date: moveDate(x) });
+        if (memoChanged) { if (memo) x.memo = memo; else delete x.memo; }
         if (cidv) { delete x.cid; Object.assign(x, cidv); }
         if (x.kind !== 'exam') delete x.cid;
       }
@@ -8254,8 +8347,8 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
   // [種類, ボタンの文字, 説明, 入れる欄, PDFが読めるか, 複数枚いけるか]
   const ROUTES = [
     ['shift', '💼 シフト表', '自分の勤務をカレンダーに追加', '#shFile', true, true],
-    ['grid', '📚 時間割', '授業をまとめて登録', '#imgFile', false, false],
-    ['pay', '💴 給与明細', '支給日と金額を収入に記録', '#scanFile', false, false],
+    ['grid', '📚 時間割', '授業をまとめて登録', '#imgFile', false, true],
+    ['pay', '💴 給与明細', '支給日と金額を収入に記録', '#scanFile', false, true],
   ];
   const inDlg = document.createElement('dialog');
   inDlg.id = 'inShareDlg';
@@ -8391,7 +8484,7 @@ var WG_LOOK = {
     const now = new Date();
     return `これは予定が書いてある画像です（手帳や手書きのメモ、ホワイトボード、プリント、LINEなどのトーク画面やメールのスクリーンショットなど）。書いてある予定を読み取って、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
 今日は${now.getFullYear()}年${md(now)}です。
-形式: [{"month":10,"day":17,"start":"18:00","end":"22:00","title":"バイト","kind":"job"}]
+形式: [{"month":10,"day":17,"start":"18:00","end":"22:00","title":"バイト","kind":"job","place":"駅前店"}]
 ルール:
 - monthとdayは数字で。年は書かない。
 - 「明日」「あさって」「来週の金曜」のような日付は、画像の中のメッセージやメールの日付を基準に、なければ今日を基準に、月と日に直す。「そのうち」「今度」など日が決まらないものは出力しない。
@@ -8401,6 +8494,7 @@ var WG_LOOK = {
 - 「午後3時」は "15:00"、「18-22」は start "18:00"・end "22:00" のように直す。
 - titleは20文字以内。手帳やメモは書いてある言葉をそのまま、トークやメールは要点だけにする（例：「駅前集合」「ゼミ飲み」）。読めない字は推測で埋めず、読めた部分だけにする。
 - kindは、バイト・シフト・勤務なら "job"、試験・テスト・小テストなら "exam"、それ以外は "other"。
+- placeは場所（店名・教室・駅・集合場所など）が書いてあれば20文字以内で、なければ ""。
 - 線で消してある予定は出力しない。
 - 予定が見つからなければ [] だけを出力する。`;
   };
@@ -8484,7 +8578,8 @@ var WG_LOOK = {
             on: true, date,
             start: memoTime(r.start), end: memoTime(r.end),
             title: String(r.title || '').trim().slice(0, 60),
-            kind: kindIds().includes(r.kind) ? r.kind : 'other'
+            kind: kindIds().includes(r.kind) ? r.kind : 'other',
+            place: String(r.place || '').trim().slice(0, 60)
           });
         }
       }
@@ -8509,6 +8604,9 @@ var WG_LOOK = {
           `<div class="mmTime"><input type="time" data-i="${i}" data-f="start" value="${r.start}">〜` +
           `<input type="time" data-i="${i}" data-f="end" value="${r.end}"></div>` +
           `<div class="mmTitle"><input data-i="${i}" data-f="title" value="${esc(r.title)}" placeholder="予定の名前" maxlength="60"></div>` +
+          // 場所：空なら、その名前の「いつもの場所」を入れる
+          `<div class="mmTitle"><input data-i="${i}" data-f="place" value="${esc(r.place)}" maxlength="60" aria-label="場所" ` +
+          `placeholder="${esc(evPlaceDefault(r.title) ? `${PIN} いつもの場所：${evPlaceDefault(r.title)}` : `${PIN} 場所（なくてもOK）`)}"></div>` +
           '</li>').join('') + '</ul>' +
         `<button type="button" class="primary" id="mmAdd"${n ? '' : ' disabled'}>${n}件をカレンダーに追加</button>`
       : '';
@@ -8522,7 +8620,7 @@ var WG_LOOK = {
   });
   $('#mmResult').addEventListener('input', e => {
     const el = e.target, r = mmRows[el.dataset.i];
-    if (r && el.dataset.f === 'title') r.title = el.value;
+    if (r && (el.dataset.f === 'title' || el.dataset.f === 'place')) r[el.dataset.f] = el.value;
   });
 
   $('#mmResult').addEventListener('click', e => {
@@ -8535,9 +8633,13 @@ var WG_LOOK = {
     mmDlg.close();
     if (!add.length) return toast(`${skipped}件とも、もう入ってたよ`);
     withUndo(`${add.length}件の予定を追加したよ` + (skipped ? `（${skipped}件は入ってたので飛ばした）` : ''), () => {
-      for (const r of add) state.events.push({
-        id: uid(), date: r.date, kind: r.kind, title: r.title.trim(), start: r.start, end: r.end
-      });
+      for (const r of add) {
+        const place = r.place.trim() || evPlaceDefault(r.title);
+        state.events.push({
+          id: uid(), date: r.date, kind: r.kind, title: r.title.trim(), start: r.start, end: r.end,
+          ...(place && { memo: memoWithPlace('', place) })
+        });
+      }
     });
   });
 }
@@ -11218,7 +11320,7 @@ window.ngCheck = text => {
   const se = startEvEdit;
   startEvEdit = function () {
     se.apply(this, arguments);
-    if ($('#evMemo').value || $('#evShare')?.value) more.open = true;
+    if ($('#evShare')?.value) more.open = true; // メモは「くわしく」の外にあるので、共有のときだけ開く
   };
 
   bar.addEventListener('click', e => {
@@ -11431,8 +11533,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   dlg.id = 'calShowDlg';
   dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>カレンダーに出す予定</h2>' +
     '<button type="button" class="x big" data-close aria-label="閉じる">×</button></div>' +
-    '<p class="hint">チェックを外すと、カレンダーに出なくなるよ（今日の画面や通知はそのまま）。授業と課題はいつも出る</p>' +
+    '<p class="hint" id="calShowHint"></p>' +
     '<div id="calShowList" class="calShowList"></div>' +
+    '<button type="button" id="calShowGroup">👥 共有グループを作る・入る</button>' +
     '<button type="button" class="primary" data-close>OK</button></div>';
   document.body.append(dlg);
 
@@ -11445,9 +11548,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     return on.length === 1 ? on[0][1] : `${on.length}つ`;
   }
   function sync() {
-    btn.hidden = !featOn('group') || !groups().length;
-    btn.textContent = `👥 表示：${label()}`;
-    btn.setAttribute('aria-label', `カレンダーに出す予定（今は${label()}）`);
+    // 共有グループの機能がオンなら、まだグループがなくても出す（ここから作れる）
+    btn.hidden = !featOn('group');
+    btn.textContent = groups().length ? `👥 表示：${label()}` : '👥 共有';
+    btn.setAttribute('aria-label', groups().length ? `カレンダーに出す予定（今は${label()}）` : '共有グループ');
     // 半分の幅のときは短く
     $('#evPhoto').textContent = btn.hidden ? '📷 画像から予定を追加' : '📷 画像から追加';
     $('#evPhoto').setAttribute('aria-label', '画像から予定を追加');
@@ -11457,12 +11561,22 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     bar.hidden = ![...bar.children].some(b => getComputedStyle(b).display !== 'none');
   }
   function renderList() {
+    const has = groups().length;
+    $('#calShowHint').textContent = has
+      ? 'チェックを外すと、カレンダーに出なくなるよ（今日の画面や通知はそのまま）。授業と課題はいつも出る'
+      : '共有グループを作ると、家族や友達と予定を一緒に見られるよ。グループの予定を出すか、ここで選べるようになる';
+    $('#calShowGroup').textContent = has ? '👥 共有グループの設定' : '👥 共有グループを作る・入る';
+    dlg.querySelector('h2').textContent = has ? 'カレンダーに出す予定' : '共有グループ';
+    $('#calShowList').hidden = !has;
     $('#calShowList').innerHTML = srcs().map(([id, name]) =>
       `<label class="inline"><input type="checkbox" data-calsrc="${esc(id)}"${state.calHide.includes(id) ? '' : ' checked'}> ` +
       `${id === 'me' ? '🙂 ' : '👥 '}${esc(name)}</label>`).join('');
   }
   btn.onclick = () => { renderList(); dlg.showModal(); };
-  dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
+  dlg.addEventListener('click', e => {
+    if (e.target === dlg || e.target.closest('[data-close]')) dlg.close();
+    if (e.target.id === 'calShowGroup') { dlg.close(); $('#groupBtn').click(); }
+  });
   dlg.addEventListener('change', e => {
     const id = e.target.dataset.calsrc;
     if (id == null) return;
@@ -11474,4 +11588,80 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const rc = renderCal;
   renderCal = function () { sync(); return rc.apply(this, arguments); };
   sync();
+}
+
+/* ===== 予定の「いつもの場所」 ===== */
+// 予定の名前を入れたら、その名前のいつもの場所をメモに入れておく（自分で書いたメモは変えない）
+{
+  const row = document.createElement('div');
+  row.id = 'evPlaceRow';
+  row.className = 'evPlaceRow';
+  $('#evMemo').after(row);
+  let auto = ''; // 自動で入れたメモ。書きかえられてなければ、名前を変えたときに入れ直す
+  const sync = () => {
+    const t = $('#evTitle').value.trim(), def = evPlaceDefault(t);
+    row.hidden = !t;
+    row.innerHTML = !t ? '' : def
+      ? `${PIN} 「${esc(t)}」のいつもの場所：<b>${esc(def)}</b> <button type="button" id="evPlaceSet">変える</button>`
+      : `<button type="button" id="evPlaceSet">${PIN} 「${esc(t)}」のいつもの場所を決める</button>`;
+    syncMore();
+    if (evEditId) return;
+    const memo = $('#evMemo');
+    if (!memo.value) auto = '';
+    if (memo.value === auto) memo.value = auto = def ? memoWithPlace('', def) : '';
+  };
+  // 「くわしく」の中身（まとめて追加・共有・ロック）が全部隠れてるとき（変更中で共有グループなしなど）は、枠ごと隠す
+  const more = $('#evMore');
+  const syncMore = () => { more.hidden = ![...more.children].some(el => el.tagName !== 'SUMMARY' && !el.hidden); };
+  const rd = renderDay;
+  renderDay = function () { const r = rd.apply(this, arguments); syncMore(); return r; };
+  $('#evTitle').addEventListener('input', sync);
+  $('#evChips').addEventListener('click', () => setTimeout(sync, 0));
+  $('#evAdd').addEventListener('click', () => setTimeout(sync, 0));
+  for (const name of ['startEvEdit', 'endEvEdit']) {
+    const f = window[name];
+    window[name] = function () { const r = f.apply(this, arguments); sync(); return r; };
+  }
+  row.addEventListener('click', async e => {
+    if (e.target.id !== 'evPlaceSet') return;
+    const t = $('#evTitle').value.trim();
+    const v = await askLine(`「${t}」のいつもの場所`, evPlaceDefault(t), { max: 60, placeholder: '例：駅前店（空にすると消す）' });
+    if (v == null) return;
+    setEvPlace(t, v);
+    save();
+    // 今のメモの場所の行も変える
+    const memo = $('#evMemo'), was = memo.value === auto;
+    if (v.trim()) memo.value = memoWithPlace(memo.value, v);
+    if (was) auto = memo.value;
+    sync();
+    toast(v.trim() ? `「${t}」の場所は「${v.trim()}」で覚えたよ` : `「${t}」のいつもの場所を消したよ`);
+  });
+  sync();
+
+  // シフト表：バイト先を変えたら、そのバイト先のいつもの場所に
+  const job = $('#shJob'), place = $('#shPlace');
+  const syncSh = () => { place.value = evPlaceDefault(job.value); };
+  job.addEventListener('input', syncSh);
+  job.addEventListener('change', syncSh);
+  job.closest('.dlg')?.addEventListener('click', e => { if (e.target.closest('[data-shj]')) setTimeout(syncSh, 0); });
+}
+
+/* ===== この日の予定：タップで変更できるのを知らせる ===== */
+// 行の右の ✎ は CSS。初めての人には、一度変更するまでヒントも出す
+{
+  const rd = renderDay;
+  renderDay = function () {
+    const r = rd.apply(this, arguments);
+    const list = $('#dayList');
+    if (!state.evTapSeen && list.querySelector('[data-evedit], [data-taskedit]'))
+      list.insertAdjacentHTML('beforeend', '<li class="evTapHint">💡 予定や課題をタップすると、変更・削除できるよ</li>');
+    return r;
+  };
+  for (const name of ['startEvEdit', 'startTaskEdit']) {
+    const f = window[name];
+    window[name] = function () {
+      if (!state.evTapSeen) { state.evTapSeen = true; save(); }
+      return f.apply(this, arguments);
+    };
+  }
 }
