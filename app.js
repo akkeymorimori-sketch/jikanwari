@@ -11185,6 +11185,13 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
     const TEST_URL = P.url.replace(/chat\/completions$/, 'models');
     let step = 0;
 
+    // Google AI Studio の手順（www/guide/ のスクショ）
+    const AW_SHOTS = [
+      ['ai-1.jpg', 'Googleアカウントでログイン'],
+      ['ai-2.jpg', '「利用目的」を聞かれたら「スキップ」でOK'],
+      ['ai-3.jpg', '1つ目にチェックして「続行」（2つ目のメールはなくてOK）'],
+      ['ai-4.jpg', 'キーの横のコピーのボタンを押す（キーがなければ右上の「API キーを作成」）'],
+    ];
     const dots = n => `<p class="awStep">ステップ ${n}/3</p>`;
     const draw = (msg = '') => {
       w.innerHTML = [
@@ -11195,8 +11202,12 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
 
         dots(2) +
         '<p class="awLead">Googleのページでキーを作ってコピーする</p>' +
-        '<ol class="phSteps"><li>下のボタンでページを開く</li><li>Googleアカウントでログイン</li><li>APIキーを作るボタンを押して、出てきたキーをコピー</li></ol>' +
+        '<p class="hint">こんな画面が順に出るよ。赤い枠のところを押してね（横にめくれる）</p>' +
+        // 実際の画面（スマホ）に赤い枠を付けたもの。画面が変わってても分かるように、下に文字でも書く
+        '<div class="awShots">' + AW_SHOTS.map(([img, cap], i) =>
+          `<figure><img src="guide/${img}" alt="${esc(cap)}" loading="lazy"><figcaption><b>${i + 1}</b> ${cap}</figcaption></figure>`).join('') + '</div>' +
         `<a class="button primary awMain" href="${P.keyUrl}" target="_blank" rel="noopener">Googleのページを開く</a>` +
+        '<p class="hint">AI Studio は18歳以上が条件だよ。画面が違ったら「API キー」のページで、キーの横のコピーのボタンを探してね</p>' +
         `<p class="hint">${esc(P.note)}</p>` +
         '<div class="row split"><button type="button" data-aw="0">戻る</button><button type="button" class="primary" data-aw="2">コピーできた →</button></div>',
 
