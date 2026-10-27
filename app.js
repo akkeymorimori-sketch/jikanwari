@@ -9692,7 +9692,9 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const drawPics = () => {
     $('#mnPics').innerHTML = ed.pics.map((p, i) =>
       `<div class="mnPic"><img src="${p.url}" alt="" data-mnview="${i}">` +
-      `<button type="button" class="x" data-mnrm="${i}" aria-label="外す">×</button></div>`).join('');
+      `<button type="button" class="x" data-mnrm="${i}" aria-label="外す">×</button>` +
+      `<button type="button" class="mnEdit" data-mned="${i}" aria-label="編集">✎</button></div>`).join('') +
+      (ed.pics.length ? '<p class="hint mnPicHint">写真の ✎ で、切り取り・回転・くっきりができるよ</p>' : '');
   };
   const open = async note => {
     const c = cur();
@@ -9749,7 +9751,26 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if ([...e.target.files].length > fs.length) toast?.('写真は4枚までだよ');
     drawPics();
   };
-  $('#mnPics').onclick = e => {
+  $('#mnPics').onclick = async e => {
+    // 写真を編集：新しい写真として入れて、前の写真はノートを保存したら消す（保存しなければ元のまま）
+    const edt = e.target.closest('[data-mned]');
+    if (edt) {
+      const i = +edt.dataset.mned, p = ed.pics[i];
+      const b = p && await pGet(p.key).catch(() => null);
+      if (!b) return alert('写真が読めなかった');
+      const out = await window.editPhoto(b).catch(() => null);
+      if (!out || !ed) return;
+      const key = 'n-' + uid();
+      await pPut(key, out);
+      const url = URL.createObjectURL(out);
+      urls.push(url);
+      if (ed.added.includes(p.key)) { ed.added = ed.added.filter(k => k !== p.key); pDel(p.key).catch(() => {}); }
+      else ed.removed.push(p.key);
+      ed.added.push(key);
+      ed.pics[i] = { key, url };
+      drawPics();
+      return;
+    }
     const rm = e.target.closest('[data-mnrm]');
     if (rm) {
       const [p] = ed.pics.splice(+rm.dataset.mnrm, 1);
@@ -11696,4 +11717,136 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       return f.apply(this, arguments);
     };
   }
+}
+
+/* ===== 写真の編集（切り取り・回転・くっきり・白黒） ===== */
+// window.editPhoto(blob) → 編集した写真（JPEG）。やめたら・何も変えてなければ null
+{
+  const dlg = document.createElement('dialog');
+  dlg.id = 'peDlg';
+  dlg.innerHTML = '<div class="dlg">' +
+    '<div class="dlgHead"><h2>写真を編集</h2>' +
+    '<button type="button" class="x big" data-pe="cancel" aria-label="閉じる">×</button></div>' +
+    '<p class="hint">残したいところを指でなぞると切り取れるよ</p>' +
+    '<div class="peWrap"><canvas id="peCv"></canvas></div>' +
+    '<div class="peTools">' +
+    '<button type="button" data-pe="rot">↻ 回転</button>' +
+    '<button type="button" data-pe="enh" aria-pressed="false">✨ くっきり</button>' +
+    '<button type="button" data-pe="gray" aria-pressed="false">◐ 白黒</button>' +
+    '<button type="button" data-pe="reset">元に戻す</button></div>' +
+    '<div class="peBtns"><button type="button" data-pe="cancel">やめる</button>' +
+    '<button type="button" class="primary" data-pe="ok">決定</button></div></div>';
+  document.body.append(dlg);
+  const cv = dlg.querySelector('#peCv');
+
+  let img = null, rot = 0, crop = null, enh = false, gray = false, drag = null, done = null;
+  let base = null; // 回したあとの写真（長い辺 2000px まで）
+
+  function makeBase() {
+    const s = Math.min(1, 2000 / Math.max(img.width, img.height));
+    const w = Math.round(img.width * s), h = Math.round(img.height * s);
+    base = document.createElement('canvas');
+    [base.width, base.height] = rot % 2 ? [h, w] : [w, h];
+    const ctx = base.getContext('2d');
+    ctx.translate(base.width / 2, base.height / 2);
+    ctx.rotate(rot * Math.PI / 2);
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  }
+  const rectOf = (a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+
+  // 画面に出す（くっきり・白黒は CSS の filter で見せる。保存するときは画素を直接いじる）
+  function draw() {
+    const box = dlg.querySelector('.peWrap');
+    const maxW = Math.max(200, box.clientWidth || 320), maxH = Math.max(200, Math.round(window.innerHeight * 0.55));
+    const s = Math.min(maxW / base.width, maxH / base.height, 1);
+    cv.width = Math.round(base.width * s);
+    cv.height = Math.round(base.height * s);
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(base, 0, 0, cv.width, cv.height);
+    cv.style.filter = [enh ? 'contrast(1.35) brightness(1.08)' : '', gray ? 'grayscale(1)' : ''].join(' ').trim() || 'none';
+    const r = drag ? rectOf(drag.a, drag.b) : crop;
+    if (r) {
+      const x = r.x * cv.width, y = r.y * cv.height, w = r.w * cv.width, h = r.h * cv.height;
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; // 切り取る外側を暗く
+      ctx.fillRect(0, 0, cv.width, y);
+      ctx.fillRect(0, y + h, cv.width, cv.height - y - h);
+      ctx.fillRect(0, y, x, h);
+      ctx.fillRect(x + w, y, cv.width - x - w, h);
+      ctx.strokeStyle = '#ffd43b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+    }
+    dlg.querySelector('[data-pe="enh"]').setAttribute('aria-pressed', String(enh));
+    dlg.querySelector('[data-pe="gray"]').setAttribute('aria-pressed', String(gray));
+  }
+  const pt = e => {
+    const r = cv.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) };
+  };
+  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); const p = pt(e); drag = { a: p, b: p }; });
+  cv.addEventListener('pointermove', e => { if (drag) { drag.b = pt(e); draw(); } });
+  cv.addEventListener('pointerup', () => {
+    if (!drag) return;
+    const r = rectOf(drag.a, drag.b);
+    drag = null;
+    if (r.w > 0.04 && r.h > 0.04) crop = r; // 小さすぎるのはタップの誤爆
+    draw();
+  });
+  cv.addEventListener('pointercancel', () => { drag = null; draw(); });
+
+  // 保存する写真を作る（長い辺 1280px。くっきり・白黒は画素を直接）
+  function output() {
+    const r = crop || { x: 0, y: 0, w: 1, h: 1 };
+    const sx = r.x * base.width, sy = r.y * base.height, sw = r.w * base.width, sh = r.h * base.height;
+    const s = Math.min(1, 1280 / Math.max(sw, sh));
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sw * s));
+    out.height = Math.max(1, Math.round(sh * s));
+    const ctx = out.getContext('2d');
+    ctx.drawImage(base, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    if (enh || gray) {
+      const d = ctx.getImageData(0, 0, out.width, out.height), p = d.data;
+      for (let i = 0; i < p.length; i += 4) {
+        let r = p[i], g = p[i + 1], b = p[i + 2];
+        if (enh) { r = (r - 128) * 1.35 + 138; g = (g - 128) * 1.35 + 138; b = (b - 128) * 1.35 + 138; }
+        if (gray) r = g = b = 0.299 * r + 0.587 * g + 0.114 * b;
+        p[i] = r; p[i + 1] = g; p[i + 2] = b; // Uint8ClampedArray なので 0〜255 に収まる
+      }
+      ctx.putImageData(d, 0, 0);
+    }
+    return new Promise(ok => out.toBlob(ok, 'image/jpeg', 0.85));
+  }
+
+  function finish(b) {
+    if (dlg.open) dlg.close();
+    if (img?.src) URL.revokeObjectURL(img.src);
+    img = base = null;
+    const f = done;
+    done = null;
+    f?.(b);
+  }
+  dlg.addEventListener('click', async e => {
+    const k = e.target.closest('[data-pe]')?.dataset.pe;
+    if (!k) return;
+    if (k === 'cancel') return finish(null);
+    if (k === 'ok') return finish(rot || crop || enh || gray ? await output() : null);
+    if (k === 'rot') { rot = (rot + 1) % 4; crop = null; makeBase(); }
+    if (k === 'enh') enh = !enh;
+    if (k === 'gray') gray = !gray;
+    if (k === 'reset') { rot = 0; crop = null; enh = gray = false; makeBase(); }
+    draw();
+  });
+  dlg.addEventListener('cancel', e => { e.preventDefault(); finish(null); });
+
+  window.editPhoto = blob => new Promise((ok, ng) => {
+    const im = new Image();
+    im.onload = () => {
+      img = im; rot = 0; crop = null; enh = gray = false; drag = null; done = ok;
+      makeBase();
+      dlg.showModal();
+      requestAnimationFrame(draw); // 開いてから大きさを測る
+    };
+    im.onerror = () => ng(new Error('写真が読めなかった'));
+    im.src = URL.createObjectURL(blob);
+  });
 }
