@@ -11186,11 +11186,13 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
     let step = 0;
 
     // Google AI Studio の手順（www/guide/ のスクショ）
+    // [画像, 説明, 番号]。4 は「キーがもうある人」と「まだない人」で分かれる（アカウントによって最初から1つできてることがある）
     const AW_SHOTS = [
-      ['ai-1.jpg', 'Googleアカウントでログイン'],
-      ['ai-2.jpg', '「利用目的」を聞かれたら「スキップ」でOK'],
-      ['ai-3.jpg', '1つ目にチェックして「続行」（2つ目のメールはなくてOK）'],
-      ['ai-4.jpg', 'キーの横のコピーのボタンを押す（キーがなければ右上の「API キーを作成」）'],
+      ['ai-1.jpg', 'Googleアカウントでログイン', '1'],
+      ['ai-2.jpg', '「利用目的」を聞かれたら「スキップ」でOK', '2'],
+      ['ai-3.jpg', '1つ目にチェックして「続行」（2つ目のメールはなくてOK）', '3'],
+      ['ai-4.jpg', '<b class="awIf">キーが出てたら</b>キーの横のコピーのボタンを押す', '4'],
+      ['ai-4b.jpg', '<b class="awIf">キーが1つもなかったら</b>右上の「API キーを作成」を押して作る。できたキーの横のコピーのボタンを押す', '4'],
     ];
     const dots = n => `<p class="awStep">ステップ ${n}/3</p>`;
     const draw = (msg = '') => {
@@ -11204,8 +11206,8 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
         '<p class="awLead">Googleのページでキーを作ってコピーする</p>' +
         '<p class="hint">こんな画面が順に出るよ。赤い枠のところを押してね（横にめくれる）</p>' +
         // 実際の画面（スマホ）に赤い枠を付けたもの。画面が変わってても分かるように、下に文字でも書く
-        '<div class="awShots">' + AW_SHOTS.map(([img, cap], i) =>
-          `<figure><img src="guide/${img}" alt="${esc(cap)}" loading="lazy"><figcaption><b>${i + 1}</b> ${cap}</figcaption></figure>`).join('') + '</div>' +
+        '<div class="awShots">' + AW_SHOTS.map(([img, cap, no]) =>
+          `<figure><img src="guide/${img}" alt=""><figcaption><b>${no}</b> ${cap}</figcaption></figure>`).join('') + '</div>' +
         `<a class="button primary awMain" href="${P.keyUrl}" target="_blank" rel="noopener">Googleのページを開く</a>` +
         '<p class="hint">AI Studio は18歳以上が条件だよ。画面が違ったら「API キー」のページで、キーの横のコピーのボタンを探してね</p>' +
         `<p class="hint">${esc(P.note)}</p>` +

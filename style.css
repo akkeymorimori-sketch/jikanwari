@@ -1648,3 +1648,5 @@ html.tb-neon #tabbar button.on, .tbSet.tb-neon .tbPrev button.on { filter: drop-
 #aiWiz .awShots figcaption { margin-top: 6px; font-size: 13px; line-height: 1.5; color: var(--text); }
 #aiWiz .awShots figcaption b { display: inline-grid; place-items: center; width: 1.5em; height: 1.5em; margin-right: 2px; border-radius: 50%; background: var(--accent-strong); color: var(--on-accent); font-size: 12px; }
 #aiWiz a.awMain { display: block; margin: 8px 0; padding: 10px; border-radius: 8px; text-align: center; text-decoration: none; font-weight: bold; background: var(--accent-strong); color: var(--on-accent); }
+#aiWiz .awShots figcaption b.awIf { display: block; width: auto; height: auto; margin: 2px 0; border-radius: 0; background: none; color: var(--accent-strong); font-size: 13px; }
+#aiWiz .awShots img[src$="ai-4b.jpg"] { max-height: none; }
