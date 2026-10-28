@@ -1657,3 +1657,18 @@ html.tb-neon #tabbar button.on, .tbSet.tb-neon .tbPrev button.on { filter: drop-
 html[data-page-scheme="light"]:not(.hasWall) { --page-fg: #1f2937; }
 html[data-page-scheme="dark"]:not(.hasWall) { --page-fg: #e5e7eb; }
 html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
+
+/* おせっかい機能 */
+.funHead { margin: 16px 0 2px; }
+.funSleepRow input[type="time"] { width: 7em; }
+#dayList li.funSleep { color: var(--sub); }
+.flow li.f-sleep .fl { color: var(--sub); }
+.funEst { color: var(--sub); white-space: nowrap; }
+.funLead { margin: 4px 0 8px; font-weight: bold; }
+.moodList { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.moodList li { display: flex; flex-direction: column; align-items: center; padding: 6px 4px; border-radius: 10px; background: var(--accent-soft); font-size: 13px; }
+.moodList .sky { font-size: 22px; line-height: 1.3; }
+.moodList small { color: var(--sub); font-size: 11px; }
+.survCard { margin-top: 8px; }
+.survCard h3 { margin: 0 0 4px; font-size: 15px; }
+.survCard .funLead b { font-size: 1.4em; color: var(--accent); }

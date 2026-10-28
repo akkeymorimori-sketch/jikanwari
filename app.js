@@ -529,7 +529,16 @@ function normalize(s) {
     ? Object.fromEntries(Object.entries(s.evPlaces).filter(([k, v]) => k.trim() && typeof v === 'string' && v.trim())
         .slice(0, 100).map(([k, v]) => [k.trim().slice(0, 60), v.trim().slice(0, 60)]))
     : {};
-  s.evTapSeen = s.evTapSeen === true; // 「予定をタップすると変更できる」のヒントを見終わった（一度変更した）
+  s.evTapSeen = s.evTapSeen === true;
+  // おせっかい機能（最初は全部オフ）と、その記録
+  const fn = s.fun && typeof s.fun === 'object' ? s.fun : {};
+  const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
+  s.fun = { saba: fn.saba === true, est: fn.est === true, mood: fn.mood === true, sleep: fn.sleep === true, survive: fn.survive === true,
+    sleepFrom: okHM(fn.sleepFrom) ? fn.sleepFrom : '00:00', sleepTo: okHM(fn.sleepTo) ? fn.sleepTo : '07:00' };
+  s.estLog = Array.isArray(s.estLog) ? s.estLog.filter(r => typeof r === 'number' && r > 0 && r < 20).slice(-50) : [];
+  s.actLog = Array.isArray(s.actLog) ? s.actLog.filter(t => Number.isFinite(t) && t > 0).slice(-4000) : [];
+  s.wakeLog = s.wakeLog && typeof s.wakeLog === 'object' && !Array.isArray(s.wakeLog)
+    ? Object.fromEntries(Object.entries(s.wakeLog).filter(([k, v]) => isYmd(k) && Number.isFinite(v))) : {}; // 「予定をタップすると変更できる」のヒントを見終わった（一度変更した）
   s.calHide = Array.isArray(s.calHide) ? [...new Set(s.calHide.filter(x => typeof x === 'string' && x))].slice(0, 50) : [];
   if (!s.shiftDefaultOn) { s.shiftTimes = true; s.shiftDefaultOn = true; } // 時刻ずらしは最初ON
   s.syllabusSearch ??= '';
@@ -1271,7 +1280,7 @@ function renderTasks() {
   const el = $('#taskCard');
   const all = [];
   for (const c of [...courses(), ...taskGroups()]) for (const t of c.tasks) if (!t.done) all.push({ c, t });
-  all.sort((a, b) => (a.t.due || '9999').localeCompare(b.t.due || '9999'));
+  all.sort((a, b) => (dueOf(a.t) || '9999').localeCompare(dueOf(b.t) || '9999'));
   if (!all.length) {
     el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
     return;
@@ -1281,7 +1290,7 @@ function renderTasks() {
   const shown = taskAll ? all : vis;
   const rest = all.length - shown.length;
   el.innerHTML = `<h2>課題 <small>${vis.length}件</small></h2><ul>` + (shown.map(({ c, t }) => {
-    const st = dueState(t.due);
+    const st = dueState(dueOf(t));
     return `<li class="${st.cls}"><label><input type="checkbox" data-task="${t.id}" data-cid="${c.id}">` +
       `<span>${esc(t.title)}</span></label>` +
       `<span class="due" data-id="${c.id}">${esc(nm(c))}・${st.label}</span></li>`;
@@ -1556,9 +1565,9 @@ function renderDetail() {
 
   // 課題
   const ts = c.tasks.slice().sort((a, b) =>
-    (a.done - b.done) || (a.due || '9999').localeCompare(b.due || '9999'));
+    (a.done - b.done) || (dueOf(a) || '9999').localeCompare(dueOf(b) || '9999'));
   $('#taskList').innerHTML = ts.map(k => {
-    const st = dueState(k.due);
+    const st = dueState(dueOf(k));
     return `<li class="${k.done ? '' : st.cls}"><label>` +
       `<input type="checkbox" data-tdone="${k.id}" ${k.done ? 'checked' : ''}>` +
       `<span class="${k.done ? 'done' : ''}">${esc(k.title)}</span></label>` +
@@ -1861,12 +1870,24 @@ function evTime(e) {
 function evLabel(e) {
   return esc(`${e.title || EV_LABEL[e.kind]}${e.start ? ' ' + evTime(e) : ''}`);
 }
+// 見せる締切。締切サバ読みがオンなら、課題ごとに1〜3日前にずらす（何日ずらしたかは見せない。本当の締切は x.due のまま）
+let sabaSave = 0;
+function dueOf(x) {
+  if (!x?.due || !state.fun?.saba) return x?.due || '';
+  if (!(x.saba >= 1 && x.saba <= 3)) {
+    x.saba = 1 + Math.floor(Math.random() * 3);
+    clearTimeout(sabaSave); sabaSave = setTimeout(() => save(), 0); // 次に開いても同じだけずらす
+  }
+  return ymd(addDays(parseYmd(x.due), -x.saba));
+}
+// フォームに入れた日（見せてる締切）→ 本当の締切
+const dueFromShown = (x, v) => v && state.fun?.saba && x.saba ? ymd(addDays(parseYmd(v), x.saba)) : v;
 function tasksDue(k) {
   const out = [];
   for (const t of state.terms) for (const c of t.courses) for (const x of c.tasks)
-    if (x.due === k) out.push({ c, x });
-  for (const x of state.myTasks) if (x.due === k) out.push({ c: selfCourse, x });
-  for (const g of state.cats) for (const x of g.tasks) if (x.due === k) out.push({ c: g, x });
+    if (dueOf(x) === k) out.push({ c, x });
+  for (const x of state.myTasks) if (dueOf(x) === k) out.push({ c: selfCourse, x });
+  for (const g of state.cats) for (const x of g.tasks) if (dueOf(x) === k) out.push({ c: g, x });
   return out;
 }
 function intensiveOn(k) {
@@ -2207,7 +2228,7 @@ function startTaskEdit(cid, id) {
   if (evEditId) endEvEdit();
   ctEdit = { cid, id, to: '' };
   $('#ctTitle').value = x.title;
-  $('#ctDue').value = x.due || calSel;setLeadUI('ct', x.lead);
+  $('#ctDue').value = dueOf(x) || calSel;setLeadUI('ct', x.lead);
   renderDay();
   $('#ctHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -2241,6 +2262,8 @@ $('#ctAdd').onclick = () => {
   ctLastCid = c.id;
   $('#ctTitle').value = '';
   save(); renderAll(); renderCal(); renderDay();
+  // 自己申告補正の「あなたの1時間は…」が出るときは、そっちを優先（トーストは1つしか出ない）
+  if (state.fun?.saba && !(state.fun.est && window.parseEst?.(title))) toast('🐟 サバ読み中：本当の締切より何日か前に出るよ');
 };
 
 $('#ctSave').onclick = () => {
@@ -2251,16 +2274,16 @@ $('#ctSave').onclick = () => {
   const title = $('#ctTitle').value.trim();
   if (!title) return alert('課題の内容を入れてね');
   x.title = title;
-  x.due = $('#ctDue').value;x.lead = getLeadUI('ct');
+  x.due = dueFromShown(x, $('#ctDue').value);x.lead = getLeadUI('ct');
   const to = findCourse($('#ctCourse').value);
   if (to && to !== from) {
     from.tasks = from.tasks.filter(k => k !== x);
     to.tasks.push(x);
   }
-  const moved = x.due !== calSel;
+  const moved = dueOf(x) !== calSel;
   save(); renderAll(); renderCal();
   endTaskEdit();
-  if (moved) toast(x.due ? `締切を${md(parseYmd(x.due))}に移したよ` : '締切なしにしたよ');
+  if (moved) toast(x.due ? `締切を${md(parseYmd(dueOf(x)))}に移したよ` : '締切なしにしたよ');
 };
 
 $('#ctDel').onclick = () => {
@@ -2968,6 +2991,10 @@ function collect() {
   tmp.taskLead = getLeadUI('s') || '2w';
   tmp.weekStart = $('#sWeekStart').value === 'sun' ? 'sun' : 'mon';
   for (const c of document.querySelectorAll('#setFeat [data-feat]')) tmp.features[c.dataset.feat] = c.checked;
+  for (const c of document.querySelectorAll('#setFeat [data-fun]')) tmp.fun[c.dataset.fun] = c.checked;
+  const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
+  tmp.fun.sleepFrom = okHM($('#sSleepFrom').value) ? $('#sSleepFrom').value : tmp.fun.sleepFrom;
+  tmp.fun.sleepTo = okHM($('#sSleepTo').value) ? $('#sSleepTo').value : tmp.fun.sleepTo;
 }
 
 function renderLastExport() {
@@ -2991,11 +3018,14 @@ function openSettings() {
     taskLead: state.taskLead,
     useGrid: state.useGrid,
     weekStart: state.weekStart,
-    features: { ...state.features }
+    features: { ...state.features },
+    fun: { ...state.fun }
   };
   fillProviderFields(state.provider);
   $('#sWeekStart').value = tmp.weekStart;
   document.querySelectorAll('#setFeat [data-feat]').forEach(c => { c.checked = tmp.features[c.dataset.feat] !== false; });
+  document.querySelectorAll('#setFeat [data-fun]').forEach(c => { c.checked = tmp.fun[c.dataset.fun] === true; });
+  $('#sSleepFrom').value = tmp.fun.sleepFrom; $('#sSleepTo').value = tmp.fun.sleepTo;
   $('#sPeriods').value = tmp.periods;
   $('#sSat').checked = tmp.showSat;
   $('#sShift').checked = tmp.shiftTimes;
@@ -3065,6 +3095,7 @@ $('#sSave').onclick = () => {
   state.weekStart = tmp.weekStart;
   const groupWasOff = !featOn('group');
   state.features = { ...tmp.features };
+  state.fun = { ...tmp.fun };
   applyTheme(state.theme);
   scheduleChanged(); // renderAll → applyMode で、オフの機能を隠す
   // 共有グループをオンに戻したら、グループの予定を読み直す
@@ -4805,7 +4836,7 @@ function buildIcs() {
   // 課題の締切（終わってないもの・今日以降）
   for (const c of [...courses(), ...taskGroups()]) for (const k of c.tasks) {
     if (k.done || !k.due) continue;
-    const d = parseYmd(k.due);
+    const d = parseYmd(dueOf(k));
     if (!d || d < today) continue;
     const from = c === selfCourse ? '' : isGroup(c.id) ? `名目：${c.name}` : `授業：${nm(c)}`;
     lines.push(...icsEvent(`task-${k.id}`, d, `〆 ${k.title}`, from, stamp, seq));
@@ -5023,7 +5054,7 @@ function showable(k) {
   if (!k.due) return true;
   const lead = leadOf(k);
   if (lead === 'all') return true;
-  const L = parseLead(lead), d = parseYmd(k.due);
+  const L = parseLead(lead), d = parseYmd(dueOf(k));
   if (!L || !d) return true;
   if (L.u === 'm') d.setMonth(d.getMonth() - L.n);
   else d.setDate(d.getDate() - L.n * (L.u === 'w' ? 7 : 1));
@@ -5147,7 +5178,7 @@ function notifyPlan() {
       const dk = Array.from({ length: n.tDays }, (_, j) => ymd(addDays(next, j)));
       const dl = [];
       for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks) {
-        const j = x.done ? -1 : dk.indexOf(x.due);
+        const j = x.done ? -1 : dk.indexOf(dueOf(x));
         if (j >= 0) dl.push([j, x.title + (j ? `（あと${j + 1}日）` : '（明日）')]);
       }
       dl.sort((a, b) => a[0] - b[0]);
@@ -7970,8 +8001,8 @@ function wgData() {
   const lim = ymd(addDays(today, cfg.days));
   const tasks = [];
   for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks)
-    if (!x.done && x.due && x.due <= lim)
-      tasks.push({ title: x.title || '', due: x.due, from: c.short || c.name || '' });
+    if (!x.done && x.due && dueOf(x) <= lim)
+      tasks.push({ title: x.title || '', due: dueOf(x), from: c.short || c.name || '' });
   tasks.sort((a, b) => a.due.localeCompare(b.due));
   return { v: 1, made: now.toISOString(), after: cfg.after, taskDays: cfg.days, theme: cfg.theme, days, tasks: tasks.slice(0, 20) };
 }
@@ -11867,4 +11898,291 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     im.onerror = () => ng(new Error('写真が読めなかった'));
     im.src = URL.createObjectURL(blob);
   });
+}
+
+/* ===== おせっかい機能（締切サバ読み・自己申告補正・やる気天気予報・睡眠の先取り・1限生存率） ===== */
+// どれも設定の「機能」の下で1つずつオン/オフ（最初は全部オフ）。state.fun
+{
+  const F = () => state.fun || {};
+  const hmOf = m => `${Math.floor(m / 60) % 24}:${pad(m % 60)}`;
+  const hours = m => { const h = m / 60; return (Math.round(h * 10) / 10) + '時間'; };
+
+  // ----- 自己申告補正：「1時間で終わる」「30分」などを読む（分で返す） -----
+  function parseEst(s) {
+    s = String(s || '').replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    let m = s.match(/(\d+(?:\.\d+)?)\s*(?:時間|h\b|ｈ)(半)?(?:\s*(\d+)\s*分)?/i);
+    if (m) return Math.round(+m[1] * 60 + (m[2] ? 30 : 0) + (m[3] ? +m[3] : 0));
+    m = s.match(/(\d+)\s*分/);
+    return m ? +m[1] : 0;
+  }
+  window.parseEst = parseEst;
+  // あなたの「1時間」は何時間か（実際 ÷ 自己申告。3回以上たまったら使う）
+  function estRatio() {
+    const l = (state.estLog || []).slice(-20);
+    if (l.length < 3) return 0;
+    const r = l.reduce((a, b) => a + b, 0) / l.length;
+    return Math.min(5, Math.max(0.5, r));
+  }
+  window.estRatio = estRatio;
+  const estMsg = (est, r) => `あなたの『${hours(est)}』は平均${hours(Math.round(est * r))}です`;
+
+  // ----- やる気天気予報：行動の記録（課題・ToDoを終えた、メモ・ノートを書いた時刻）から -----
+  // その曜日・その時間に、何週のうち何週なにもしてないか
+  function moodAt(dow, hour) {
+    const log = state.actLog || [];
+    if (!log.length) return null;
+    const first = new Date(Math.min(...log)); first.setHours(0, 0, 0, 0);
+    let n = 0;
+    for (let d = new Date(first); d <= new Date(); d = addDays(d, 1)) if (d.getDay() === dow) n++;
+    if (n < 3) return null; // 3週たまるまでは予報しない
+    const hit = new Set();
+    for (const t of log) {
+      const d = new Date(t);
+      if (d.getDay() === dow && d.getHours() === hour) hit.add(ymd(d));
+    }
+    return { p: Math.round((1 - hit.size / n) * 100), n };
+  }
+  window.moodAt = moodAt;
+  const sky = p => p >= 70 ? '☔' : p >= 40 ? '☁️' : '☀️';
+
+  // ----- 睡眠の先取り -----
+  const sleepRange = () => [toMin(F().sleepFrom || '00:00') ?? 0, toMin(F().sleepTo || '07:00') ?? 420];
+  const inSleep = m => {
+    const [a, b] = sleepRange();
+    m = ((m % 1440) + 1440) % 1440;
+    return a <= b ? m >= a && m < b : m >= a || m < b;
+  };
+  // 予定（start〜end）が睡眠にかかるか。end がなければ1時間
+  function hitsSleep(start, end) {
+    const s = toMin(start);
+    if (s == null) return false;
+    let e = toMin(end);
+    if (e == null) e = s + 60;
+    if (e <= s) e += 1440;
+    for (let m = s; m < e; m += 5) if (inSleep(m)) return true;
+    return false;
+  }
+  window.hitsSleep = hitsSleep;
+
+  // ----- 1限生存率：起きた時刻（その日に最初にアプリを開いた時刻）から -----
+  function wakeP(limit) {
+    const w = Object.values(state.wakeLog || {});
+    if (w.length < 5) return { p: 0.8, n: w.length }; // まだ少ないうちは、ふつうの大学生くらい
+    return { p: w.filter(m => m <= limit).length / w.length, n: w.length };
+  }
+  // n回のうち休みが k 回以下で済む確率
+  function passP(n, q, k) {
+    let s = 0;
+    for (let i = 0; i <= Math.min(k, n); i++) {
+      let c = 1;
+      for (let j = 0; j < i; j++) c = c * (n - j) / (j + 1);
+      s += c * q ** i * (1 - q) ** (n - i);
+    }
+    return s;
+  }
+  function survive() {
+    const cs = courses().filter(c => c.day >= 0);
+    if (!cs.length) return null;
+    const t1 = toMin(state.times?.[0]?.start || '09:10') ?? 550;
+    const w = wakeP(t1 - 40); // 1限の40分前に起きてれば間に合う
+    const ones = new Set(cs.filter(c => c.period === 1).map(c => c.id));
+    const ps = cs.map(c => {
+      const max = c.maxAbsence !== '' && c.maxAbsence != null && !isNaN(+c.maxAbsence) ? +c.maxAbsence : 5; // 15回のうち3分の1まで
+      const left = Math.max(-1, max - (c.absences || []).length);
+      if (left < 0) return 0;
+      const q = ones.has(c.id) ? 1 - w.p : 0.03; // 1限じゃない授業はほぼ行ける
+      return passP(15, q, left);
+    });
+    return { rate: Math.round(ps.reduce((a, b) => a + b, 0) / ps.length * 100), ones: ones.size, wake: Math.round(w.p * 100), days: w.n, t1 };
+  }
+  window.funSurvive = survive;
+
+  // ===== 保存のたびに：新しく足した物・終えた物を見る =====
+  let seen = null, guard = false;
+  const items = () => {
+    const out = [];
+    for (const c of [...courses(), ...taskGroups()]) for (const x of c.tasks) out.push({ x, name: x.title });
+    for (const x of state.todos || []) out.push({ x, name: x.text });
+    return out;
+  };
+  const askQ = [];
+  async function askActual() {
+    if (askActual.busy) return;
+    askActual.busy = true;
+    while (askQ.length) {
+      const { x, name } = askQ.shift();
+      if (x.act) continue;
+      const v = await askLine(`「${name}」、実際は何時間かかった？（${hours(x.est)}のつもりだった）`, '', { max: 20, placeholder: '例: 2.5 / 90分' });
+      if (v == null || !v.trim()) { x.act = -1; continue; } // 答えなかったものは聞かない
+      const m = /分/.test(v) ? parseEst(v) : Math.round(parseFloat(v.replace(/[^\d.]/g, '')) * 60);
+      if (!(m > 0)) continue;
+      x.act = m;
+      state.estLog = (state.estLog || []).concat(+(m / x.est).toFixed(2)).slice(-50);
+    }
+    askActual.busy = false;
+    save();
+  }
+  function afterSave() {
+    if (guard || !state) return;
+    const list = items();
+    const ids = new Map(list.map(o => [o.x.id, o]));
+    if (!seen) { seen = new Map(list.map(o => [o.x.id, !!o.x.done])); return; }
+    let acted = false, changed = false;
+    for (const o of list) {
+      const was = seen.get(o.x.id);
+      if (was === undefined && F().est && !o.x.est) {
+        // 新しく足した課題・ToDo：「1時間で終わる」が入ってたら覚えて、言い返す
+        const est = parseEst(o.name);
+        if (est) {
+          o.x.est = est; changed = true;
+          const r = estRatio();
+          toast(r ? `${estMsg(est, r)}。${hours(Math.round(est * r))}で見ておくね` : `${hours(est)}で覚えたよ。終わったら実際の時間を聞くね`);
+        }
+      }
+      if (was === false && o.x.done) {
+        acted = true;
+        if (F().est && o.x.est && !o.x.act) askQ.push(o);
+      }
+    }
+    if (state.notes?.length > (afterSave.notes ?? state.notes.length)) acted = true;
+    afterSave.notes = state.notes?.length || 0;
+    seen = new Map([...ids].map(([k, o]) => [k, !!o.x.done]));
+    if (acted && F().mood) { state.actLog = (state.actLog || []).concat(Date.now()).slice(-4000); changed = true; }
+    if (changed) { guard = true; try { save(); } finally { guard = false; } }
+    if (askQ.length) setTimeout(askActual, 300);
+  }
+  const save0 = save;
+  save = function () { const r = save0.apply(this, arguments); afterSave(); return r; };
+  setTimeout(afterSave, 0);
+
+  // 起きた時刻（4〜14時に初めて開いた時刻）を覚える：1限生存率のため
+  const markWake = () => {
+    if (!state || !F().survive) return;
+    const now = new Date(), k = ymd(now), m = now.getHours() * 60 + now.getMinutes();
+    state.wakeLog ||= {};
+    if (state.wakeLog[k] != null || m < 240 || m > 840) return;
+    state.wakeLog[k] = m;
+    const old = ymd(addDays(now, -90));
+    for (const d of Object.keys(state.wakeLog)) if (d < old) delete state.wakeLog[d];
+    save();
+  };
+  setTimeout(markWake, 0);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) markWake(); });
+
+  // ===== 予定を入れるとき：言い返す・止める・聞く =====
+  // [見る日, 予定の種類]
+  const evCtx = () => ({ date: evEditId ? ($('#evDate').value || calSel) : calSel, kind: $('#evKind').value });
+  let bypass = false;
+  async function checkEv(e) {
+    if (bypass) return;
+    const btn = e.currentTarget;
+    const title = $('#evTitle').value, start = $('#evStart').value;
+    const { date, kind } = evCtx();
+    // 自己申告補正：「レポート 1時間」は、あなたの1時間ぶんに延ばす
+    const est = F().est && parseEst(title), r = est && estRatio();
+    if (est && start && !evEditId) {
+      const s = toMin(start), want = s + Math.round(est * (r || 1));
+      if (!$('#evEnd').value || toMin($('#evEnd').value) === s + est) {
+        $('#evEnd').value = hmOf(want).padStart(5, '0');
+        if (r) toast(`${estMsg(est, r)}。終わりを${hmOf(want)}にしておいたよ`);
+      }
+    }
+    // やる気天気予報：その時間のあなたが、たいてい何もしない時間なら止める
+    let mo = null, d = null;
+    if (F().mood && start && kind !== 'job' && isYmd(date)) {
+      d = parseYmd(date);
+      mo = moodAt(d.getDay(), Math.floor(toMin(start) / 60));
+      if (mo && mo.p < 70) mo = null;
+    }
+    // 睡眠の先取り：睡眠にかかる予定は、理由がないと入れない
+    const sleepHit = F().sleep && start && hitsSleep(start, $('#evEnd').value);
+    if (!mo && !sleepHit) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    if (mo && !confirm(`${WEEK[d.getDay()]}曜${Math.floor(toMin(start) / 60)}時のあなたは、${mo.p}%の確率で何もしません。大事な予定なら、ほかの時間にした方がいいかも。それでも入れる？`)) return;
+    if (sleepHit) {
+      const why = await askLine('その予定、睡眠より大事ですか？理由を30字で', '', { max: 30, placeholder: '例: 一生に一度のライブ' });
+      if (!why || !why.trim()) return toast('睡眠を守ったよ 😴');
+      const memo = $('#evMemo');
+      memo.value = (memo.value ? memo.value + '\n' : '') + `💤 睡眠より大事な理由：${why.trim()}`;
+    }
+    // 確認が済んだら、もう一度押したことにする
+    bypass = true;
+    try { btn.click(); } finally { bypass = false; }
+  }
+  $('#evAdd').addEventListener('click', checkEv, true);
+  $('#evSave').addEventListener('click', checkEv, true);
+
+  // ===== 表示 =====
+  // カレンダーのその日：睡眠を先に確保して見せる
+  const rd = renderDay;
+  renderDay = function () {
+    const r = rd.apply(this, arguments);
+    if (F().sleep) {
+      const [a, b] = sleepRange();
+      $('#dayList').querySelector(':scope > li.muted:only-child')?.remove();
+      $('#dayList').insertAdjacentHTML('afterbegin', `<li class="funSleep"><span>😴 睡眠 ${hmOf(a)}〜${hmOf(b)} <small class="muted">先に確保済み</small></span></li>`);
+    }
+    return r;
+  };
+  // 今日の流れの最後に睡眠
+  const tf = todayFlow;
+  todayFlow = function () {
+    const h = tf.apply(this, arguments);
+    if (!F().sleep || !h) return h;
+    const [a] = sleepRange();
+    return h.replace(/<\/ul>$/, `<li class="f-sleep"><span class="ft">${hmOf(a)}</span><span class="fl">😴 睡眠（先に確保済み）</span></li></ul>`);
+  };
+
+  // 課題に「実際は〇時間くらい」
+  const rt = renderTasks;
+  renderTasks = function () {
+    const r = rt.apply(this, arguments);
+    const ratio = F().est && estRatio();
+    if (ratio) for (const cb of document.querySelectorAll('#taskCard [data-task]')) {
+      const x = findCourse(cb.dataset.cid)?.tasks.find(k => k.id === cb.dataset.task);
+      if (x?.est) cb.nextElementSibling?.insertAdjacentHTML('beforeend', ` <small class="funEst">⏱ 実際は${hours(Math.round(x.est * ratio))}くらい</small>`);
+    }
+    return r;
+  };
+
+  // やる気天気予報のカード（今日の画面）と、1限生存率（時間割の下）
+  const mood = document.createElement('section');
+  mood.id = 'moodCard';
+  mood.className = $('#packCard').className;
+  $('#nowCard').after(mood);
+  const surv = document.createElement('div');
+  surv.id = 'survCard';
+  surv.className = 'card survCard';
+  $('#tagLegend').after(surv);
+
+  function renderFun() {
+    mood.hidden = !F().mood;
+    if (F().mood) {
+      const now = new Date(), rows = [];
+      for (let i = 0; i < 6; i++) {
+        const h = now.getHours() + i;
+        if (h > 23) break;
+        const mo = moodAt(now.getDay(), h);
+        if (mo) rows.push(`<li><b>${h}時</b><span class="sky">${sky(mo.p)}</span><small>何もしない確率 ${mo.p}%</small></li>`);
+      }
+      const worst = rows.length ? Math.max(...Array.from({ length: 6 }, (_, i) => moodAt(now.getDay(), now.getHours() + i)?.p ?? 0)) : 0;
+      const wh = Array.from({ length: 6 }, (_, i) => now.getHours() + i).find(h => (moodAt(now.getDay(), h)?.p ?? -1) === worst);
+      mood.innerHTML = '<h2>やる気天気予報</h2>' + (rows.length
+        ? (worst >= 70 ? `<p class="funLead">☔ ${wh}時のあなたは、${worst}%の確率で何もしません</p>` : '') + `<ul class="moodList">${rows.join('')}</ul>`
+        : '<p class="muted">まだ予報できないよ。課題やToDoを終えたりメモを書いたりした時間を3週間ぶん覚えたら、予報が出るよ</p>');
+    }
+    surv.hidden = !F().survive || !state.useGrid;
+    if (F().survive && state.useGrid) {
+      const s = survive();
+      surv.innerHTML = '<h3>🎓 1限生存率シミュレーター</h3>' + (!s ? '<p class="muted">授業を入れると計算するよ</p>'
+        : `<p class="funLead">この時間割だと、${esc(term().name)}の単位取得見込みは <b>${s.rate}%</b></p>` +
+          `<p class="hint">1限が週${s.ones}コマ。あなたが1限（${hmOf(s.t1)}）に間に合う確率は${s.wake}%` +
+          (s.days < 5 ? '（起きた時刻のデータがまだ少ないから、ふつうの大学生くらいで計算してる）' : `（${s.days}日ぶんの起きた時刻から）`) +
+          '。休めるのは15回のうち授業ごとの欠席の上限まで（決めてなければ5回）</p>');
+    }
+  }
+  window.renderFun = renderFun;
+  const ra = renderAll;
+  renderAll = function () { const r = ra.apply(this, arguments); renderFun(); return r; };
+  setTimeout(renderFun, 0);
 }
