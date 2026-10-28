@@ -9613,7 +9613,8 @@ if (window.Capacitor?.isNativePlatform?.()) {
 /* ===== 今日に出すものを選ぶ ===== */
 {
   const home = $('#nowCard').parentElement;
-  const NAMES = { nowCard: '次の授業・今日の流れ', todoCard: 'ToDo', packCard: '持ち物', taskCard: '課題', diaryCard: '一言日記', tmrBox: '明日の予定' };
+  const NAMES = { nowCard: '次の授業・今日の流れ', todoCard: 'ToDo', packCard: '持ち物', taskCard: '課題', diaryCard: '一言日記', tmrBox: '明日の予定',
+    talkCard: '💬 締切トーク', moodCard: '☔ やる気天気予報' };
   const hide = () => (state.homeHide = Array.isArray(state.homeHide) ? state.homeHide : []);
   const keyOf = el => el.id || el.dataset.hk ||
     (el.dataset.hk = 'h-' + (el.querySelector('h2, h3, summary')?.textContent.trim().slice(0, 12) || ''));
@@ -9635,7 +9636,9 @@ if (window.Capacitor?.isNativePlatform?.()) {
   // 設定でオフにした機能のカードは、選ぶ一覧にも出さない
   const FEAT_CARD = { diaryCard: 'diary', todoCard: 'todo', noteCard: 'memo', habitCard: 'habit', packCard: 'grid' };
   window.openHomePick = () => {
-    $('#homePick').innerHTML = cards().filter(el => !FEAT_CARD[el.id] || featOn(FEAT_CARD[el.id])).map(el =>
+    // おせっかい機能のカードは、その機能がオンのときだけ
+    const FUN_CARD = { talkCard: 'line', moodCard: 'mood' };
+    $('#homePick').innerHTML = cards().filter(el => (!FEAT_CARD[el.id] || featOn(FEAT_CARD[el.id])) && (!FUN_CARD[el.id] || state.fun?.[FUN_CARD[el.id]])).map(el =>
       `<li><label><input type="checkbox" data-hp="${esc(keyOf(el))}" ${hide().includes(keyOf(el)) ? '' : 'checked'}>` +
       `${esc(nameOf(el))}</label></li>`).join('');
     dlg.showModal();
@@ -9647,6 +9650,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if (!e.target.checked) state.homeHide.push(k);
     save();
     apply();
+    renderAll(); // 締切トーク・やる気天気予報は中身があるときだけ出すので、描き直して決め直す
   });
 
   home.insertAdjacentHTML('beforeend', '<button type="button" id="homeEdit">✎ 表示するものを選ぶ</button>');
@@ -12163,7 +12167,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   $('#tagLegend').after(surv);
 
   function renderFun() {
-    mood.hidden = !F().mood;
+    mood.hidden = !F().mood || (state.homeHide || []).includes('moodCard');
     if (F().mood) {
       const now = new Date(), rows = [];
       for (let i = 0; i < 6; i++) {
@@ -12260,8 +12264,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   $('#nowCard').after(card);
   function renderCard() {
     const ts = on() ? allTasks().filter(({ x }) => talk(x).length && !(x.done && x.talkRead >= dCount(x))) : [];
-    card.hidden = !ts.length;
-    if (!ts.length) return;
+    card.hidden = !ts.length || (state.homeHide || []).includes('talkCard');
+    if (card.hidden) return;
     ts.sort((a, b) => unread(b.x) - unread(a.x) || (dueOf(a.x) || '9').localeCompare(dueOf(b.x) || '9'));
     const n = ts.reduce((a, { x }) => a + unread(x), 0);
     card.innerHTML = `<h2>💬 締切トーク${n ? ` <small class="talkN">${n}</small>` : ''}</h2><ul class="talkList">` +
