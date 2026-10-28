@@ -7069,6 +7069,9 @@ function applyPageColor() {
   const p = HEX6.test(w.pageColor || '') ? w.pageColor : '';
   if (p) r.style.setProperty('--pageC', p); else r.style.removeProperty('--pageC');
   r.classList.toggle('pageC', !!p);
+  // カードの外（背景の上）の文字は、背景の明るさで色を決める（ダークモードで明るい背景を選んだときなど）
+  if (p) r.dataset.pageScheme = hexLum(p) > .4 ? 'light' : 'dark';
+  else delete r.dataset.pageScheme;
 }
 
 $('.wallColors').insertAdjacentHTML('afterbegin', '<h3>背景の色</h3><div class="swRow" id="wallPC"></div>');
@@ -9584,7 +9587,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
   const dlg = document.createElement('dialog');
   dlg.id = 'homeDlg';
-  dlg.innerHTML = '<div class="dlgHead"><h2>今日に出すもの</h2>' +
+  dlg.innerHTML = '<div class="dlgHead"><h2>今日の画面に表示するもの</h2>' +
     '<button type="button" class="x big" id="homeX" aria-label="閉じる">×</button></div>' +
     '<ul class="homePick" id="homePick"></ul>' +
     '<p class="hint">外したものは消えないよ。ここでいつでも戻せる</p>';
@@ -9608,11 +9611,11 @@ if (window.Capacitor?.isNativePlatform?.()) {
     apply();
   });
 
-  home.insertAdjacentHTML('beforeend', '<button type="button" id="homeEdit" class="addEv">✎ 今日に出すものを選ぶ</button>');
+  home.insertAdjacentHTML('beforeend', '<button type="button" id="homeEdit">✎ 表示するものを選ぶ</button>');
   $('#homeEdit').onclick = () => openHomePick();
 
   if (typeof FEATURES !== 'undefined' && !FEATURES.some(f => f.id === 'homePick')) FEATURES.push({
-    id: 'homePick', name: '今日に出すもの', where: '今日 → 一番下',
+    id: 'homePick', name: '今日の画面に表示するもの', where: '今日 → 一番下の「表示するものを選ぶ」',
     desc: '今日の画面に出す項目を選ぶ。使わないものは隠せる',
     kw: '今日 表示 非表示 隠す 消す カスタマイズ ToDo', go: () => openHomePick()
   });
