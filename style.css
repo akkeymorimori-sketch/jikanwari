@@ -1672,3 +1672,24 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .survCard { margin-top: 8px; }
 .survCard h3 { margin: 0 0 4px; font-size: 15px; }
 .survCard .funLead b { font-size: 1.4em; color: var(--accent); }
+
+/* 締切トーク */
+.talkN { display: inline-block; min-width: 1.6em; padding: 0 6px; border-radius: 999px; background: #e03131; color: #fff; font-size: 12px; text-align: center; }
+.talkList { list-style: none; padding: 0; margin: 0; }
+.talkRow { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 2px; border: 0; border-bottom: 1px solid var(--line-soft); background: none; color: inherit; text-align: left; border-radius: 0; }
+.talkList li:last-child .talkRow { border-bottom: 0; }
+.talkAv { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); font-size: 18px; }
+.talkMain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.talkMain b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talkMain small { color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talkBadge { flex: none; min-width: 22px; padding: 1px 7px; border-radius: 999px; background: #06c755; color: #fff; font-size: 12px; font-weight: bold; text-align: center; }
+#talkDlg .talkBody { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding: 10px 6px; margin: 6px 0; border-radius: 12px; background: #8cabd8; }
+.tb { display: flex; align-items: flex-end; gap: 6px; max-width: 85%; }
+.tb p { margin: 0; padding: 8px 12px; border-radius: 16px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; color: #111; }
+.tbD p { background: #fff; border-top-left-radius: 4px; }
+.tbMe { align-self: flex-end; }
+.tbMe p { background: #86d97b; border-top-right-radius: 4px; }
+.tbMe small { color: #1f2a44; font-size: 10px; }
+.tbD .talkAv { width: 30px; height: 30px; font-size: 15px; background: #fff; }
+#talkDlg .talkReplies { display: flex; flex-wrap: wrap; gap: 6px; }
+#talkDlg .talkReplies button { flex: 1 1 30%; padding: 8px 4px; border-radius: 999px; }

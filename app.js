@@ -533,8 +533,15 @@ function normalize(s) {
   // おせっかい機能（最初は全部オフ）と、その記録
   const fn = s.fun && typeof s.fun === 'object' ? s.fun : {};
   const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
-  s.fun = { saba: fn.saba === true, est: fn.est === true, mood: fn.mood === true, sleep: fn.sleep === true, survive: fn.survive === true,
+  s.fun = { saba: fn.saba === true, est: fn.est === true, mood: fn.mood === true, sleep: fn.sleep === true, survive: fn.survive === true, line: fn.line === true,
     sleepFrom: okHM(fn.sleepFrom) ? fn.sleepFrom : '00:00', sleepTo: okHM(fn.sleepTo) ? fn.sleepTo : '07:00' };
+  // 締切トークの中身（課題ごと）
+  for (const k of [...(s.terms || []).flatMap(t => (t.courses || []).flatMap(c => c.tasks || [])), ...(s.myTasks || []), ...(s.cats || []).flatMap(g => g.tasks || [])]) {
+    if (!k || typeof k !== 'object') continue;
+    if (Array.isArray(k.talk)) k.talk = k.talk.filter(m => m && (m.who === 'd' || m.who === 'me') && typeof m.t === 'string').slice(-60);
+    else delete k.talk;
+    k.talkRead = Number.isInteger(k.talkRead) && k.talkRead >= 0 ? k.talkRead : 0;
+  }
   s.estLog = Array.isArray(s.estLog) ? s.estLog.filter(r => typeof r === 'number' && r > 0 && r < 20).slice(-50) : [];
   s.actLog = Array.isArray(s.actLog) ? s.actLog.filter(t => Number.isFinite(t) && t > 0).slice(-4000) : [];
   s.wakeLog = s.wakeLog && typeof s.wakeLog === 'object' && !Array.isArray(s.wakeLog)
@@ -12185,4 +12192,157 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const ra = renderAll;
   renderAll = function () { const r = ra.apply(this, arguments); renderFun(); return r; };
   setTimeout(renderFun, 0);
+}
+
+/* ===== 締切トーク：締切が擬人化してLINEしてくる（おせっかい機能） ===== */
+// 課題ごとに x.talk = [{ who: 'd'（締切）| 'me', t: 文, s: 締切まで何日の時のか }]、x.talkRead = 読んだ締切のメッセージ数
+// 14日前は「よろしくね〜」、3日前から既読スルーにキレ始めて、前日は「もういい」。「やってるよ！」と返すと機嫌が直る
+{
+  const on = () => !!state.fun?.line;
+  const STAGES = [14, 10, 7, 5, 3, 2, 1, 0];
+  const REPLIES = [['doing', 'やってるよ！'], ['notyet', 'まだ…ごめん'], ['done', '終わった！']];
+  const talk = x => (x.talk = Array.isArray(x.talk) ? x.talk : []);
+  const dCount = x => talk(x).filter(m => m.who === 'd').length;
+  const unread = x => Math.max(0, dCount(x) - (x.talkRead || 0));
+  const allTasks = () => [...courses(), ...taskGroups()].flatMap(c => c.tasks.map(x => ({ c, x })));
+  const left = x => { const d = dueOf(x); return d ? Math.round((parseYmd(d) - parseYmd(todayStr())) / 86400000) : null; };
+
+  // いまの気分：最後の返事と、読んだのに返してないか
+  function mood(x) {
+    const l = talk(x), me = [...l].reverse().find(m => m.who === 'me');
+    const type = me ? (REPLIES.find(([, t]) => t === me.t)?.[0] || '') : '';
+    const noReply = !l.length || l.at(-1).who === 'd';
+    return { type: noReply ? '' : type, last: type, read: (x.talkRead || 0) >= dCount(x) && dCount(x) > 0, noReply };
+  }
+  // 締切まで n 日のときに送る文
+  function say(n, x, m) {
+    const t = x.title, due = md(parseYmd(dueOf(x)));
+    const doing = m.last === 'doing' && !(m.noReply && m.read && n <= 2);
+    if (!dCount(x)) return `はじめまして！「${t}」の締切です。${due}によろしくね〜😊`;
+    switch (n) {
+      case 14: case 10: return doing ? 'お、もう始めてるんだ！その調子〜✨' : `そういえば「${t}」、どんな感じ〜？`;
+      case 7: return doing ? 'あと1週間！順調そうでうれしい☺️' : 'あと1週間だよ〜。そろそろ始めよっか📚';
+      case 5: return doing ? 'いい感じ？無理しないでね' : 'ねえねえ、どこまでいった？';
+      case 3: return doing ? 'あと3日。やってるの信じてるからね'
+        : m.last === 'notyet' && !m.noReply ? 'まだって…あと3日だよ？'
+        : m.read ? '既読ついてるの見えてるからね？あと3日なんだけど' : '…見てないの？あと3日なんだけど';
+      case 2: return doing ? 'あと2日！ラストスパート🔥' : m.read ? '既読スルー2回目。' : 'ねえ';
+      case 1: return doing ? '明日だよ。信じてるから' : 'もういい';
+      default: return doing ? '今日だよ！がんばれ〜📣' : '……今日だからね';
+    }
+  }
+
+  // 日が進んだら、その日のぶんを送る（開いてなかった日のぶんはまとめず、今の段階だけ）
+  function sync() {
+    if (!on()) return false;
+    let changed = false;
+    for (const { x } of allTasks()) {
+      const l = talk(x);
+      if (x.done) {
+        if (l.length && !l.some(m => m.end)) { l.push({ who: 'd', t: 'おつかれさま！！えらい🥹 ありがとう', end: true }); changed = true; }
+        continue;
+      }
+      const n = left(x);
+      if (n == null || n < 0 || n > 14) continue;
+      const s = STAGES.filter(v => v >= n).at(-1);
+      if (l.some(m => m.who === 'd' && m.s === s)) continue;
+      l.push({ who: 'd', t: say(s, x, mood(x)), s });
+      changed = true;
+    }
+    return changed;
+  }
+  window.talkSync = sync;
+
+  // 今日の画面：トーク一覧（未読の数つき）
+  const card = document.createElement('section');
+  card.id = 'talkCard';
+  card.className = $('#packCard').className;
+  $('#nowCard').after(card);
+  function renderCard() {
+    const ts = on() ? allTasks().filter(({ x }) => talk(x).length && !(x.done && x.talkRead >= dCount(x))) : [];
+    card.hidden = !ts.length;
+    if (!ts.length) return;
+    ts.sort((a, b) => unread(b.x) - unread(a.x) || (dueOf(a.x) || '9').localeCompare(dueOf(b.x) || '9'));
+    const n = ts.reduce((a, { x }) => a + unread(x), 0);
+    card.innerHTML = `<h2>💬 締切トーク${n ? ` <small class="talkN">${n}</small>` : ''}</h2><ul class="talkList">` +
+      ts.map(({ c, x }) => `<li><button type="button" class="talkRow" data-talk="${x.id}" data-cid="${c.id}">` +
+        `<span class="talkAv">📄</span><span class="talkMain"><b>「${esc(x.title)}」の締切</b>` +
+        `<small>${esc(talk(x).at(-1).t)}</small></span>${unread(x) ? `<span class="talkBadge">${unread(x)}</span>` : ''}</button></li>`).join('') + '</ul>';
+  }
+
+  // トークの画面
+  const dlg = document.createElement('dialog');
+  dlg.id = 'talkDlg';
+  dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2 id="talkTitle"></h2>' +
+    '<button type="button" class="x big" data-tx aria-label="閉じる">×</button></div>' +
+    '<div class="talkBody" id="talkBody"></div><div class="talkReplies" id="talkReplies"></div></div>';
+  document.body.append(dlg);
+  let cur = null; // { c, x }
+  function renderTalk() {
+    const { x } = cur;
+    $('#talkTitle').textContent = `「${x.title}」の締切`;
+    $('#talkBody').innerHTML = talk(x).map(m => m.who === 'd'
+      ? `<div class="tb tbD"><span class="talkAv">📄</span><p>${esc(m.t)}</p></div>`
+      : `<div class="tb tbMe"><small>既読</small><p>${esc(m.t)}</p></div>`).join('');
+    const closed = x.done;
+    $('#talkReplies').innerHTML = closed ? '<p class="hint">この課題は終わったよ</p>'
+      : REPLIES.map(([k, t]) => `<button type="button" data-rep="${k}">${t}</button>`).join('');
+    const b = $('#talkBody');
+    b.scrollTop = b.scrollHeight;
+  }
+  function open(cid, id) {
+    const c = findCourse(cid), x = c?.tasks.find(k => k.id === id);
+    if (!x) return;
+    cur = { c, x };
+    x.talkRead = dCount(x); // 開いたら既読
+    save();
+    renderTalk();
+    if (!dlg.open) dlg.showModal();
+    renderCard();
+  }
+  window.openTalk = open;
+  card.addEventListener('click', e => {
+    const b = e.target.closest('[data-talk]');
+    if (b) open(b.dataset.cid, b.dataset.talk);
+  });
+  dlg.addEventListener('click', e => {
+    if (e.target === dlg || e.target.closest('[data-tx]')) { dlg.close(); cur = null; renderAll(); return; }
+    const k = e.target.closest('[data-rep]')?.dataset.rep;
+    if (!k || !cur) return;
+    const { x } = cur;
+    talk(x).push({ who: 'me', t: REPLIES.find(r => r[0] === k)[1] });
+    if (k === 'done') { x.done = true; sync(); }
+    else talk(x).push({ who: 'd', t: k === 'doing' ? (left(x) <= 2 ? 'ほんと？信じるからね…！' : 'えらい！その調子〜😊') : (left(x) <= 2 ? '……。' : 'え〜、早めにね？'), s: -1 });
+    x.talkRead = dCount(x);
+    save();
+    renderTalk();
+  });
+
+  // 通知（アプリ版）：これから送る日の20時に、締切から
+  const np = notifyPlan;
+  notifyPlan = function () {
+    const out = np.apply(this, arguments);
+    if (!on()) return out;
+    const now = new Date();
+    for (const { x } of allTasks()) {
+      if (x.done || !dueOf(x)) continue;
+      const due = parseYmd(dueOf(x)), m = mood(x);
+      for (const s of STAGES) {
+        const at = addDays(due, -s); at.setHours(20, 0, 0, 0);
+        if (at <= now || talk(x).some(v => v.who === 'd' && v.s === s)) continue;
+        out.push({ at, title: `「${x.title}」の締切`, body: say(s, x, { ...m, read: true, noReply: true, last: m.last }) });
+      }
+    }
+    out.sort((a, b) => a.at - b.at);
+    return out.slice(0, NOTIFY_MAX);
+  };
+
+  const ra = renderAll;
+  renderAll = function () {
+    const r = ra.apply(this, arguments);
+    if (sync()) save();
+    renderCard();
+    return r;
+  };
+  setTimeout(() => { if (sync()) save(); renderCard(); }, 0);
 }
