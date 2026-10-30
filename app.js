@@ -12421,26 +12421,33 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     tok = v ? { v, exp: Date.now() + sec * 1000 } : null;
     try { tok ? localStorage.setItem(TOK_KEY, JSON.stringify(tok)) : localStorage.removeItem(TOK_KEY); } catch {}
   };
-  let gisP = null;
-  const gis = () => gisP ||= new Promise((ok, ng) => {
-    const sc = document.createElement('script');
-    sc.src = 'https://accounts.google.com/gsi/client';
-    sc.onload = () => ok(window.google.accounts.oauth2);
-    sc.onerror = () => { gisP = null; ng(new Error('gis')); };
-    document.head.append(sc);
-  });
   let slInit = null;
   const slReady = () => slInit ||= SL().initialize({ google: { webClientId: GD_WEB, iOSClientId: GD_IOS || undefined, mode: 'online' } });
-  // Web：ポップアップで聞く（ボタンを押した直後でないとブラウザに止められるので、自動の同期では使わない）
-  const webAsk = async prompt => {
-    const o = await gis();
-    return new Promise((ok, ng) => {
-      o.initTokenClient({
-        client_id: GD_WEB, scope: SCOPE, login_hint: sy.email || undefined,
-        callback: r => r.access_token ? (setTok(r.access_token, (+r.expires_in || 3600) - 300), ok(r.access_token)) : ng(new Error(r.error || 'token')),
-        error_callback: e => ng(new Error(e?.type || 'popup'))
-      }).requestAccessToken({ prompt });
-    });
+  // Web：Google のログイン画面にページごと移って、ログインしたら #access_token=… を付けて戻ってくる
+  // （ポップアップはブラウザやホーム画面のアプリで開けないことがあるので使わない）
+  // then：戻ってきたら何をするか（'on' = 同期を始める、'sync' = 同期する）
+  const RET_KEY = 'gakulog-sync-ret';
+  const back = () => location.origin + location.pathname.replace(/[^/]*$/, ''); // 戻り先（Google Cloud に登録してある URL）
+  const webAsk = (prompt, then) => {
+    const st = uid() + uid();
+    try { sessionStorage.setItem(RET_KEY, JSON.stringify({ st, then })); } catch {}
+    const q = new URLSearchParams({ client_id: GD_WEB, redirect_uri: back(), response_type: 'token', scope: SCOPE, state: st, include_granted_scopes: 'true' });
+    if (prompt) q.set('prompt', prompt);
+    if (sy.email) q.set('login_hint', sy.email);
+    (window.top || window).location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + q; // 色違いのアイコンの枠の中からでも、ページごと移る
+    return new Promise(() => {}); // 戻ってくるまで待つ（このページは閉じる）
+  };
+  // 戻ってきたとき：トークンを受け取って、URL の # を消す
+  const takeBack = () => {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (!h.has('state')) return null;
+    let ret = null;
+    try { ret = JSON.parse(sessionStorage.getItem(RET_KEY)); sessionStorage.removeItem(RET_KEY); } catch {}
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!ret || ret.st !== h.get('state')) return null;
+    if (!h.get('access_token')) return { ...ret, err: h.get('error') || 'token' };
+    setTok(h.get('access_token'), (+h.get('expires_in') || 3600) - 300);
+    return ret;
   };
   const auth = {
     // 使えるトークン。ask = ボタンを押した流れなら、切れてても取り直してよい
@@ -12454,8 +12461,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         await auth.login();
         return tok?.v || null;
       }
-      if (!ask && !navigator.userActivation?.isActive) return null;
-      return webAsk('').catch(() => null);
+      return ask ? webAsk('', 'sync') : null;
     },
     async login() {
       if (native()) {
@@ -12466,8 +12472,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         setTok(t);
         return r.result.profile?.email || '';
       }
-      await webAsk(sy.email ? '' : 'select_account');
-      return '';
+      return webAsk('select_account', 'on');
     },
     async logout() {
       setTok(null);
@@ -12702,8 +12707,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   setTimeout(() => sync(), 2000);
 
   // ----- オン・オフ -----
-  const turnOn = async () => {
-    const email = await auth.login();
+  const turnOn = async () => startOn(await auth.login());
+  const startOn = async email => {
     // はじめての同期の前に、今のデータを取っておく（何かあったら戻せるように）
     try {
       if (!Object.keys(localStorage).some(k => k.startsWith('gakulog-sync-backup-')))
@@ -12777,8 +12782,14 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (id === 'syncNow') sync(true);
     if (id === 'syncOff' && confirm('ログアウトする？この端末のノートは消えないよ（ドライブのノートもそのまま）')) turnOff();
   });
-  // 先に読み込んでおく（ボタンを押した直後にポップアップを出さないと、ブラウザに止められる）
-  sec.addEventListener('toggle', () => { if (sec.open && !native() && GD_WEB) gis().catch(() => {}); });
+  // Google のログインから戻ってきた
+  const resume = () => {
+    const r = takeBack();
+    if (!r) return;
+    if (r.err) { if (r.err !== 'access_denied') alert('ログインできなかった。もう一度やってみてね'); return; }
+    if (r.then === 'on') startOn('').catch(err => { console.warn('sync login', err); alert('同期を始められなかった。もう一度やってみてね'); turnOff(); });
+    else sync();
+  };
 
   // ----- 画面：ミニノート一覧（PCで主に使う。ほかの学期・ほかの端末の授業のノートも出す） -----
   const dlg = document.createElement('dialog');
@@ -12849,6 +12860,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   applyMode = function () { const r = am.apply(this, arguments); drawUI(); return r; };
 
   // テストから使う
-  window.gd = { force: false, auth, sync, detect, turnOn, turnOff, openAll, drawUI, get sy() { return sy; } };
+  window.gd = { force: false, auth, sync, detect, turnOn, turnOff, openAll, drawUI, resume, get sy() { return sy; } };
   drawUI();
+  resume();
 }
