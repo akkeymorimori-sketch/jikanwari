@@ -1161,6 +1161,8 @@ dialog {
 .alRow > * { flex: none; }
 .alRow input[type="time"] { width: 7em; }
 .alDel { margin-left: auto; padding: 2px 10px; }
+/* 授業の時限・バイトのルールの音量：横に並ぶ小さめの選択（いっぱいに広げない） */
+.alRow select:is([data-alpv], [data-f="vol"]) { width: auto; min-width: 0; flex: none; margin-top: 0; }
 .alJob { padding: 8px 0; border-bottom: 1px solid rgba(128, 128, 128, .25); }
 .alJob > input { width: 100%; box-sizing: border-box; }
 .alNext { list-style: none; padding: 0; margin: 4px 0; }
