@@ -9198,15 +9198,37 @@ var WG_LOOK = {
 
   // 試し聴き（5秒の短い版。標準の音はiPhoneのものなのでここでは鳴らせない）
   let alAudio = null;
+  // 音のファイルを作り直したら上げる（ブラウザが前の音を覚えてることがあるので）
+  const SND_V = 2;
+  let alCtx = null;
   function alPlay(id, vol) {
-    alAudio?.pause();
+    alAudio?.pause?.();
+    alAudio?.stop?.();
     alAudio = null;
     if (!id) return toast('標準はスマホのアラームの音だよ（ここでは試せない。音量も変えられない）');
-    alAudio = new Audio(`sounds/${id}.wav`);
-    alAudio.volume = VOL_K[lvlOf(vol)]; // 試し聴きは、大の音を小さくして鳴らす
-    alAudio.play().catch(() => {});
+    const url = `sounds/${id}.wav?v=${SND_V}`, k = VOL_K[lvlOf(vol)];
+    // 試し聴きは、大の音を小さくして鳴らす。iPhone の Safari は audio.volume が効かないので Web Audio で
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) {
+      alAudio = new Audio(url);
+      alAudio.volume = k;
+      alAudio.play().catch(() => {});
+      return;
+    }
+    alCtx ||= new AC();
+    alCtx.resume?.();
+    const me = alAudio = { stop() { this.dead = true; this.src?.stop(); } };
+    fetch(url).then(r => r.arrayBuffer()).then(b => alCtx.decodeAudioData(b)).then(buf => {
+      if (me.dead || alAudio !== me) return;
+      const src = alCtx.createBufferSource(), g = alCtx.createGain();
+      src.buffer = buf;
+      g.gain.value = k;
+      src.connect(g).connect(alCtx.destination);
+      src.start();
+      me.src = src;
+    }).catch(() => {});
   }
-  dlg.addEventListener('close', () => { alAudio?.pause(); alAudio = null; });
+  dlg.addEventListener('close', () => { alAudio?.pause?.(); alAudio?.stop?.(); alAudio = null; });
 
   dlg.addEventListener('click', e => {
     if (e.target.id === 'alX' || e.target === dlg) return dlg.close();
