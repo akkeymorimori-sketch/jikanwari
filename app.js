@@ -12407,7 +12407,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const DRV = 'https://www.googleapis.com/drive/v3', UPL = 'https://www.googleapis.com/upload/drive/v3';
   const SY_KEY = 'gakulog-sync-v2', OLD_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok', RET_KEY = 'gakulog-sync-ret', RT_KEY = 'gakulog-sync-rt';
   // Web でずっとログインしたままにするための、トークンを取り替えるだけのサーバー（server/token-worker.mjs）。空なら1時間ごとにログインし直す
-  let TOKEN_URL = '';
+  let TOKEN_URL = 'https://gakulog-token.gakulog-1016.workers.dev';
   const SHARDS = 8;
   const DEL = '\u0000del'; // 消した項目のしるし
   const native = () => !!window.Capacitor?.isNativePlatform?.();
