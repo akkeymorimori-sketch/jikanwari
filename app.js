@@ -10788,6 +10788,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if (id && ptOwned(id)) root.classList.add(id);
   };
   apply(state.tabTheme);
+  document.addEventListener('look-changed', () => apply(state.tabTheme)); // 同期でほかの端末から変わったとき
 
   const dlg = document.createElement('dialog');
   dlg.id = 'tbDlg';
@@ -12609,8 +12610,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (typeof hb === 'object') { hb.list = hbList; hbSave(); }
     applyTheme(state.theme);
     if (state.wall?.img !== oldWall && wallUrl) { URL.revokeObjectURL(wallUrl); wallUrl = ''; }
+    // 見た目を全部塗り直す（テーマ・壁紙・カードの色・文字の色・背景の色・タブのテーマ）
     try { applyMode(); } catch {}
     try { applyWall(); } catch {}
+    for (const f of [applyCard, applyCardColor, applyPageColor]) try { f(); } catch {}
+    document.dispatchEvent(new Event('look-changed'));
     base = flat(); // 組み立て直したものを「前に見たもの」にする
     saveC();
     s0();
