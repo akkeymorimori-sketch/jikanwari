@@ -7422,7 +7422,17 @@ function renderHabits() {
 
 hbCard.addEventListener('click', e => {
   const t = e.target;
-  if (t.closest('.hbEditBtn')) { hbEdit = !hbEdit; return renderHabits(); }
+  if (t.closest('.hbEditBtn')) {
+    // 名前を入れたまま「完了」を押したら、追加し忘れてないか聞く
+    const name = hbEdit && $('#hbName')?.value.trim();
+    if (name && confirm(`「${name}」をまだ追加してないよ。追加する？`)) {
+      const n = hb.list.length;
+      $('#hbAddBtn').click();
+      if (hb.list.length === n) return; // 曜日が空などで追加できなかったら編集のまま
+    }
+    hbEdit = !hbEdit;
+    return renderHabits();
+  }
   const li = t.closest('[data-hb]');
   if (li) {
     const h = hb.list.find(x => x.id === li.dataset.hb);
