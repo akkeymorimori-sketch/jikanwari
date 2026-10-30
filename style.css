@@ -1276,6 +1276,16 @@ dialog {
 .mnList .tag { margin-left: 6px; }
 .mnText { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; margin-top: 2px; }
 #mnText { width: 100%; box-sizing: border-box; resize: vertical; }
+/* ミニノート一覧（ほかの学期・ほかの端末の授業も） */
+#mnAllDlg { width: min(720px, 100vw - 24px); }
+.mnaTerm { margin: 8px 0; }
+.mnaTerm > summary { font-weight: bold; cursor: pointer; padding: 6px 0; }
+.mnaTerm > summary small { color: var(--muted); font-weight: normal; }
+.mnaCo { margin: 6px 0 12px; padding-left: 10px; box-shadow: inset 4px 0 0 var(--tag, var(--line, rgba(128,128,128,.4))); }
+.mnaHead { display: flex; align-items: center; gap: 8px; }
+.mnaHead h3 { margin: 0; flex: 1; font-size: 1em; }
+.mnaSync { margin-left: 6px; }
+#setSync .row { flex-wrap: wrap; margin: 6px 0; }
 .mnPics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
 .mnPic { position: relative; }
 .mnPic img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }

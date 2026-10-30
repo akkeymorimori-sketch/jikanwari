@@ -680,6 +680,23 @@ function normalize(s) {
   s.notes = Array.isArray(s.notes)
     ? s.notes.filter(n => n && typeof n.text === 'string' && n.text.trim() && isYmd(n.date)) : [];
   for (const n of s.notes) { n.id = fixId(n.id); n.pin = !!n.pin; }
+  // ミニノートの同期：ほかの端末の授業のノート（授業 id ごと）と、端末ごとの授業名の一覧
+  const obj = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  s.mnRemote = obj(s.mnRemote);
+  for (const [cid, ns] of Object.entries(s.mnRemote)) {
+    const ok = Array.isArray(ns) ? ns.filter(n => n && typeof n.id === 'string' && isYmd(n.date)) : [];
+    for (const n of ok) {
+      n.text = typeof n.text === 'string' ? n.text : '';
+      n.pics = Array.isArray(n.pics) ? n.pics.filter(k => typeof k === 'string') : [];
+      n.until = isYmd(n.until) ? n.until : null;
+    }
+    if (ok.length) s.mnRemote[cid] = ok; else delete s.mnRemote[cid];
+  }
+  s.mnCourses = obj(s.mnCourses);
+  for (const [dev, cs] of Object.entries(s.mnCourses)) {
+    if (!Array.isArray(cs)) { delete s.mnCourses[dev]; continue; }
+    s.mnCourses[dev] = cs.filter(c => c && typeof c.id === 'string' && typeof c.name === 'string');
+  }
   s.diary = s.diary && typeof s.diary === 'object' && !Array.isArray(s.diary) ? s.diary : {};
   for (const k of Object.keys(s.diary))
     if (!isYmd(k) || typeof s.diary[k] !== 'string' || !s.diary[k].trim()) delete s.diary[k];
@@ -9694,12 +9711,23 @@ if (window.Capacitor?.isNativePlatform?.()) {
     });
   };
   const pPut = (k, b) => tx('readwrite', s => s.put(b, k));
-  const pGet = k => tx('readonly', s => s.get(k));
+  const pGet0 = k => tx('readonly', s => s.get(k));
+  // 手元になければ、同期してるドライブから取ってきて置いておく（PC・2台目の端末）
+  const pGet = async k => {
+    const b = await pGet0(k);
+    if (b) return b;
+    const r = await window.gdPic?.(k).catch(() => null);
+    if (r) await pPut(k, r).catch(() => {});
+    return r || undefined;
+  };
   window.mnGetPic = pGet; // 試験前の見返しでも写真を読む
   const pDel = k => tx('readwrite', s => s.delete(k));
+  window.mnLocalPic = pGet0; // 同期で送るとき用（ドライブには取りに行かない）
+  window.mnDelPic = pDel;
 
   const notes = c => (c.notes = Array.isArray(c.notes) ? c.notes : []);
   const nextDate = c => {
+    if (!courses().includes(c)) return null; // ほかの学期・ほかの端末の授業
     const k = todayStr();
     const d = occurrencesAhead(c, 8).find(x => ymd(x) > k);
     return d ? ymd(d) : null;
@@ -9751,11 +9779,11 @@ if (window.Capacitor?.isNativePlatform?.()) {
       `<button type="button" class="mnEdit" data-mned="${i}" aria-label="編集">✎</button></div>`).join('') +
       (ed.pics.length ? '<p class="hint mnPicHint">写真の ✎ で、切り取り・回転・くっきりができるよ</p>' : '');
   };
-  const open = async note => {
-    const c = cur();
+  // c：どの授業のノートか（ミニノート一覧から開くときは、ほかの学期・ほかの端末の授業のこともある）
+  const open = async (note, c = cur()) => {
     const isNew = !note;
     note ||= { id: uid(), date: todayStr(), text: '', pics: [], until: nextDate(c) };
-    ed = { note, isNew, pics: [], added: [], removed: [] };
+    ed = { note, isNew, c, pics: [], added: [], removed: [] };
     for (const key of note.pics) {
       const b = await pGet(key).catch(() => null);
       if (!b) continue;
@@ -9777,6 +9805,12 @@ if (window.Capacitor?.isNativePlatform?.()) {
     dlg.close();
   };
 
+  window.mnOpen = open;
+  const done = () => {
+    try { renderDetail(); } catch {}
+    try { renderNow(); } catch {}
+    document.dispatchEvent(new Event('mn-changed'));
+  };
   $('#mnNew').onclick = () => open();
   $('#mnList').onclick = e => {
     const li = e.target.closest('[data-mn]');
@@ -9838,7 +9872,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   };
 
   $('#mnSave').onclick = async () => {
-    const c = cur();
+    const c = ed.c;
     const text = $('#mnText').value.trim().slice(0, 2000);
     if (!text && !ed.pics.length) { alert('何か書くか、写真を入れてね'); return; }
     const n = ed.note;
@@ -9849,18 +9883,16 @@ if (window.Capacitor?.isNativePlatform?.()) {
     for (const k of ed.removed) await pDel(k).catch(() => {});
     save();
     await close(true);
-    renderDetail();
-    try { renderNow(); } catch {}
+    done();
   };
   $('#mnDel').onclick = async () => {
     if (!confirm('このノートを消す？')) return;
-    const c = cur();
+    const c = ed.c;
     for (const k of ed.note.pics.concat(ed.added)) await pDel(k).catch(() => {});
     c.notes = notes(c).filter(x => x.id !== ed.note.id);
     save();
     await close(true);
-    renderDetail();
-    try { renderNow(); } catch {}
+    done();
   };
 
   // 次の授業の行に「📒」を出す
@@ -12359,4 +12391,464 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     return r;
   };
   setTimeout(() => { if (sync()) save(); renderCard(); }, 0);
+}
+
+/* ===== ミニノートの同期（Googleドライブ） ===== */
+// Googleでログインして、ミニノート（写真も）を自分のGoogleドライブのアプリ専用の場所（appDataFolder）に置く。
+// 運営のサーバーは通らない。ローカルが本体で、ドライブは写し。オフラインでもいつもどおり書けて、つながったら送る。
+// ドライブの中身：note-<id>.json（消したら { del: true } の墓石）、pic-<写真のキー>、courses-<端末>.json（その端末の授業名）
+{
+  // Google Cloud の OAuth クライアント ID（Web のは Android でも使う）。空のあいだは同期の欄を出さない
+  const GD_WEB = '';
+  const GD_IOS = '';
+  const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+  const DRV = 'https://www.googleapis.com/drive/v3', UPL = 'https://www.googleapis.com/upload/drive/v3';
+  const SY_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok';
+  const native = () => !!window.Capacitor?.isNativePlatform?.();
+  const SL = () => window.Capacitor?.Plugins?.SocialLogin;
+  const ios = () => window.Capacitor?.getPlatform?.() === 'ios';
+
+  const fresh = () => ({ on: false, email: '', dev: uid(), page: '', meta: {}, files: {}, last: 0, cHash: '' });
+  let sy;
+  try { sy = { ...fresh(), ...JSON.parse(localStorage.getItem(SY_KEY)) }; } catch { sy = fresh(); }
+  const sySave = () => { try { localStorage.setItem(SY_KEY, JSON.stringify(sy)); } catch {} };
+  let status = '', busy = null, picsLeft = 0;
+
+  // ----- ログイン（アクセストークンだけ。1時間で切れるので取り直す） -----
+  let tok = null;
+  try { tok = JSON.parse(localStorage.getItem(TOK_KEY)); } catch {}
+  const setTok = (v, sec = 3000) => {
+    tok = v ? { v, exp: Date.now() + sec * 1000 } : null;
+    try { tok ? localStorage.setItem(TOK_KEY, JSON.stringify(tok)) : localStorage.removeItem(TOK_KEY); } catch {}
+  };
+  let gisP = null;
+  const gis = () => gisP ||= new Promise((ok, ng) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://accounts.google.com/gsi/client';
+    sc.onload = () => ok(window.google.accounts.oauth2);
+    sc.onerror = () => { gisP = null; ng(new Error('gis')); };
+    document.head.append(sc);
+  });
+  let slInit = null;
+  const slReady = () => slInit ||= SL().initialize({ google: { webClientId: GD_WEB, iOSClientId: GD_IOS || undefined, mode: 'online' } });
+  // Web：ポップアップで聞く（ボタンを押した直後でないとブラウザに止められるので、自動の同期では使わない）
+  const webAsk = async prompt => {
+    const o = await gis();
+    return new Promise((ok, ng) => {
+      o.initTokenClient({
+        client_id: GD_WEB, scope: SCOPE, login_hint: sy.email || undefined,
+        callback: r => r.access_token ? (setTok(r.access_token, (+r.expires_in || 3600) - 300), ok(r.access_token)) : ng(new Error(r.error || 'token')),
+        error_callback: e => ng(new Error(e?.type || 'popup'))
+      }).requestAccessToken({ prompt });
+    });
+  };
+  const auth = {
+    // 使えるトークン。ask = ボタンを押した流れなら、切れてても取り直してよい
+    async token(ask = false) {
+      if (tok && tok.exp > Date.now()) return tok.v;
+      if (native()) {
+        await slReady();
+        const r = await SL().getAuthorizationCode({ provider: 'google' }).catch(() => null);
+        if (r?.accessToken) { setTok(r.accessToken); return r.accessToken; }
+        if (!ask) return null;
+        await auth.login();
+        return tok?.v || null;
+      }
+      if (!ask && !navigator.userActivation?.isActive) return null;
+      return webAsk('').catch(() => null);
+    },
+    async login() {
+      if (native()) {
+        await slReady();
+        const r = await SL().login({ provider: 'google', options: { scopes: [SCOPE] } });
+        const t = r?.result?.accessToken?.token;
+        if (!t) throw new Error('token');
+        setTok(t);
+        return r.result.profile?.email || '';
+      }
+      await webAsk(sy.email ? '' : 'select_account');
+      return '';
+    },
+    async logout() {
+      setTok(null);
+      if (native()) await SL()?.logout({ provider: 'google' }).catch(() => {});
+    }
+  };
+
+  // ----- ドライブ -----
+  const api = async (url, opt = {}, again = true) => {
+    const t = await auth.token();
+    if (!t) throw Object.assign(new Error('login'), { login: true });
+    const r = await fetch(url, { ...opt, headers: { ...opt.headers, Authorization: 'Bearer ' + t } });
+    if (r.status === 401 && again) { setTok(null); return api(url, opt, false); }
+    if (!r.ok) throw new Error('drive ' + r.status);
+    return r;
+  };
+  const FF = 'id,name,appProperties,createdTime';
+  const keep = f => { sy.files[f.name] = { id: f.id, upd: +(f.appProperties?.upd || 0), t: Date.parse(f.createdTime) || Date.now() }; };
+  const nameOfId = id => Object.keys(sy.files).find(n => sy.files[n].id === id);
+  // 新しく作る（id なし）か、中身を差し替える
+  const put = async (name, data, type, props, id) => {
+    const b = 'gk' + uid() + uid();
+    const meta = id ? { appProperties: props } : { name, parents: ['appDataFolder'], appProperties: props };
+    const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`, JSON.stringify(meta),
+      `\r\n--${b}\r\nContent-Type: ${type}\r\n\r\n`, data, `\r\n--${b}--`]);
+    const r = await api(`${UPL}/files${id ? '/' + id : ''}?uploadType=multipart&fields=${FF}`,
+      { method: id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body });
+    const f = await r.json();
+    keep(f);
+    return f;
+  };
+  window.gdPic = async k => {
+    const f = sy.on && sy.files['pic-' + k];
+    if (!f) return null;
+    return (await api(`${DRV}/files/${f.id}?alt=media`)).blob();
+  };
+
+  // ----- ノートを集める（全部の学期の授業＋ほかの端末の授業） -----
+  const allCourses = () => state.terms.flatMap(t => t.courses.map(c => ({ c, t })));
+  const remoteCourse = cid => ({
+    id: cid, remote: true,
+    get notes() { return (state.mnRemote[cid] ||= []); },
+    set notes(v) { if (v.length) state.mnRemote[cid] = v; else delete state.mnRemote[cid]; }
+  });
+  const holder = cid => allCourses().find(x => x.c.id === cid)?.c || remoteCourse(cid);
+  const collect = () => {
+    const m = new Map();
+    for (const { c } of allCourses()) for (const n of c.notes || []) m.set(n.id, { n, cid: c.id });
+    for (const [cid, ns] of Object.entries(state.mnRemote)) for (const n of ns) m.set(n.id, { n, cid });
+    return m;
+  };
+  const hashOf = (n, cid) => JSON.stringify([cid, n.date, n.text, n.pics, n.until || null, n.cont || 0]);
+
+  // 前回の写しと比べて、変わったノート・消えたノートに印を付ける（ノートを作る場所はさわらずに、保存のたびに見る）
+  const detect = () => {
+    if (!sy.on) return false;
+    const now = Date.now(), all = collect();
+    let ch = false;
+    for (const [id, { n, cid }] of all) {
+      const m = sy.meta[id], h = hashOf(n, cid);
+      if (m && !m.del && m.h === h) continue;
+      sy.meta[id] = { h, cid, upd: now, dirty: 1 };
+      ch = true;
+    }
+    for (const [id, m] of Object.entries(sy.meta))
+      if (!m.del && !all.has(id)) { sy.meta[id] = { del: 1, upd: now, dirty: 1 }; ch = true; }
+    if (ch) sySave();
+    return ch;
+  };
+
+  // 届いたノートを手元に入れる
+  const apply = rec => {
+    const id = rec.id, m = sy.meta[id];
+    if (m?.dirty && m.upd >= rec.upd) return false; // 手元で後から直してたら、こっちが勝つ
+    const have = collect().get(id);
+    if (rec.del) {
+      if (have) {
+        const c = holder(have.cid);
+        c.notes = c.notes.filter(x => x.id !== id);
+        const used = new Set([...collect().values()].flatMap(x => x.n.pics));
+        for (const k of have.n.pics) if (!used.has(k)) window.mnDelPic?.(k).catch(() => {});
+      }
+      sy.meta[id] = { del: 1, upd: rec.upd };
+      return !!have;
+    }
+    if (!isYmd(rec.date) || typeof rec.cid !== 'string') return false;
+    const v = {
+      date: rec.date, text: String(rec.text || '').slice(0, 2000),
+      pics: (Array.isArray(rec.pics) ? rec.pics : []).filter(k => typeof k === 'string').slice(0, 8),
+      until: isYmd(rec.until) ? rec.until : null
+    };
+    if (+rec.cont > 1) v.cont = +rec.cont;
+    let n = null;
+    if (have && have.cid === rec.cid) { n = have.n; delete n.cont; Object.assign(n, v); }
+    else {
+      if (have) { const o = holder(have.cid); o.notes = o.notes.filter(x => x.id !== id); }
+      n = { id, ...v };
+      holder(rec.cid).notes.push(n);
+    }
+    sy.meta[id] = { h: hashOf(n, rec.cid), cid: rec.cid, upd: rec.upd };
+    return true;
+  };
+
+  // ----- 受け取る：はじめは全部、次からは変わった分だけ -----
+  const pull = async () => {
+    detect();
+    const got = [];
+    const see = f => {
+      if (f.removed || f.trashed) { const n = nameOfId(f.id); if (n) delete sy.files[n]; return; }
+      const old = sy.files[f.name];
+      keep(f);
+      const upd = +(f.appProperties?.upd || 0);
+      if (f.name.startsWith('note-')) {
+        const m = sy.meta[f.name.slice(5, -5)];
+        if (!m || upd > m.upd) got.push(f);
+      } else if (f.name.startsWith('courses-') && f.name !== `courses-${sy.dev}.json` &&
+        (!old || old.upd !== upd || !state.mnCourses[f.name.slice(8, -5)])) got.push(f);
+    };
+    if (!sy.page) {
+      const st = await (await api(`${DRV}/changes/startPageToken`)).json();
+      let pt = '';
+      do {
+        const r = await (await api(`${DRV}/files?spaces=appDataFolder&pageSize=1000&fields=nextPageToken,files(${FF})${pt ? '&pageToken=' + pt : ''}`)).json();
+        r.files.forEach(see);
+        pt = r.nextPageToken;
+      } while (pt);
+      sy.page = st.startPageToken;
+    } else {
+      let pt = sy.page;
+      while (pt) {
+        const r = await (await api(`${DRV}/changes?spaces=appDataFolder&pageSize=1000&pageToken=${pt}&fields=nextPageToken,newStartPageToken,changes(removed,fileId,file(${FF},trashed))`)).json();
+        for (const c of r.changes) see(c.removed ? { removed: true, id: c.fileId } : c.file);
+        if (r.newStartPageToken) sy.page = r.newStartPageToken;
+        pt = r.nextPageToken;
+      }
+    }
+    let ch = false;
+    for (const f of got) {
+      const rec = await (await api(`${DRV}/files/${f.id}?alt=media`)).json();
+      if (f.name.startsWith('courses-')) { state.mnCourses[f.name.slice(8, -5)] = Array.isArray(rec) ? rec : []; ch = true; }
+      else if (apply({ ...rec, id: f.name.slice(5, -5), upd: +(f.appProperties?.upd || rec.upd || 0) })) ch = true;
+    }
+    sySave();
+    if (ch) { save(); redraw(); }
+  };
+
+  // ----- 送る -----
+  const myCourses = () => allCourses().filter(({ c }) => (c.name || c.short).trim())
+    .map(({ c, t }) => ({ tid: t.id, term: t.name, id: c.id, name: c.name || c.short, color: tagOf(c)?.color || '' }));
+  const push = async () => {
+    detect();
+    const all = collect();
+    const dirty = Object.entries(sy.meta).filter(([, m]) => m.dirty);
+    picsLeft = new Set(dirty.flatMap(([id, m]) => m.del ? [] : all.get(id)?.n.pics || []).filter(k => !sy.files['pic-' + k])).size;
+    for (const [id, m] of dirty) {
+      const x = all.get(id);
+      if (!m.del && !x) continue;
+      if (!m.del) for (const k of x.n.pics) {
+        if (sy.files['pic-' + k]) continue;
+        const b = await window.mnLocalPic?.(k).catch(() => null);
+        if (!b) continue; // 手元にない（ほかの端末で撮った）写真はドライブにあるはず
+        await put('pic-' + k, b, b.type || 'image/jpeg', {});
+        picsLeft = Math.max(0, picsLeft - 1);
+        sySave();
+        drawStatus();
+      }
+      if (sy.meta[id] !== m) continue; // 送ってるあいだに直された → 次の回で
+      const name = `note-${id}.json`;
+      const rec = m.del ? { id, del: true, upd: m.upd }
+        : { id, cid: x.cid, date: x.n.date, text: x.n.text, pics: x.n.pics, until: x.n.until || null, cont: x.n.cont || 0, upd: m.upd };
+      await put(name, JSON.stringify(rec), 'application/json', { upd: String(m.upd) }, sy.files[name]?.id);
+      if (sy.meta[id] === m) delete m.dirty;
+      sySave();
+    }
+    picsLeft = 0;
+    const h = JSON.stringify(myCourses()), name = `courses-${sy.dev}.json`;
+    if (h !== sy.cHash) {
+      await put(name, h, 'application/json', { upd: String(Date.now()) }, sy.files[name]?.id);
+      sy.cHash = h;
+      sySave();
+    }
+  };
+
+  // どのノートにも使われてない写真をドライブから消す（ほかの端末が送ってる途中かもしれないので、1日たったものだけ）
+  const gc = async () => {
+    const used = new Set([...collect().values()].flatMap(x => x.n.pics));
+    for (const [name, f] of Object.entries(sy.files)) {
+      if (!name.startsWith('pic-') || used.has(name.slice(4)) || Date.now() - f.t < 86400000) continue;
+      await api(`${DRV}/files/${f.id}`, { method: 'DELETE' }).catch(e => { if (!/404/.test(e.message)) throw e; });
+      delete sy.files[name];
+      sySave();
+    }
+  };
+
+  const sync = (ask = false) => {
+    if (!sy.on) return Promise.resolve();
+    if (busy) return busy;
+    if (!navigator.onLine) { status = 'offline'; drawStatus(); return Promise.resolve(); }
+    status = 'busy';
+    drawStatus();
+    busy = (async () => {
+      try {
+        if (ask) await auth.token(true);
+        await pull();
+        await push();
+        await gc();
+        sy.last = Date.now();
+        status = '';
+      } catch (e) {
+        console.warn('sync', e);
+        status = e.login ? 'login' : 'err';
+      } finally {
+        busy = null;
+        sySave();
+        drawStatus();
+      }
+    })();
+    return busy;
+  };
+
+  // 保存のたびに見て、3秒まとめて送る
+  let tm = 0;
+  const s0 = save;
+  save = function () {
+    const r = s0.apply(this, arguments);
+    if (detect()) { clearTimeout(tm); tm = setTimeout(sync, 3000); }
+    return r;
+  };
+  addEventListener('online', () => sync());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - sy.last > 30000) sync(); });
+  setInterval(() => { if (!document.hidden) sync(); }, 5 * 60000);
+  setTimeout(() => sync(), 2000);
+
+  // ----- オン・オフ -----
+  const turnOn = async () => {
+    const email = await auth.login();
+    // はじめての同期の前に、今のデータを取っておく（何かあったら戻せるように）
+    try {
+      if (!Object.keys(localStorage).some(k => k.startsWith('gakulog-sync-backup-')))
+        localStorage.setItem('gakulog-sync-backup-' + Date.now(), localStorage.getItem(KEY) || '');
+    } catch {}
+    sy = { ...fresh(), dev: sy.dev, on: true, email };
+    // 手元のノートは「いちばん古い」扱いで送る（ドライブに同じノートの新しい版があれば、そっちが勝つ）
+    for (const [id, { n, cid }] of collect()) sy.meta[id] = { h: hashOf(n, cid), cid, upd: 1, dirty: 1 };
+    if (!email) sy.email = await api(`${DRV}/about?fields=user(emailAddress)`).then(r => r.json()).then(r => r.user?.emailAddress || '').catch(() => '');
+    sySave();
+    drawUI();
+    await sync();
+  };
+  const turnOff = async () => {
+    await auth.logout();
+    sy = { ...fresh(), dev: sy.dev };
+    sySave();
+    status = '';
+    drawUI();
+  };
+
+  // ----- 画面：設定の欄 -----
+  const avail = () => gd.force || (!!GD_WEB && (native() ? !!SL() && (!ios() || !!GD_IOS) : true));
+  const hm = t => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const statusText = () => {
+    if (!sy.on) return '';
+    if (status === 'busy') return picsLeft ? `☁ 同期中…（写真 あと${picsLeft}枚）` : '☁ 同期中…';
+    if (status === 'offline') return '☁ オフライン。つながったら送るよ';
+    if (status === 'login') return '☁ ログインし直すと同期するよ';
+    if (status === 'err') return '☁ 同期できなかった。あとでもう一度やってみるね';
+    const left = Object.values(sy.meta).filter(m => m.dirty).length;
+    return sy.last ? `☁ ${hm(sy.last)} に同期した` + (left ? `（送り待ち ${left}件）` : '') : '☁ まだ同期してない';
+  };
+  const sec = document.createElement('details');
+  sec.className = 'sec set';
+  sec.id = 'setSync';
+  sec.innerHTML = '<summary>ミニノートの同期 <small></small></summary><div id="syncBody"></div>';
+  $('#setData')?.before(sec);
+  function drawUI() {
+    sec.hidden = !avail();
+    const cd = $('#mnAllCard');
+    if (cd) cd.hidden = !(featOn('grid') || sy.on);
+    sec.querySelector('summary small').textContent = sy.on ? 'オン' : '';
+    $('#syncBody').innerHTML = sy.on
+      ? `<p><b>${esc(sy.email || 'Google')}</b> のドライブと同期してるよ</p>` +
+        '<p class="hint" id="syncStatus"></p>' +
+        '<div class="row"><button type="button" id="syncNow">今すぐ同期</button>' +
+        '<button type="button" id="syncOff">ログアウト</button></div>' +
+        '<p class="hint">PCでは <b>akkeymorimori-sketch.github.io/jikanwari</b> を開いて、同じGoogleアカウントでログインしてね。その他タブの「📒 ミニノート」で見たり書いたりできるよ</p>'
+      : '<p class="hint">Googleでログインすると、ミニノート（写真も）を自分のGoogleドライブに保存して、PCのブラウザからも見たり書いたりできるよ。' +
+        '保存先はドライブの中のアプリ専用の場所（ドライブの一覧には出ない）で、運営には届かないよ</p>' +
+        '<button type="button" class="primary" id="syncOn">Googleでログインして同期する</button>';
+    drawStatus();
+  }
+  function drawStatus() {
+    const t = statusText();
+    const s = $('#syncStatus');
+    if (s) s.textContent = t;
+    const a = $('#mnAllSync');
+    if (!a) return;
+    a.innerHTML = !avail() ? '' : !sy.on
+      ? '設定の「ミニノートの同期」でGoogleにログインすると、PCからも見られるよ'
+      : esc(t) + (status === 'login' || status === 'err' ? ' <button type="button" class="mnaSync">同期する</button>' : '');
+  }
+  sec.addEventListener('click', async e => {
+    const id = e.target.id;
+    if (id === 'syncOn') {
+      try { await turnOn(); }
+      catch (err) { console.warn('sync login', err); alert('ログインできなかった。もう一度やってみてね'); turnOff(); }
+    }
+    if (id === 'syncNow') sync(true);
+    if (id === 'syncOff' && confirm('ログアウトする？この端末のノートは消えないよ（ドライブのノートもそのまま）')) turnOff();
+  });
+  // 先に読み込んでおく（ボタンを押した直後にポップアップを出さないと、ブラウザに止められる）
+  sec.addEventListener('toggle', () => { if (sec.open && !native() && GD_WEB) gis().catch(() => {}); });
+
+  // ----- 画面：ミニノート一覧（PCで主に使う。ほかの学期・ほかの端末の授業のノートも出す） -----
+  const dlg = document.createElement('dialog');
+  dlg.id = 'mnAllDlg';
+  dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>📒 ミニノート</h2>' +
+    '<button type="button" class="x big" id="mnAllX" aria-label="閉じる">×</button></div>' +
+    '<p class="hint" id="mnAllSync"></p><div id="mnAllBody"></div></div>';
+  document.body.append(dlg);
+  const noteLi = n =>
+    `<li data-mna="${esc(n.id)}"><span class="memo-date">${md(parseYmd(n.date))}${n.cont ? '（続き）' : ''}</span>` +
+    (n.pics.length ? `<small> 📷${n.pics.length}</small>` : '') +
+    `<div class="mnText">${esc(n.text) || '（写真だけ）'}</div></li>`;
+  const sorted = ns => ns.slice().sort((x, y) => y.date.localeCompare(x.date) || (x.cont || 1) - (y.cont || 1));
+  function drawAll() {
+    // 学期 → 授業。手元の授業が先、ほかの端末の授業はそのあと
+    const terms = new Map(), seen = new Set();
+    const add = (tid, tname, co) => {
+      if (!terms.has(tid)) terms.set(tid, { name: tname, cs: [] });
+      terms.get(tid).cs.push(co);
+      seen.add(co.id);
+    };
+    for (const { c, t } of allCourses())
+      if ((c.name || c.short).trim() || (c.notes || []).length)
+        add(t.id, t.name, { id: c.id, name: nm(c) || '（名前なし）', color: tagOf(c)?.color || '', ns: c.notes || [] });
+    for (const cs of Object.values(state.mnCourses)) for (const x of cs)
+      if (!seen.has(x.id)) add(x.tid || '?', x.term || 'ほかの端末', { id: x.id, name: x.name, color: x.color || '', ns: state.mnRemote[x.id] || [] });
+    for (const [cid, ns] of Object.entries(state.mnRemote))
+      if (!seen.has(cid)) add('??', '授業名がわからないノート', { id: cid, name: '（名前なし）', color: '', ns });
+    $('#mnAllBody').innerHTML = [...terms].map(([tid, t]) =>
+      `<details class="mnaTerm"${tid === state.currentTermId || terms.size === 1 ? ' open' : ''}><summary>${esc(t.name)} ` +
+      `<small>${t.cs.reduce((a, c) => a + c.ns.length, 0)}冊</small></summary>` +
+      t.cs.map(c => `<section class="mnaCo"${/^#[0-9a-f]{6}$/i.test(c.color) ? ` style="--tag:${c.color}"` : ''}>` +
+        `<div class="mnaHead"><h3>${esc(c.name)}</h3><button type="button" data-mnaadd="${esc(c.id)}">＋ 書く</button></div>` +
+        (c.ns.length ? `<ul class="mnList">${sorted(c.ns).map(noteLi).join('')}</ul>` : '') + '</section>').join('') +
+      '</details>').join('') || '<p class="muted">まだノートがないよ</p>';
+    drawStatus();
+  }
+  const redraw = () => {
+    if (dlg.open) drawAll();
+    try { renderDetail(); } catch {}
+    try { renderNow(); } catch {}
+  };
+  document.addEventListener('mn-changed', () => { if (dlg.open) drawAll(); });
+  const openAll = () => {
+    drawAll();
+    dlg.showModal();
+    if (sy.on && Date.now() - sy.last > 30000) sync();
+  };
+  dlg.addEventListener('click', e => {
+    if (e.target.id === 'mnAllX') return dlg.close();
+    if (e.target.closest('.mnaSync')) return sync(true);
+    const a = e.target.closest('[data-mnaadd]');
+    if (a) return window.mnOpen?.(null, holder(a.dataset.mnaadd));
+    const li = e.target.closest('[data-mna]');
+    const x = li && collect().get(li.dataset.mna);
+    if (x) window.mnOpen?.(x.n, holder(x.cid));
+  });
+
+  // その他タブの入口
+  const card = document.createElement('div');
+  card.className = 'card menu';
+  card.id = 'mnAllCard';
+  card.innerHTML = '<h2>ノート</h2><button type="button" id="mnAllBtn"><b>📒 ミニノート</b><small>授業ごとのノートをまとめて見る・PCと同期</small></button>';
+  const anchor = $('#lookBtn')?.closest('.card');
+  if (anchor) anchor.before(card); else $('#view-more').append(card);
+  $('#mnAllBtn').onclick = openAll;
+  const am = applyMode;
+  applyMode = function () { const r = am.apply(this, arguments); drawUI(); return r; };
+
+  // テストから使う
+  window.gd = { force: false, auth, sync, detect, turnOn, turnOff, openAll, drawUI, get sy() { return sy; } };
+  drawUI();
 }
