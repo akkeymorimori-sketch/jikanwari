@@ -12619,8 +12619,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     document.dispatchEvent(new Event('mn-changed'));
   }
   // 入力の途中なら、終わってから入れる
-  const applySoon = (force = false) => { if (force || !editing()) applyNow(); else pending = true; };
-  setInterval(() => { if (pending && !editing()) applyNow(); }, 1500);
+  const applySoon = (force = false) => { if (force || !editing()) applyNow(); else { pending = true; drawStatus(); } };
+  setInterval(() => { if (pending && !editing()) { applyNow(); drawStatus(); } }, 1500);
 
   // ----- ログイン（アクセストークンだけ。1時間で切れるので取り直す） -----
   let tok = null;
@@ -13056,8 +13056,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (status === 'offline') return '☁ オフライン。つながったら送るよ';
     if (status === 'login') return '☁ ログインし直すと同期するよ';
     if (status === 'err') return '☁ 同期できなかった。あとでもう一度やってみるね';
-    return sy.last ? `☁ ${hm(sy.last)} に同期した` + (sy.dirty.length ? '（送り待ちあり）' : '') : '☁ まだ同期してない';
+    if (!sy.last) return '☁ まだ同期してない';
+    const m = Math.floor((Date.now() - sy.last) / 60000);
+    return `☁ ${m < 1 ? 'たった今' : m < 60 ? m + '分前に' : hm(sy.last) + ' に'}同期した` +
+      (pending ? '（ほかの端末の変更は、この画面を閉じると反映するよ）' : sy.dirty.length ? '（送り待ちあり）' : '');
   };
+  setInterval(() => { if (sy.on && !document.hidden) drawStatus(); }, 20000);
   const sec = document.createElement('details');
   sec.className = 'sec set';
   sec.id = 'setSync';
@@ -13095,7 +13099,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       try { await turnOn(); $('#settingsDlg')?.close(); toast?.('同期したよ'); }
       catch (err) { console.warn('sync login', err); alert('ログインできなかった。もう一度やってみてね'); turnOff(); }
     }
-    if (id === 'syncNow') sync(true);
+    if (id === 'syncNow') {
+      e.target.disabled = true;
+      await sync(true);
+      e.target.disabled = false;
+      if (!status) toast?.(pending ? '同期したよ。設定を閉じると反映するよ' : '同期したよ');
+    }
     if (id === 'syncOff' && confirm('ログアウトする？この端末のデータは消えないよ（ドライブのデータもそのまま）')) turnOff();
     if (id === 'syncWipe' && confirm('ドライブに同期したデータを全部消す？この端末のデータは消えないよ。ほかの端末とはそろわなくなるよ')) {
       try { await wipe(); toast?.('ドライブのデータを消したよ'); } catch { alert('消せなかった。もう一度やってみてね'); }
