@@ -8776,6 +8776,16 @@ var WG_LOOK = {
   const AL_SOUNDS = [['', '標準'], ['pipipi', 'ピピピ'], ['bell', 'ベル'], ['chime', 'チャイム'], ['soft', 'やさしい音']];
   const okS = v => AL_SOUNDS.some(([id]) => id && id === v) ? v : '';
   const sndOpts = v => AL_SOUNDS.map(([id, name]) => `<option value="${id}"${id === v ? ' selected' : ''}>${name}</option>`).join('');
+  // 音量（大＝今までの音、中・小は小さく作った音 gaku-<id>_m / _s。標準の音は変えられない）
+  // いつもの音量（vol）→ アラームごとの音量（'' ならいつもの）→「今は全部」（all。同室の人がいる日など）の順に強い
+  const AL_VOLS = [['l', '大'], ['m', '中'], ['s', '小']];
+  const VOL_K = { l: 1, m: 0.5, s: 0.25 };
+  const okV = v => VOL_K[v] ? v : '';
+  const volName = v => (AL_VOLS.find(([k]) => k === v) || AL_VOLS[0])[1];
+  const volOpts = (v, withDef = true) => (withDef ? `<option value=""${!v ? ' selected' : ''}>いつもの（${volName(state.alarm?.vol || 'l')}）</option>` : '') +
+    AL_VOLS.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('');
+  const lvlOf = v => okV(state.alarm?.all) || okV(v) || okV(state.alarm?.vol) || 'l';
+  const sndId = (snd, v) => !snd ? '' : lvlOf(v) === 'l' ? snd : `${snd}_${lvlOf(v)}`;
 
   // その時刻が次に来る日（今日まだなら今日、過ぎてたら明日）
   function alNextDate(at, now = new Date()) {
@@ -8803,9 +8813,12 @@ var WG_LOOK = {
     state.alarm = {
       on: !!a.on,
       sound: okS(a.sound), // 授業・バイトの日の音
+      vol: okV(a.vol) || 'l', // いつもの音量
+      all: okV(a.all), // 今は全部この音量（空なら、それぞれの音量）
       cls: Array.from({ length: 10 }, (_, i) => okT(a.cls?.[i]) ? a.cls[i] : ''),
+      clsVol: Array.from({ length: 10 }, (_, i) => okV(a.clsVol?.[i])),
       jobs: (Array.isArray(a.jobs) ? a.jobs : []).filter(r => r && okT(r.until) && okT(r.at))
-        .map(r => ({ job: String(r.job || '').trim().slice(0, 20), until: r.until, at: r.at })),
+        .map(r => ({ job: String(r.job || '').trim().slice(0, 20), until: r.until, at: r.at, vol: okV(r.vol) })),
       // 時計アプリみたいなアラーム：時刻・名前・くり返す曜日（0=日〜6=土、空なら1回だけ）・オン/オフ
       // 1回だけのは、オンにしたときに鳴る日（date）を決める。過ぎたらオフにして一覧には残す
       list: (Array.isArray(a.list) ? a.list : []).concat(
@@ -8815,7 +8828,7 @@ var WG_LOOK = {
         .map(o => {
           const days = (Array.isArray(o.days) ? o.days : []).filter(d => Number.isInteger(d) && d >= 0 && d <= 6);
           const x = { id: typeof o.id === 'string' && o.id ? o.id : uid(), at: o.at, name: String(o.name || '').trim().slice(0, 20),
-            days: [...new Set(days)].sort(), on: o.on !== false, sound: okS(o.sound) };
+            days: [...new Set(days)].sort(), on: o.on !== false, sound: okS(o.sound), vol: okV(o.vol) };
           if (!x.days.length) {
             if (x.on && isYmd(o.date) && atOf(o.date, o.at) > now) x.date = o.date;
             else if (x.on && isYmd(o.date)) x.on = false; // 鳴り終わった1回だけのアラーム
@@ -8837,7 +8850,7 @@ var WG_LOOK = {
       if (state.useGrid) {
         const c = attendOn(day, t)[0];
         const at = c && a.cls[c.period - 1];
-        if (at) hits.push({ min: toMin(at), why: `${c.period}限 ${nm(c)}` });
+        if (at) hits.push({ min: toMin(at), why: `${c.period}限 ${nm(c)}`, vol: a.clsVol[c.period - 1] });
       }
       for (const e of eventsOn(k)) {
         if (e.kind !== 'job' || !grIsMine(e)) continue;
@@ -8846,13 +8859,13 @@ var WG_LOOK = {
         const name = (e.title || '').trim();
         const r = a.jobs.filter(r => (!r.job || r.job === name) && s <= toMin(r.until))
           .sort((x, y) => (!!y.job - !!x.job) || toMin(x.until) - toMin(y.until))[0];
-        if (r) hits.push({ min: toMin(r.at), why: `${name || 'バイト'} ${e.start}から` });
+        if (r) hits.push({ min: toMin(r.at), why: `${name || 'バイト'} ${e.start}から`, vol: r.vol });
       }
       if (!hits.length) continue;
       hits.sort((x, y) => x.min - y.min);
       const at = new Date(day); at.setHours(0, hits[0].min, 0, 0);
       if (at <= now) continue;
-      out.push({ k, at, title: hits.map(h => h.why).join('・').slice(0, 40), skip: a.skip.includes(k) });
+      out.push({ k, at, title: hits.map(h => h.why).join('・').slice(0, 40), skip: a.skip.includes(k), vol: hits[0].vol });
     }
     return out;
   }
@@ -8861,8 +8874,8 @@ var WG_LOOK = {
   function alItems() {
     const a = alCfg();
     if (!a.on) return [];
-    return alPlan().filter(x => !x.skip).map(x => ({ at: x.at.getTime(), title: x.title, sound: a.sound }))
-      .concat(a.list.filter(o => o.on).flatMap(o => alTimes(o).map(t => ({ at: t.getTime(), title: o.name || 'アラーム', sound: o.sound }))))
+    return alPlan().filter(x => !x.skip).map(x => ({ at: x.at.getTime(), title: x.title, sound: sndId(a.sound, x.vol) }))
+      .concat(a.list.filter(o => o.on).flatMap(o => alTimes(o).map(t => ({ at: t.getTime(), title: o.name || 'アラーム', sound: sndId(o.sound, o.vol) }))))
       .sort((x, y) => x.at - y.at);
   }
 
@@ -8875,12 +8888,18 @@ var WG_LOOK = {
     '<button type="button" class="x big" id="alX" aria-label="閉じる">×</button></div>' +
     '<p class="hint" id="alNote"></p>' +
     '<label class="alSw"><input type="checkbox" id="alOn"> アラームを使う</label>' +
+    '<h4>音量</h4>' +
+    '<div class="alRow alSnd"><span>いつもの音量</span><select id="alVol" aria-label="いつもの音量"></select></div>' +
+    '<div class="alRow alSnd"><span>今は全部</span><select id="alAll" aria-label="今は全部の音量">' +
+    '<option value="">それぞれの音量</option><option value="m">中にする</option><option value="s">小にする</option></select></div>' +
+    '<p class="hint">同室の人がいる日などに。戻すまで、全部のアラームがこの音量になるよ。スマホの音量より小さくするしくみなので、スマホの音量が大きいと「小」でもそれなりに鳴るよ。「標準」の音は音量を変えられない（スマホのアラームの音量で鳴る）</p>' +
     '<h4>アラーム</h4>' +
     '<p class="hint">時刻を入れると、次のその時刻に鳴るよ（まだなら今日、過ぎてたら明日）。曜日を選ぶと毎週くり返す</p>' +
     '<div class="alRow"><input type="time" id="alOnceT" value="07:00" aria-label="時刻">' +
     '<input id="alOnceN" class="alName" placeholder="名前（なくてもOK）" maxlength="20"></div>' +
     '<div class="alDays" id="alNewDays" role="group" aria-label="くり返す曜日"></div>' +
     '<div class="alRow alSnd"><span>音</span><select id="alNewSnd" aria-label="アラーム音">' + sndOpts('') + '</select>' +
+    '<select id="alNewVol" aria-label="音量"></select>' +
     '<button type="button" id="alPlay" aria-label="試し聴き">▶</button></div>' +
     '<button type="button" class="primary" id="alOnceAdd">アラームを追加</button>' +
     '<ul id="alOnce" class="alList"></ul>' +
@@ -8911,7 +8930,8 @@ var WG_LOOK = {
 
   function updHead() {
     const n = alItems()[0];
-    $('#alHeadT').textContent = n && n.at - Date.now() < 86400000 ? hm(new Date(n.at)) : '';
+    // 「今は全部 小さく」にしてたら 🤫（戻し忘れないように）
+    $('#alHeadT').textContent = (alCfg().on && state.alarm.all ? '🤫' : '') + (n && n.at - Date.now() < 86400000 ? hm(new Date(n.at)) : '');
   }
 
   // 曜日の並び（カレンダーの週のはじまりに合わせる）
@@ -8936,7 +8956,8 @@ var WG_LOOK = {
     $('#alOnce').innerHTML = l.map(o =>
       `<li class="${o.on ? '' : 'off'}"><input type="time" data-alt="${o.id}" value="${o.at}" aria-label="時刻">` +
       `<span class="alInfo"><b>${esc(o.name || 'アラーム')}</b><small>${esc(alWhen(o))}` +
-      `<span>♪<select data-als="${o.id}" aria-label="アラーム音">${sndOpts(o.sound)}</select></span></small></span>` +
+      `<span>♪<select data-als="${o.id}" aria-label="アラーム音">${sndOpts(o.sound)}</select></span>` +
+      `<span>🔊<select data-alv="${o.id}" aria-label="音量">${volOpts(o.vol)}</select></span></small></span>` +
       `<label class="alTg"><input type="checkbox" data-alon="${o.id}"${o.on ? ' checked' : ''} aria-label="オン/オフ"></label>` +
       `<button type="button" class="alDel" data-alox="${o.id}" aria-label="消す">×</button></li>`).join('')
       || '<li class="muted">まだアラームはないよ</li>';
@@ -8961,14 +8982,19 @@ var WG_LOOK = {
     $('#alOn').checked = a.on;
     $('#alOn').disabled = !!AL && !alReady;
     $('#alAutoSnd').innerHTML = sndOpts(a.sound);
+    $('#alVol').innerHTML = volOpts(a.vol, false);
+    $('#alAll').value = a.all;
+    $('#alNewVol').innerHTML = volOpts($('#alNewVol').value);
     $('#alCls').innerHTML = Array.from({ length: state.periods }, (_, i) =>
       `<div class="alRow"><span>${i + 1}限からの日は</span>` +
       `<input type="time" data-alp="${i}" value="${a.cls[i]}"><span>に鳴らす</span>` +
+      `<select data-alpv="${i}" aria-label="${i + 1}限の日の音量">${volOpts(a.clsVol[i])}</select>` +
       `<button type="button" class="alDel" data-alpx="${i}" aria-label="消す">×</button></div>`).join('');
     $('#alJobs').innerHTML = a.jobs.map((r, i) =>
       `<div class="alJob"><input list="alJobNames" data-alj="${i}" data-f="job" value="${esc(r.job)}" placeholder="全部のバイト" maxlength="20">` +
       `<div class="alRow"><span>が</span><input type="time" data-alj="${i}" data-f="until" value="${r.until}"><span>までに始まる日は</span></div>` +
       `<div class="alRow"><input type="time" data-alj="${i}" data-f="at" value="${r.at}"><span>に鳴らす</span>` +
+      `<select data-alj="${i}" data-f="vol" aria-label="音量">${volOpts(r.vol)}</select>` +
       `<button type="button" class="alDel" data-aljx="${i}" aria-label="消す">×</button></div></div>`).join('')
       || '<p class="muted">まだルールがないよ</p>';
     const names = new Set();
@@ -9027,7 +9053,7 @@ var WG_LOOK = {
     const t = $('#alOnceT').value;
     if (!okT(t)) return alert('時刻を入れてね');
     const a = alCfg();
-    const o = { id: uid(), at: t, name: $('#alOnceN').value.trim().slice(0, 20), days: [...alNewDays].sort(), on: true, sound: okS($('#alNewSnd').value) };
+    const o = { id: uid(), at: t, name: $('#alOnceN').value.trim().slice(0, 20), days: [...alNewDays].sort(), on: true, sound: okS($('#alNewSnd').value), vol: okV($('#alNewVol').value) };
     if (!o.days.length) o.date = alNextDate(t);
     a.list.push(o);
     $('#alOnceN').value = '';
@@ -9046,13 +9072,25 @@ var WG_LOOK = {
       return alSave();
     }
     const a = alCfg();
-    if (el.id === 'alNewSnd') return alPlay(el.value);
+    if (el.id === 'alNewSnd' || el.id === 'alNewVol') return alPlay($('#alNewSnd').value, $('#alNewVol').value);
     if (el.id === 'alAutoSnd') { a.sound = okS(el.value); alPlay(a.sound); return alSave(); }
-    if (el.dataset.als) {
-      const o = a.list.find(x => x.id === el.dataset.als);
-      if (o) { o.sound = okS(el.value); alPlay(o.sound); }
+    if (el.id === 'alVol') { a.vol = okV(el.value) || 'l'; alPlay(a.sound || 'pipipi'); return alSave(); }
+    if (el.id === 'alAll') {
+      a.all = okV(el.value);
+      if (a.all) toast(`戻すまで、全部のアラームを「${volName(a.all)}」で鳴らすよ`);
       return alSave();
     }
+    if (el.dataset.als) {
+      const o = a.list.find(x => x.id === el.dataset.als);
+      if (o) { o.sound = okS(el.value); alPlay(o.sound, o.vol); }
+      return alSave();
+    }
+    if (el.dataset.alv) {
+      const o = a.list.find(x => x.id === el.dataset.alv);
+      if (o) { o.vol = okV(el.value); alPlay(o.sound, o.vol); }
+      return alSave();
+    }
+    if (el.dataset.alpv != null) { a.clsVol[+el.dataset.alpv] = okV(el.value); alPlay(a.sound, a.clsVol[+el.dataset.alpv]); return alSave(); }
     if (el.dataset.alon) {
       const o = a.list.find(x => x.id === el.dataset.alon);
       if (!o) return;
@@ -9077,6 +9115,7 @@ var WG_LOOK = {
       const r = a.jobs[+el.dataset.alj];
       if (!r) return;
       if (el.dataset.f === 'job') r.job = el.value.trim().slice(0, 20);
+      else if (el.dataset.f === 'vol') { r.vol = okV(el.value); alPlay(a.sound, r.vol); }
       else if (okT(el.value)) r[el.dataset.f] = el.value;
       return alSave(); // 時刻を空にしたときは元に戻る
     }
@@ -9092,18 +9131,19 @@ var WG_LOOK = {
 
   // 試し聴き（5秒の短い版。標準の音はiPhoneのものなのでここでは鳴らせない）
   let alAudio = null;
-  function alPlay(id) {
+  function alPlay(id, vol) {
     alAudio?.pause();
     alAudio = null;
-    if (!id) return toast('標準はスマホのアラームの音だよ（ここでは試せない）');
+    if (!id) return toast('標準はスマホのアラームの音だよ（ここでは試せない。音量も変えられない）');
     alAudio = new Audio(`sounds/${id}.wav`);
+    alAudio.volume = VOL_K[lvlOf(vol)]; // 試し聴きは、大の音を小さくして鳴らす
     alAudio.play().catch(() => {});
   }
   dlg.addEventListener('close', () => { alAudio?.pause(); alAudio = null; });
 
   dlg.addEventListener('click', e => {
     if (e.target.id === 'alX' || e.target === dlg) return dlg.close();
-    if (e.target.id === 'alPlay') return alPlay($('#alNewSnd').value);
+    if (e.target.id === 'alPlay') return alPlay($('#alNewSnd').value, $('#alNewVol').value);
     if (e.target.id === 'alOnceAdd') return addOnce();
     const d = e.target.dataset, a = alCfg();
     if (e.target.id === 'alJobAdd') { a.jobs.push({ job: '', until: '10:00', at: '07:00' }); return alSave(); }
