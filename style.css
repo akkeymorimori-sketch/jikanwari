@@ -1708,3 +1708,10 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .obRestore button { padding: 10px; font-weight: bold; }
 #setSync .chk { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
 #setSync .danger { margin-top: 6px; }
+/* 目覚まし：イヤホンで鳴らす（すみっこのボタン）と、鳴ってるときの画面 */
+.alEarLink { display: block; margin: 18px 0 0 auto; background: none; border: none; color: var(--muted); font-size: .85em; text-decoration: underline; padding: 4px; }
+.alEarLink small { color: var(--accent); text-decoration: none; margin-left: 4px; }
+.earSteps, .earNotes { margin: 4px 0 8px; padding-left: 1.4em; display: grid; gap: 4px; }
+#earRingDlg .dlg { text-align: center; gap: 14px; padding: 24px 18px; }
+#earRingDlg h2 { font-size: 1.4em; }
+#earRingDlg .big { font-size: 1.2em; padding: 14px; }

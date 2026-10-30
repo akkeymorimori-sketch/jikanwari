@@ -8786,6 +8786,10 @@ var WG_LOOK = {
     AL_VOLS.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('');
   const lvlOf = v => okV(state.alarm?.all) || okV(v) || okV(state.alarm?.vol) || 'l';
   const sndId = (snd, v) => !snd ? '' : lvlOf(v) === 'l' ? snd : `${snd}_${lvlOf(v)}`;
+  const AL_SNOOZE = [0, 5, 9, 10, 15];
+  const AL_GAP = [3, 5, 10];
+  // イヤホンで鳴らせるのは iPhone のアプリ版だけ（Android はあとで）
+  const earOk = () => !!AL?.earArm && window.Capacitor?.getPlatform?.() === 'ios';
 
   // その時刻が次に来る日（今日まだなら今日、過ぎてたら明日）
   function alNextDate(at, now = new Date()) {
@@ -8815,6 +8819,9 @@ var WG_LOOK = {
       sound: okS(a.sound), // 授業・バイトの日の音
       vol: okV(a.vol) || 'l', // いつもの音量
       all: okV(a.all), // 今は全部この音量（空なら、それぞれの音量）
+      snooze: AL_SNOOZE.includes(+a.snooze) ? +a.snooze : 0, // スヌーズ（分）。0 ならなし
+      ear: a.ear === true, // イヤホンで鳴らす（iPhone のアプリ版だけ）
+      earGap: AL_GAP.includes(+a.earGap) ? +a.earGap : 5, // 予備のアラームを何分あとに鳴らすか
       cls: Array.from({ length: 10 }, (_, i) => okT(a.cls?.[i]) ? a.cls[i] : ''),
       clsVol: Array.from({ length: 10 }, (_, i) => okV(a.clsVol?.[i])),
       jobs: (Array.isArray(a.jobs) ? a.jobs : []).filter(r => r && okT(r.until) && okT(r.at))
@@ -8874,8 +8881,8 @@ var WG_LOOK = {
   function alItems() {
     const a = alCfg();
     if (!a.on) return [];
-    return alPlan().filter(x => !x.skip).map(x => ({ at: x.at.getTime(), title: x.title, sound: sndId(a.sound, x.vol) }))
-      .concat(a.list.filter(o => o.on).flatMap(o => alTimes(o).map(t => ({ at: t.getTime(), title: o.name || 'アラーム', sound: sndId(o.sound, o.vol) }))))
+    return alPlan().filter(x => !x.skip).map(x => ({ at: x.at.getTime(), title: x.title, sound: sndId(a.sound, x.vol), snooze: a.snooze }))
+      .concat(a.list.filter(o => o.on).flatMap(o => alTimes(o).map(t => ({ at: t.getTime(), title: o.name || 'アラーム', sound: sndId(o.sound, o.vol), snooze: a.snooze }))))
       .sort((x, y) => x.at - y.at);
   }
 
@@ -8904,6 +8911,8 @@ var WG_LOOK = {
     '<button type="button" class="primary" id="alOnceAdd">アラームを追加</button>' +
     '<ul id="alOnce" class="alList"></ul>' +
     '<div class="alRow alSnd" id="alAutoRow"><span>授業・バイトの日の音</span><select id="alAutoSnd" aria-label="授業・バイトの日のアラーム音"></select></div>' +
+    '<div class="alRow alSnd"><span>スヌーズ</span><select id="alSnooze" aria-label="スヌーズ">' +
+    AL_SNOOZE.map(m => `<option value="${m}">${m ? m + '分後にもう一度' : 'なし'}</option>`).join('') + '</select></div>' +
     '<h4>授業がある日</h4>' +
     '<p class="hint">その日の最初の授業で決まるよ。空欄の時限からの日は鳴らない</p>' +
     '<div id="alCls"></div>' +
@@ -8915,8 +8924,38 @@ var WG_LOOK = {
     '<h4>この先1週間</h4>' +
     '<p class="hint">授業とバイトが両方ある日は、早いほうで1回だけ鳴らすよ。上の「アラーム」は別に鳴る</p>' +
     '<ul id="alNext" class="alNext"></ul>' +
+    '<button type="button" class="alEarLink" id="alEarLink" hidden>🎧 イヤホンで鳴らす <small id="alEarState"></small></button>' +
     '</div>';
   document.body.append(dlg);
+
+  // イヤホンで鳴らす：案内とオン/オフ（すみっこのボタンから開く）
+  const earDlg = document.createElement('dialog');
+  earDlg.id = 'earDlg';
+  earDlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>🎧 イヤホンで鳴らす</h2>' +
+    '<button type="button" class="x big" id="earX" aria-label="閉じる">×</button></div>' +
+    '<p>イヤホンをつないでると、アラームがイヤホンだけで鳴るよ（つないでなければスマホから鳴る）。同室の人がいるときに。</p>' +
+    '<h4>使い方</h4>' +
+    '<ol class="earSteps"><li>寝る前に、がくログを開いてからホーム画面に戻る（アプリは閉じないでね）</li>' +
+    '<li>そのままイヤホンをして寝る</li>' +
+    '<li>鳴ったら、がくログの画面の「止める」か、ロック画面の再生の「一時停止」で止める</li></ol>' +
+    '<h4>気をつけること</h4>' +
+    '<ul class="earNotes"><li>アプリを上にスワイプして閉じると鳴らないよ</li>' +
+    '<li>夜のあいだアプリが動き続けるので、少し電池を使うよ（充電しながらがおすすめ）</li>' +
+    '<li>念のため、ふつうのアラームも予備で少しあとに鳴るよ。イヤホンで止めたら、予備は鳴らない</li>' +
+    '<li>音は「標準」だとピピピになるよ（アプリからは標準の音を鳴らせないので）</li></ul>' +
+    '<label class="alSw"><input type="checkbox" id="earOn"> イヤホンで鳴らす</label>' +
+    '<div class="alRow alSnd"><span>予備のアラーム</span><select id="earGap" aria-label="予備のアラーム">' +
+    AL_GAP.map(m => `<option value="${m}">${m}分あとに鳴らす</option>`).join('') + '</select></div>' +
+    '</div>';
+  document.body.append(earDlg);
+
+  // 鳴ってるとき（イヤホンで鳴らす）
+  const ringDlg = document.createElement('dialog');
+  ringDlg.id = 'earRingDlg';
+  ringDlg.innerHTML = '<div class="dlg"><h2 id="earRingT">⏰</h2>' +
+    '<button type="button" class="primary big" id="earStopBtn">止める</button>' +
+    '<button type="button" id="earSnoozeBtn" hidden></button></div>';
+  document.body.append(ringDlg);
 
   // 学期の横の ⏰ ボタン
   const hb = document.createElement('button');
@@ -9001,6 +9040,9 @@ var WG_LOOK = {
     for (const p of state.evPresets) if (p.kind === 'job' && p.title) names.add(p.title);
     for (const e of state.events) if (e.kind === 'job' && e.title) names.add(e.title);
     $('#alJobNames').innerHTML = [...names].map(v => `<option value="${esc(v)}">`).join('');
+    $('#alSnooze').value = String(a.snooze);
+    $('#alEarLink').hidden = !earOk();
+    $('#alEarState').textContent = a.ear ? 'オン' : '';
     renderOnce();
     renderAlNext();
   }
@@ -9024,10 +9066,34 @@ var WG_LOOK = {
         if (!alReady) return;
         syncAlUI();
       }
-      try { await AL.sync({ items: alItems() }); }
-      catch (err) { toast('アラームを入れられなかった：' + (err.message || err)); }
+      // イヤホンで鳴らすときは、アプリが時刻に鳴らして、ふつうのアラームは予備として earGap 分あとに
+      const items = alItems(), a = alCfg(), ear = a.on && a.ear && earOk();
+      const gap = a.earGap * 60000;
+      try {
+        await AL.sync({ items: ear ? items.map(x => ({ ...x, at: x.at + gap, title: '（予備）' + x.title })) : items });
+        if (earOk()) await AL.earArm({ items: ear ? items.map(x => ({ ...x, backup: x.at + gap })) : [] });
+      } catch (err) { toast('アラームを入れられなかった：' + (err.message || err)); }
     }, 300);
   };
+
+  // イヤホンで鳴ってるときの画面
+  function showRing(r) {
+    $('#earRingT').textContent = '⏰ ' + (r.title || 'アラーム');
+    const sz = alCfg().snooze;
+    $('#earSnoozeBtn').hidden = !sz;
+    $('#earSnoozeBtn').textContent = `スヌーズ（${sz}分）`;
+    if (!ringDlg.open) ringDlg.showModal();
+  }
+  if (earOk()) {
+    AL.addListener?.('earRing', showRing);
+    AL.addListener?.('earStop', () => { if (ringDlg.open) ringDlg.close(); window.alPush(); });
+  }
+  ringDlg.addEventListener('cancel', e => e.preventDefault()); // Esc では閉じない（止めるボタンで）
+  ringDlg.addEventListener('click', e => {
+    if (e.target.id === 'earStopBtn') AL.earStop({ snooze: 0 });
+    if (e.target.id === 'earSnoozeBtn') AL.earStop({ snooze: alCfg().snooze });
+    if (e.target.id === 'earStopBtn' || e.target.id === 'earSnoozeBtn') ringDlg.close();
+  });
 
   const alSave = () => { save(); syncAlUI(); };
 
@@ -9075,6 +9141,7 @@ var WG_LOOK = {
     if (el.id === 'alNewSnd' || el.id === 'alNewVol') return alPlay($('#alNewSnd').value, $('#alNewVol').value);
     if (el.id === 'alAutoSnd') { a.sound = okS(el.value); alPlay(a.sound); return alSave(); }
     if (el.id === 'alVol') { a.vol = okV(el.value) || 'l'; alPlay(a.sound || 'pipipi'); return alSave(); }
+    if (el.id === 'alSnooze') { a.snooze = +el.value || 0; return alSave(); }
     if (el.id === 'alAll') {
       a.all = okV(el.value);
       if (a.all) toast(`戻すまで、全部のアラームを「${volName(a.all)}」で鳴らすよ`);
@@ -9144,6 +9211,7 @@ var WG_LOOK = {
   dlg.addEventListener('click', e => {
     if (e.target.id === 'alX' || e.target === dlg) return dlg.close();
     if (e.target.id === 'alPlay') return alPlay($('#alNewSnd').value, $('#alNewVol').value);
+    if (e.target.closest('#alEarLink')) { $('#earOn').checked = alCfg().ear; $('#earGap').value = String(alCfg().earGap); return earDlg.showModal(); }
     if (e.target.id === 'alOnceAdd') return addOnce();
     const d = e.target.dataset, a = alCfg();
     if (e.target.id === 'alJobAdd') { a.jobs.push({ job: '', until: '10:00', at: '07:00' }); return alSave(); }
@@ -9161,17 +9229,32 @@ var WG_LOOK = {
     }
   });
 
-    async function alInit() {
+    earDlg.addEventListener('click', e => { if (e.target.id === 'earX' || e.target === earDlg) earDlg.close(); });
+  earDlg.addEventListener('change', async e => {
+    const a = alCfg();
+    if (e.target.id === 'earOn') {
+      if (e.target.checked && !a.on && !(await alEnable())) { e.target.checked = false; return; }
+      a.ear = e.target.checked;
+      if (a.ear) toast('寝る前にがくログを開いてから、ホーム画面に戻ってね（アプリは閉じないで）');
+    }
+    if (e.target.id === 'earGap') a.earGap = +e.target.value || 5;
+    alSave();
+  });
+
+  async function alInit() {
     if (AL) {
       try { alReady = !!(await AL.available()).value; } catch { alReady = false; }
     }
     window.alPush();
+    // アプリを開いたときに、イヤホンで鳴ってたら「止める」画面を出す
+    if (earOk()) AL.earState?.().then(r => { if (r?.ringing) showRing(r.ringing); }).catch(() => {});
   }
   setTimeout(alInit, 0); // state を読み込んでから
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     if (dlg.open) syncAlUI();
     window.alPush();
+    if (earOk()) AL.earState?.().then(r => { if (r?.ringing) showRing(r.ringing); else if (ringDlg.open) ringDlg.close(); }).catch(() => {});
   });
 }
 
