@@ -1703,3 +1703,8 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .tbD .talkAv { width: 30px; height: 30px; font-size: 15px; background: #fff; }
 #talkDlg .talkReplies { display: flex; flex-wrap: wrap; gap: 6px; }
 #talkDlg .talkReplies button { flex: 1 1 30%; padding: 8px 4px; border-radius: 999px; }
+/* Googleで同期 */
+.obRestore { display: grid; gap: 4px; margin-bottom: 4px; }
+.obRestore button { padding: 10px; font-weight: bold; }
+#setSync .chk { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
+#setSync .danger { margin-top: 6px; }
