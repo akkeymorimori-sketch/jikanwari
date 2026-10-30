@@ -12404,7 +12404,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const GD_IOS = '543768102440-g05h40rk97vh6gpnrcpoh1uiumpg998p.apps.googleusercontent.com';
   const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
   const DRV = 'https://www.googleapis.com/drive/v3', UPL = 'https://www.googleapis.com/upload/drive/v3';
-  const SY_KEY = 'gakulog-sync-v2', OLD_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok', RET_KEY = 'gakulog-sync-ret';
+  const SY_KEY = 'gakulog-sync-v2', OLD_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok', RET_KEY = 'gakulog-sync-ret', RT_KEY = 'gakulog-sync-rt';
+  // Web でずっとログインしたままにするための、トークンを取り替えるだけのサーバー（server/token-worker.mjs）。空なら1時間ごとにログインし直す
+  let TOKEN_URL = '';
   const SHARDS = 8;
   const DEL = '\u0000del'; // 消した項目のしるし
   const native = () => !!window.Capacitor?.isNativePlatform?.();
@@ -12633,26 +12635,64 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // （ポップアップはブラウザやホーム画面のアプリで開けないことがあるので使わない）
   // then：戻ってきたら何をするか（'on' = 同期を始める、'sync' = 同期する）
   const back = () => location.origin + location.pathname.replace(/[^/]*$/, ''); // 戻り先（Google Cloud に登録してある URL）
-  const webAsk = (prompt, then) => {
+  const b64u = a => btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const webAsk = async (prompt, then) => {
     const st = uid() + uid();
-    try { sessionStorage.setItem(RET_KEY, JSON.stringify({ st, then })); } catch {}
-    const q = new URLSearchParams({ client_id: GD_WEB, redirect_uri: back(), response_type: 'token', scope: SCOPE, state: st, include_granted_scopes: 'true' });
+    const q = new URLSearchParams({ client_id: GD_WEB, redirect_uri: back(), scope: SCOPE, state: st, include_granted_scopes: 'true' });
+    let cv = '';
+    if (TOKEN_URL) {
+      // サーバーあり：コードをもらって、サーバーでリフレッシュトークンに取り替える（PKCE つき）
+      cv = b64u(crypto.getRandomValues(new Uint8Array(48)));
+      q.set('response_type', 'code');
+      q.set('access_type', 'offline');
+      q.set('code_challenge', b64u(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cv))));
+      q.set('code_challenge_method', 'S256');
+      prompt = 'consent' + (prompt ? ' ' + prompt : ''); // リフレッシュトークンは「許可」の画面を通ったときだけもらえる
+    } else q.set('response_type', 'token');
+    try { sessionStorage.setItem(RET_KEY, JSON.stringify({ st, then, cv })); } catch {}
     if (prompt) q.set('prompt', prompt);
     if (sy.email) q.set('login_hint', sy.email);
     (window.top || window).location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + q; // 色違いのアイコンの枠の中からでも、ページごと移る
     return new Promise(() => {}); // 戻ってくるまで待つ（このページは閉じる）
   };
-  // 戻ってきたとき：トークンを受け取って、URL の # を消す
-  const takeBack = () => {
-    const h = new URLSearchParams(location.hash.slice(1));
+  // 戻ってきたとき：トークンを受け取って、URL の # や ?code=… を消す
+  const takeBack = async () => {
+    const qs = new URLSearchParams(location.search);
+    const h = qs.has('state') ? qs : new URLSearchParams(location.hash.slice(1));
     if (!h.has('state')) return null;
     let ret = null;
     try { ret = JSON.parse(sessionStorage.getItem(RET_KEY)); sessionStorage.removeItem(RET_KEY); } catch {}
-    history.replaceState(null, '', location.pathname + location.search);
+    history.replaceState(null, '', location.pathname);
     if (!ret || ret.st !== h.get('state')) return null;
+    if (h.get('code') && ret.cv) {
+      const r = await tokenApi('token', { code: h.get('code'), redirect_uri: back(), code_verifier: ret.cv }).catch(() => null);
+      if (!r?.access_token) return { ...ret, err: 'token' };
+      setTok(r.access_token, (+r.expires_in || 3600) - 300);
+      if (r.refresh_token) try { localStorage.setItem(RT_KEY, r.refresh_token); } catch {}
+      return ret;
+    }
     if (!h.get('access_token')) return { ...ret, err: h.get('error') || 'token' };
     setTok(h.get('access_token'), (+h.get('expires_in') || 3600) - 300);
     return ret;
+  };
+  const tokenApi = async (path, body) => {
+    const r = await fetch(TOKEN_URL.replace(/\/$/, '') + '/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(d.error || 'token'), { bad: d.error === 'invalid_grant' });
+    return d;
+  };
+  // リフレッシュトークンで、ログインし直さずに新しいトークンをもらう（Web・サーバーありのとき）
+  const refresh = async () => {
+    const rt = TOKEN_URL && localStorage.getItem(RT_KEY);
+    if (!rt) return null;
+    try {
+      const r = await tokenApi('refresh', { refresh_token: rt });
+      setTok(r.access_token, (+r.expires_in || 3600) - 300);
+      return r.access_token;
+    } catch (e) {
+      if (e.bad) localStorage.removeItem(RT_KEY); // 取り消された・期限切れ → ログインし直し
+      return null;
+    }
   };
   const auth = {
     // 使えるトークン。ask = ボタンを押した流れなら、切れてても取り直してよい
@@ -12666,6 +12706,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         await auth.login();
         return tok?.v || null;
       }
+      const t = await refresh();
+      if (t) return t;
       return ask ? webAsk('', 'sync') : null;
     },
     // then：Web で戻ってきたら何をするか
@@ -12682,6 +12724,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     },
     async logout() {
       setTok(null);
+      try { localStorage.removeItem(RT_KEY); } catch {}
       if (native()) await SL()?.logout({ provider: 'google' }).catch(() => {});
     }
   };
@@ -13066,8 +13109,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   });
 
   // Google のログインから戻ってきた
-  const resume = () => {
-    const r = takeBack();
+  const resume = async () => {
+    const r = await takeBack();
     if (!r) return;
     if (r.err) { if (r.err !== 'access_denied') alert('ログインできなかった。もう一度やってみてね'); return; }
     if (r.then === 'restore') { state.onboarded = true; s0(); } // はじめの質問は出さない
@@ -13158,7 +13201,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // テストから使う
   window.gd = {
     force: false, auth, sync, detect, turnOn, turnOff, startOn, wipe, openAll, drawUI, resume, flat, build,
-    get sy() { return sy; }, get crdt() { return crdt; }, apply: applyNow
+    get sy() { return sy; }, get crdt() { return crdt; }, apply: applyNow, set tokenUrl(v) { TOKEN_URL = v; }, expire: () => { if (tok) tok.exp = 0; }
   };
   drawUI();
   resume();
