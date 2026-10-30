@@ -12399,8 +12399,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 // ドライブの中身：note-<id>.json（消したら { del: true } の墓石）、pic-<写真のキー>、courses-<端末>.json（その端末の授業名）
 {
   // Google Cloud の OAuth クライアント ID（Web のは Android でも使う）。空のあいだは同期の欄を出さない
-  const GD_WEB = '';
-  const GD_IOS = '';
+  const GD_WEB = '543768102440-g28n4p0mcfk2rbsrd7lv951du8596von.apps.googleusercontent.com';
+  const GD_IOS = '543768102440-g05h40rk97vh6gpnrcpoh1uiumpg998p.apps.googleusercontent.com';
   const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
   const DRV = 'https://www.googleapis.com/drive/v3', UPL = 'https://www.googleapis.com/upload/drive/v3';
   const SY_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok';
