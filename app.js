@@ -13036,18 +13036,30 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   }
 
   // 共有グループを使ってる人：Firebase のアカウントを Google とつなげる（新しい端末なら、前のグループを引き継ぐ）
-  let fbTried = false;
+  // 失敗したら5分あけてやり直す。理由は設定の欄に出す（fbErr）
+  let fbTried = false, fbNext = 0, fbErrMsg = '';
   async function linkFb() {
-    if (fbTried || !sy.on || !featOn('group') || !grMe() || !navigator.onLine || !window.fbGoogle) return;
+    if (fbTried || Date.now() < fbNext || !sy.on || !featOn('group') || !grMe() || !navigator.onLine || !window.fbGoogle) return;
     fbTried = true;
     try {
       if (!localStorage.getItem(GR_KEY)) setGrMe(grMe()); // 新しい端末：次に開いたときもグループを読み込むように
       const at = await auth.token();
       if (!at) { fbTried = false; return; }
       const r = await window.fbGoogle(at);
+      fbErrMsg = '';
       if (r === 'switched') toast?.('共有グループも引き継いだよ');
       else if (r === 'linked' && !grGroups.length) loadGroups().catch(() => {});
-    } catch (e) { console.warn('共有グループとGoogle', e); }
+    } catch (e) {
+      console.warn('共有グループとGoogle', e);
+      const c = String(e?.code || e?.message || '');
+      fbErrMsg = /invalid-credential|invalid-idp|insufficient|scope/.test(c)
+        ? '共有グループを引き継ぐには、「ログアウト」してもう一度ログインしてね（許可するものが1つ増えたよ）'
+        : /operation-not-allowed/.test(c) ? '共有グループの引き継ぎは、まだ準備中みたい（FirebaseのGoogleログインがオフ）'
+          : `共有グループを引き継げなかった（${c || 'エラー'}）。あとでもう一度やってみるね`;
+      fbTried = false;
+      fbNext = Date.now() + 5 * 60000;
+    }
+    drawStatus();
   }
 
   // 保存のたびに見る
@@ -13149,7 +13161,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   function drawStatus() {
     const t = statusText();
     const s = $('#syncStatus');
-    if (s) s.textContent = t;
+    if (s) s.textContent = t + (fbErrMsg ? '　' + fbErrMsg : '');
     const a = $('#mnAllSync');
     if (a) a.innerHTML = !avail() ? '' : !sy.on
       ? '設定の「Googleで同期」でログインすると、PCからも見たり書いたりできるよ'
@@ -13162,6 +13174,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       catch (err) { console.warn('sync login', err); alert('ログインできなかった。もう一度やってみてね'); turnOff(); }
     }
     if (id === 'syncNow') {
+      fbNext = 0;
       e.target.disabled = true;
       await sync(true);
       e.target.disabled = false;
@@ -13270,6 +13283,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   $('#mnAllBtn').onclick = openAll;
 
   // テストから使う
+  // 前の版で入れた共有グループの名前は端末の中にしかないので、同期するところにも写す（ほかの端末で引き継げるように）
+  if (!state.grMe) try {
+    const n = JSON.parse(localStorage.getItem(GR_KEY) || 'null')?.name;
+    if (n) { state.grMe = n; save(); }
+  } catch {}
+
   window.gd = {
     force: false, auth, sync, detect, turnOn, turnOff, startOn, wipe, openAll, drawUI, resume, flat, build,
     get sy() { return sy; }, get crdt() { return crdt; }, apply: applyNow, set tokenUrl(v) { TOKEN_URL = v; }, expire: () => { if (tok) tok.exp = 0; }
