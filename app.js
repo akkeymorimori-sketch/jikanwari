@@ -5904,9 +5904,12 @@ const FB_CONFIG = {
   appId: '1:543768102440:web:f968e065445a54de1a571d'
 };
 const APP_URL = 'https://akkeymorimori-sketch.github.io/jikanwari/';
-const GR_KEY = 'gakulog-group-v1'; // 自分の名前（この端末だけに保存）
-const grMe = () => { try { return JSON.parse(localStorage.getItem(GR_KEY))?.name || ''; } catch { return ''; } };
-const setGrMe = name => localStorage.setItem(GR_KEY, JSON.stringify({ name }));
+const GR_KEY = 'gakulog-group-v1'; // 自分の名前（Googleで同期してれば、ほかの端末にも state.grMe で届く）
+const grMe = () => { try { return JSON.parse(localStorage.getItem(GR_KEY))?.name || state?.grMe || ''; } catch { return state?.grMe || ''; } };
+const setGrMe = name => {
+  localStorage.setItem(GR_KEY, JSON.stringify({ name }));
+  if (state.grMe !== name) { state.grMe = name; save(); }
+};
 
 // Firebaseは使うときだけ読み込む
 let fb = null, fbLoading = null;
@@ -5924,7 +5927,7 @@ function fbInit() {
     const auth = A.initializeAuth(app, { persistence: A.indexedDBLocalPersistence });
     await auth.authStateReady();
     if (!auth.currentUser) await A.signInAnonymously(auth);
-    fb = { db: F.getFirestore(app), uid: auth.currentUser.uid, F };
+    fb = { db: F.getFirestore(app), uid: auth.currentUser.uid, F, A, auth };
     return fb;
   })().catch(err => { fbLoading = null; throw err; });
 }
@@ -5980,6 +5983,42 @@ function renderGroups() {
       `<div class="gInv" id="gInv-${g.id}" hidden></div></li>`;
   }).join('') || '<li class="muted">まだグループはないよ</li>';
 }
+// Googleで同期してる人：Firebase のアカウントを Google アカウントとつなげる
+// ・はじめての端末：今の匿名のアカウントに Google をつなげる（ID はそのままなので、グループもそのまま）
+// ・新しい端末：同じ Google でつながってる前の端末のアカウントに切り替える（グループに入り直さなくていい）
+//   この端末だけで入ってるグループがあるときは、聞いてから（切り替えると、そのグループは入り直しになる）
+// at：Google のアクセストークン（メールアドレスを見られる許可つき）
+const FB_NOLINK = 'gakulog-fb-nolink';
+async function fbGoogle(at) {
+  const { auth, A, F, db } = await fbInit();
+  const u = auth.currentUser;
+  if (!u || u.providerData.some(p => p.providerId === 'google.com')) return 'ok';
+  const cred = A.GoogleAuthProvider.credential(null, at);
+  try {
+    await A.linkWithCredential(u, cred);
+    return 'linked';
+  } catch (err) {
+    if (err?.code !== 'auth/credential-already-in-use') throw err;
+    const c2 = A.GoogleAuthProvider.credentialFromError?.(err) || cred;
+    const mine = await F.getDocs(F.query(F.collection(db, 'groups'), F.where('members', 'array-contains', u.uid)));
+    if (mine.docs.length) {
+      if (localStorage.getItem(FB_NOLINK) === u.uid) return 'kept';
+      const names = mine.docs.map(d => `「${d.data().name || 'グループ'}」`).join('');
+      if (!confirm(`ほかの端末で入ってる共有グループを、この端末でも使う？
+この端末だけで入ってる${names}は、招待コードで入り直しになるよ`)) {
+        localStorage.setItem(FB_NOLINK, u.uid);
+        return 'kept';
+      }
+    }
+    await A.signInWithCredential(auth, c2);
+    fb.uid = auth.currentUser.uid;
+    await loadGroups();
+    if (groupDlg.open) renderGroups();
+    return 'switched';
+  }
+}
+window.fbGoogle = fbGoogle;
+
 async function refreshGroups(msg = '') {
   await loadGroups();
   renderGroups();
@@ -12403,7 +12442,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // Google Cloud の OAuth クライアント ID（Web のは Android でも使う）
   const GD_WEB = '543768102440-g28n4p0mcfk2rbsrd7lv951du8596von.apps.googleusercontent.com';
   const GD_IOS = '543768102440-g05h40rk97vh6gpnrcpoh1uiumpg998p.apps.googleusercontent.com';
-  const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+  // ドライブのアプリ専用の場所＋メールアドレス（共有グループの Firebase のアカウントを Google とつなげるのに使う）
+  const DRIVE = 'https://www.googleapis.com/auth/drive.appdata', EMAIL = 'https://www.googleapis.com/auth/userinfo.email';
+  const SCOPE = DRIVE + ' ' + EMAIL;
   const DRV = 'https://www.googleapis.com/drive/v3', UPL = 'https://www.googleapis.com/upload/drive/v3';
   const SY_KEY = 'gakulog-sync-v2', OLD_KEY = 'gakulog-sync-v1', TOK_KEY = 'gakulog-sync-tok', RET_KEY = 'gakulog-sync-ret', RT_KEY = 'gakulog-sync-rt';
   // Web でずっとログインしたままにするための、トークンを取り替えるだけのサーバー（server/token-worker.mjs）。空なら1時間ごとにログインし直す
@@ -12718,7 +12759,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     async login(then = 'on') {
       if (native()) {
         await slReady();
-        const r = await SL().login({ provider: 'google', options: { scopes: [SCOPE] } });
+        const r = await SL().login({ provider: 'google', options: { scopes: [DRIVE, EMAIL] } });
         const t = r?.result?.accessToken?.token;
         if (!t) throw new Error('token');
         setTok(t);
@@ -12903,6 +12944,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         sy.last = Date.now();
         status = '';
         prefetch();
+        linkFb();
       } catch (e) {
         console.warn('sync', e);
         status = e.login ? 'login' : 'err';
@@ -12993,6 +13035,21 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (restore) applySoon(true);
   }
 
+  // 共有グループを使ってる人：Firebase のアカウントを Google とつなげる（新しい端末なら、前のグループを引き継ぐ）
+  let fbTried = false;
+  async function linkFb() {
+    if (fbTried || !sy.on || !featOn('group') || !grMe() || !navigator.onLine || !window.fbGoogle) return;
+    fbTried = true;
+    try {
+      if (!localStorage.getItem(GR_KEY)) setGrMe(grMe()); // 新しい端末：次に開いたときもグループを読み込むように
+      const at = await auth.token();
+      if (!at) { fbTried = false; return; }
+      const r = await window.fbGoogle(at);
+      if (r === 'switched') toast?.('共有グループも引き継いだよ');
+      else if (r === 'linked' && !grGroups.length) loadGroups().catch(() => {});
+    } catch (e) { console.warn('共有グループとGoogle', e); }
+  }
+
   // 保存のたびに見る
   const s0 = save;
   save = function () {
@@ -13028,6 +13085,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     await sync();
   };
   const turnOff = async () => {
+    fbTried = false;
     await auth.logout();
     sy = { ...fresh(), dev: sy.dev, lookLocal: sy.lookLocal };
     crdt = new Map(); base = new Map();
