@@ -321,6 +321,8 @@ details.sec > a, #aiBox > a { display: block; }
 .calCard { display: flex; flex-direction: column; gap: 8px; }
 .calNav { justify-content: space-between; }
 .calNav > b { flex: none; font-size: 16px; }
+/* ‹ › は押しやすく大きめに。年月の文字との間はどちらにも反応しないすきま */
+.calNav > button { min-width: 56px; min-height: 44px; font-size: 22px; position: relative; z-index: 1; }
 #calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .cw { text-align: center; font-size: 12px; font-weight: bold; color: var(--sub); padding: 2px 0; }
 .cw.sat, .cd.sat .dn { color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
@@ -557,11 +559,11 @@ details.sec > a, #aiBox > a { display: block; }
 #ocrResult select.d { width: auto; min-width: 3.6em; padding: 3px 2px; }
 #ocrResult input.p { width: 3em; min-width: 3em; }
 #ocrResult td:first-child, #ocrResult td:nth-child(2) { width: 1%; white-space: nowrap; }
-.calTitleWrap { position: relative; display: inline-block; }
+.calTitleWrap { position: relative; display: inline-block; overflow: hidden; }
 .calTitleWrap::after { content: ' ▾'; font-size: .8em; color: #888; }
 #calPick {
   position: absolute; inset: 0;
-  width: 100%; height: 100%;
+  width: 100%; height: 100%; min-width: 0; max-width: 100%;
   opacity: 0; font-size: 16px; cursor: pointer;
 }
 
@@ -863,8 +865,8 @@ html.cardT .card ::placeholder { color: var(--muted); }
 html[data-card-scheme="light"] .card { color-scheme: light; }
 html[data-card-scheme="dark"] .card { color-scheme: dark; }
 /* 上のヘッダーと下のバーもカードと同じ色に（タブバーの着せかえを使ってるときはそっちが優先） */
-html.cardC:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) { --surface: var(--cardC); }
-html.cardT:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) {
+html.cardC:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) { --surface: var(--cardC); }
+html.cardT:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --text: var(--cardT);
   --sub: color-mix(in srgb, var(--cardT) 78%, transparent);
   --muted: color-mix(in srgb, var(--cardT) 70%, transparent);
@@ -872,8 +874,8 @@ html.cardT:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > 
   --border: color-mix(in srgb, var(--cardT) 35%, transparent);
   color: var(--text);
 }
-html[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) { color-scheme: light; }
-html[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) { color-scheme: dark; }
+html[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) { color-scheme: light; }
+html[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) { color-scheme: dark; }
 
 /* 色を選ぶ丸 */
 .wallColors h3 { margin: 10px 0 6px; }
@@ -916,14 +918,14 @@ html.cardT #grid {
 
 /* 明るいカードには濃い色、暗いカードには明るい色の文字 */
 html[data-card-scheme="light"] :is(.card, #grid),
-html.cardC[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) {
+html.cardC[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 75%, #000);
   --tag-fg: var(--accent);
   --danger: #b02a2a; --ok: #2a7d3a; --over: #b02a2a; --soon: #a8320a; --od: #6d28d9;
   --tagn-bg: #fff4e6; --tagn-fg: #c2410c; --item-fg: #8a3b00;
 }
 html[data-card-scheme="dark"] :is(.card, #grid),
-html.cardC[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, #tabbar) {
+html.cardC[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 65%, #fff);
   --tag-fg: var(--accent);
   --danger: #ff6b6b; --ok: #51cf66; --over: #ff6b6b; --soon: #ffa94d; --od: #c4b5fd;
@@ -1424,22 +1426,28 @@ dialog {
 .tb-glass  { --bar-bg: rgba(255,255,255,.55); --bar-line: rgba(255,255,255,.6); --bar-tx: #1e293b; --bar-fg: #475569; --bar-on: #2563eb; }
 .tb-washi  { --bar-bg: repeating-linear-gradient(45deg, #f5efe0 0 6px, #f1e9d6 6px 12px); --bar-line: #d6c9a8; --bar-tx: #4a3f2e; --bar-fg: #7c6a4f; --bar-on: #b91c1c; }
 .tb-neon   { --bar-bg: #0b1020; --bar-line: #1e293b; --bar-tx: #e0f2fe; --bar-fg: #94a3b8; --bar-on: #22d3ee; }
+.tb-mint   { --bar-bg: linear-gradient(90deg, #d1fae5, #ccfbf1); --bar-line: #a7f3d0; --bar-tx: #064e3b; --bar-fg: #3f5f54; --bar-on: #047857; }
+.tb-sakura { --bar-bg: linear-gradient(90deg, #fff1f2, #fce7f3); --bar-line: #fbcfe8; --bar-tx: #831843; --bar-fg: #6b4757; --bar-on: #be185d; }
+.tb-sky    { --bar-bg: linear-gradient(180deg, #e0f2fe, #bae6fd); --bar-line: #7dd3fc; --bar-tx: #0c4a6e; --bar-fg: #33566b; --bar-on: #075985; }
+.tb-sunset { --bar-bg: linear-gradient(90deg, #fed7aa, #fbcfe8, #ddd6fe); --bar-line: #f9a8d4; --bar-tx: #4c1d95; --bar-fg: #574766; --bar-on: #9a3412; }
+.tb-choco  { --bar-bg: #3b2a20; --bar-line: #5a4030; --bar-tx: #fdf6ec; --bar-fg: #d6c3ad; --bar-on: #fbbf77; }
+.tb-forest { --bar-bg: #14352a; --bar-line: #1f4d3c; --bar-tx: #ecfdf5; --bar-fg: #a7c4b5; --bar-on: #fcd34d; }
 /* ガラスはダークだと白の半透明がグレーになって文字が沈むので、黒の半透明に明るい文字 */
 @media (prefers-color-scheme: dark) {
   .tb-glass { --bar-bg: rgba(29, 31, 36, .6); --bar-line: rgba(255, 255, 255, .12); --bar-tx: #f1f5f9; --bar-fg: #cbd5e1; --bar-on: #93c5fd; }
 }
 .tb-none   { --bar-bg: initial; --bar-line: initial; --bar-tx: initial; --bar-fg: initial; --bar-on: initial; }
 
-:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(#tabbar, body > header, .tbPrev, .hdPrev) {
+:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(#tabbar, body > header, .tbPrev, .hdPrev) {
   background: var(--bar-bg, var(--surface));
   border-color: var(--bar-line, var(--line));
   color: var(--bar-tx, var(--text));
   transition: background .3s, color .3s;
 }
-:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(#tabbar, .tbPrev) button { color: var(--bar-fg, var(--muted)); background: none; }
-:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(#tabbar, .tbPrev) button.on { color: var(--bar-on, var(--accent)); }
-:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header, .hdPrev) h1 { color: var(--bar-tx, var(--text)); }
-:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon) :is(body > header select, .hdTerm) {
+:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(#tabbar, .tbPrev) button { color: var(--bar-fg, var(--muted)); background: none; }
+:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(#tabbar, .tbPrev) button.on { color: var(--bar-on, var(--accent)); }
+:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, .hdPrev) h1 { color: var(--bar-tx, var(--text)); }
+:is(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header select, .hdTerm) {
   background: transparent; color: var(--bar-tx, var(--text)); border-color: var(--bar-line, var(--border));
 }
 
@@ -1451,6 +1459,12 @@ html.tb-washi :is(#tabbar, body > header), .tbSet.tb-washi :is(.tbPrev, .hdPrev)
   font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
 }
 html.tb-neon #tabbar button.on, .tbSet.tb-neon .tbPrev button.on { filter: drop-shadow(0 0 6px #22d3ee); }
+html.tb-sakura #tabbar button.on::after, .tbSet.tb-sakura .tbPrev button.on::after { content: '🌸'; position: absolute; top: 4px; right: calc(50% - 22px); font-size: 10px; }
+html.tb-sakura #tabbar button, .tbSet.tb-sakura .tbPrev button { position: relative; }
+html.tb-choco :is(#tabbar, body > header), .tbSet.tb-choco :is(.tbPrev, .hdPrev) {
+  background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.04) 0 24px, transparent 24px 26px);
+}
+html.tb-forest #tabbar button.on, .tbSet.tb-forest .tbPrev button.on { filter: drop-shadow(0 0 4px rgba(252, 211, 77, .5)); }
 
 /* 切り替え画面 */
 #tbDlg { width: min(92vw, 420px); }

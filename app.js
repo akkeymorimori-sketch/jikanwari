@@ -10969,6 +10969,12 @@ if (window.Capacitor?.isNativePlatform?.()) {
     ['tb-glass', 'ガラス', '🫧 うしろがすけて見える', 40],
     ['tb-washi', 'わし', '📜 和紙と朱色', 60],
     ['tb-neon', 'ネオン', '⚡ 光る水色', 100],
+    ['tb-mint', 'ミント', '🌱 さわやかな緑', 20],
+    ['tb-sakura', 'さくら', '🌸 うすいピンク。選んでるタブに花', 30],
+    ['tb-sky', 'そら', '☁️ 上から下へ水色', 30],
+    ['tb-sunset', 'ゆうやけ', '🌇 オレンジからむらさき', 40],
+    ['tb-choco', 'チョコ', '🍫 こげ茶に板チョコのすじ', 50],
+    ['tb-forest', 'もり', '🌲 深い緑に金色', 50],
   ];
   const tb = $('#tabbar');
 
@@ -11112,7 +11118,7 @@ const apply = id => {
 
 /* ===== バーの色に合わせて、時計の文字色とブラウザの色も変える ===== */
 {
-  const DARK = ['tb-dark', 'tb-neon'];
+  const DARK = ['tb-dark', 'tb-neon', 'tb-choco', 'tb-forest'];
   const metas = [...document.querySelectorAll('meta[name="theme-color"]')];
   const keep = metas.map(m => m.content);
   const sync = () => {
