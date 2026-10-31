@@ -1170,6 +1170,11 @@ dialog {
 .alNext { list-style: none; padding: 0; margin: 4px 0; }
 .alNext li { display: block; padding: 4px 0; }
 .alNext li.off { color: var(--muted); }
+/* この先1週間：時刻を押すとこの日だけ変えられる（文字のように見せて、点線で押せるとわかるように） */
+.alNext .alOver { width: auto; min-width: 0; display: inline-block; margin: 0; padding: 0 2px; border: none; border-bottom: 1px dashed var(--accent); border-radius: 0;
+  background: none; color: inherit; font: inherit; font-weight: bold; }
+.alNext .alOver.moved { color: var(--accent); }
+.alNext .alOver:disabled { border-bottom-color: transparent; color: var(--muted); }
 
 /* アラームの一覧（時計アプリ風：大きい時刻・名前とくり返し・オン/オフのスイッチ） */
 .alRow .alName { flex: 1; min-width: 8em; width: auto; margin-top: 0; }
@@ -1180,6 +1185,10 @@ dialog {
 /* アラーム音 */
 .alSnd select { flex: 1; min-width: 7em; width: auto; margin-top: 0; }
 .alSnd #alPlay { width: 44px; padding: 6px 0; }
+/* 新しいアラームの音の行：音の名前は広く、音量は中身の幅だけ、▶ は小さく。1行に収める */
+#alNewSnd { flex: 1 1 0; min-width: 4.5em; }
+.alSnd #alNewVol { flex: none; min-width: 0; width: auto; }
+.alSnd #alPlay { flex: none; }
 #alAutoRow { margin-top: 14px; }
 .alList .alInfo small { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .alList .alInfo small > span { display: inline-flex; align-items: center; white-space: nowrap; }
@@ -1423,7 +1432,8 @@ dialog {
 /* バーの見た目（上下セット） */
 .tb-pastel { --bar-bg: linear-gradient(90deg, #fde2e4, #e2ece9, #dfe7fd); --bar-line: #f3d1d6; --bar-tx: #374151; --bar-fg: #4b5563; --bar-on: #be185d; }
 .tb-dark   { --bar-bg: #111827; --bar-line: #1f2937; --bar-tx: #f9fafb; --bar-fg: #9ca3af; --bar-on: #fbbf24; }
-.tb-glass  { --bar-bg: rgba(255,255,255,.55); --bar-line: rgba(255,255,255,.6); --bar-tx: #1e293b; --bar-fg: #475569; --bar-on: #2563eb; }
+.tb-glass  { --bar-bg: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.28)); --bar-line: rgba(255,255,255,.75); --bar-tx: #1e293b; --bar-fg: #334155; --bar-on: #1d4ed8;
+  --glass-hi: rgba(255,255,255,.9); --glass-pill: rgba(255,255,255,.6); --glass-shadow: rgba(15,23,42,.16); }
 .tb-washi  { --bar-bg: repeating-linear-gradient(45deg, #f5efe0 0 6px, #f1e9d6 6px 12px); --bar-line: #d6c9a8; --bar-tx: #4a3f2e; --bar-fg: #7c6a4f; --bar-on: #b91c1c; }
 .tb-neon   { --bar-bg: #0b1020; --bar-line: #1e293b; --bar-tx: #e0f2fe; --bar-fg: #94a3b8; --bar-on: #22d3ee; }
 .tb-mint   { --bar-bg: linear-gradient(90deg, #d1fae5, #ccfbf1); --bar-line: #a7f3d0; --bar-tx: #064e3b; --bar-fg: #3f5f54; --bar-on: #047857; }
@@ -1434,7 +1444,8 @@ dialog {
 .tb-forest { --bar-bg: #14352a; --bar-line: #1f4d3c; --bar-tx: #ecfdf5; --bar-fg: #a7c4b5; --bar-on: #fcd34d; }
 /* ガラスはダークだと白の半透明がグレーになって文字が沈むので、黒の半透明に明るい文字 */
 @media (prefers-color-scheme: dark) {
-  .tb-glass { --bar-bg: rgba(29, 31, 36, .6); --bar-line: rgba(255, 255, 255, .12); --bar-tx: #f1f5f9; --bar-fg: #cbd5e1; --bar-on: #93c5fd; }
+  .tb-glass { --bar-bg: linear-gradient(180deg, rgba(52, 56, 66, .6), rgba(24, 26, 32, .5)); --bar-line: rgba(255, 255, 255, .2); --bar-tx: #f1f5f9; --bar-fg: #cbd5e1; --bar-on: #93c5fd;
+    --glass-hi: rgba(255,255,255,.28); --glass-pill: rgba(255,255,255,.14); --glass-shadow: rgba(0,0,0,.4); }
 }
 .tb-none   { --bar-bg: initial; --bar-line: initial; --bar-tx: initial; --bar-fg: initial; --bar-on: initial; }
 
@@ -1452,9 +1463,23 @@ dialog {
 }
 
 /* テーマごとの飾り（本物とプレビューで分けて書く） */
+/* ガラス：うしろを強めにぼかして、ふちに光。タブは浮かんだカプセルにして、選んでるタブもガラスの玉に */
 html.tb-glass :is(#tabbar, body > header), .tbSet.tb-glass :is(.tbPrev, .hdPrev) {
-  -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(24px) saturate(1.9) brightness(1.04); backdrop-filter: blur(24px) saturate(1.9) brightness(1.04);
 }
+html.tb-glass body > header, .tbSet.tb-glass .hdPrev { box-shadow: inset 0 -1px 0 var(--glass-hi), 0 6px 18px var(--glass-shadow); border-bottom-color: transparent; }
+html.tb-glass #tabbar, .tbSet.tb-glass .tbPrev {
+  border: 1px solid var(--bar-line); border-radius: 28px; overflow: hidden;
+  box-shadow: inset 0 1px 0 var(--glass-hi), inset 0 -1px 0 var(--glass-pill), 0 10px 28px var(--glass-shadow);
+}
+html.tb-glass #tabbar { left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 6px); padding: 0 4px; }
+.tbSet.tb-glass .tbPrev { margin: 0 10px 10px; border-top: 1px solid var(--bar-line); }
+html.tb-glass #tabbar button.on, .tbSet.tb-glass .tbPrev button.on {
+  background: var(--glass-pill); border-radius: 22px; margin: 4px 0; height: calc(var(--tabbar-h) - 8px);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+/* プレビューはうしろが無地だとガラスに見えないので、色を置く */
+.tbSet.tb-glass { background: radial-gradient(circle at 15% 30%, #f9a8d4, transparent 45%), radial-gradient(circle at 85% 70%, #93c5fd, transparent 45%), radial-gradient(circle at 50% 100%, #fde68a, transparent 50%), var(--bg, #f2f2f7); }
 html.tb-washi :is(#tabbar, body > header), .tbSet.tb-washi :is(.tbPrev, .hdPrev) {
   font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
 }

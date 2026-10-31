@@ -8892,7 +8892,10 @@ var WG_LOOK = {
           }
           return x;
         }).slice(0, 30),
-      skip: (Array.isArray(a.skip) ? a.skip : []).filter(k => isYmd(k) && k >= today)
+      skip: (Array.isArray(a.skip) ? a.skip : []).filter(k => isYmd(k) && k >= today),
+      // この日だけ時刻を変える（授業・バイトから決まるアラーム）{ 'YYYY-MM-DD': 'HH:MM' }
+      over: Object.fromEntries(Object.entries(a.over && typeof a.over === 'object' ? a.over : {})
+        .filter(([k, v]) => isYmd(k) && k >= today && okT(v)))
     };
     return state.alarm;
   }
@@ -8919,9 +8922,10 @@ var WG_LOOK = {
       }
       if (!hits.length) continue;
       hits.sort((x, y) => x.min - y.min);
-      const at = new Date(day); at.setHours(0, hits[0].min, 0, 0);
+      const orig = fromMin(hits[0].min), ov = a.over[k];
+      const at = new Date(day); at.setHours(0, toMin(ov || orig), 0, 0);
       if (at <= now) continue;
-      out.push({ k, at, title: hits.map(h => h.why).join('・').slice(0, 40), skip: a.skip.includes(k), vol: hits[0].vol });
+      out.push({ k, at, orig, moved: !!ov, title: hits.map(h => h.why).join('・').slice(0, 40), skip: a.skip.includes(k), vol: hits[0].vol });
     }
     return out;
   }
@@ -8948,11 +8952,13 @@ var WG_LOOK = {
     '<button type="button" class="x big" id="alX" aria-label="閉じる">×</button></div>' +
     '<p class="hint" id="alNote"></p>' +
     '<label class="alSw"><input type="checkbox" id="alOn"> アラームを使う</label>' +
-    '<h4>音量</h4>' +
+    '<h4>全部のアラーム</h4>' +
     '<div class="alRow alSnd"><span>いつもの音量</span><select id="alVol" aria-label="いつもの音量"></select></div>' +
     '<div class="alRow alSnd"><span>今は全部</span><select id="alAll" aria-label="今は全部の音量">' +
     '<option value="">それぞれの音量</option><option value="m">中にする</option><option value="s">小にする</option></select></div>' +
-    '<p class="hint">同室の人がいる日などに。戻すまで、全部のアラームがこの音量になるよ。スマホの音量より小さくするしくみなので、スマホの音量が大きいと「小」でもそれなりに鳴るよ。「標準」の音は音量を変えられない（スマホのアラームの音量で鳴る）</p>' +
+    '<p class="hint">同室の人がいる日などに。戻すまで全部この音量で鳴るよ（「標準」の音は変わらない）</p>' +
+    '<div class="alRow alSnd"><span>スヌーズ</span><select id="alSnooze" aria-label="スヌーズ">' +
+    AL_SNOOZE.map(m => `<option value="${m}">${m ? m + '分後にもう一度' : 'なし'}</option>`).join('') + '</select></div>' +
     '<h4>アラーム</h4>' +
     '<p class="hint">時刻を入れると、次のその時刻に鳴るよ（まだなら今日、過ぎてたら明日）。曜日を選ぶと毎週くり返す</p>' +
     '<div class="alRow"><input type="time" id="alOnceT" value="07:00" aria-label="時刻">' +
@@ -8963,9 +8969,9 @@ var WG_LOOK = {
     '<button type="button" id="alPlay" aria-label="試し聴き">▶</button></div>' +
     '<button type="button" class="primary" id="alOnceAdd">アラームを追加</button>' +
     '<ul id="alOnce" class="alList"></ul>' +
-    '<div class="alRow alSnd" id="alAutoRow"><span>授業・バイトの日の音</span><select id="alAutoSnd" aria-label="授業・バイトの日のアラーム音"></select></div>' +
-    '<div class="alRow alSnd"><span>スヌーズ</span><select id="alSnooze" aria-label="スヌーズ">' +
-    AL_SNOOZE.map(m => `<option value="${m}">${m ? m + '分後にもう一度' : 'なし'}</option>`).join('') + '</select></div>' +
+    '<h4>授業・バイトの日</h4>' +
+    '<p class="hint">授業やバイトの時間に合わせて自動で鳴らすアラーム</p>' +
+    '<div class="alRow alSnd" id="alAutoRow"><span>音</span><select id="alAutoSnd" aria-label="授業・バイトの日のアラーム音"></select></div>' +
     '<h4>授業がある日</h4>' +
     '<p class="hint">その日の最初の授業で決まるよ。空欄の時限からの日は鳴らない</p>' +
     '<div id="alCls"></div>' +
@@ -9059,7 +9065,11 @@ var WG_LOOK = {
   function renderAlNext() {
     const list = alPlan(7);
     $('#alNext').innerHTML = list.length
-      ? list.map(x => `<li class="${x.skip ? 'off' : ''}"><b>${md(x.at)} ${hm(x.at)}</b> <small>${esc(x.title)}</small>` +
+      ? list.map(x => `<li class="${x.skip ? 'off' : ''}"><b>${md(x.at)}</b> ` +
+          // 時刻を押すと、この日だけ変えられる
+          `<input type="time" class="alOver${x.moved ? ' moved' : ''}" data-alover="${x.k}" data-orig="${x.orig}" value="${pad(x.at.getHours())}:${pad(x.at.getMinutes())}" aria-label="${md(x.at)}だけ時刻を変える"${x.skip ? ' disabled' : ''}>` +
+          ` <small>${esc(x.title)}</small>` +
+          (x.moved ? ` <button type="button" data-alback="${x.k}">${esc(x.orig)} に戻す</button>` : '') +
           ` <button type="button" data-alskip="${x.k}">${x.skip ? '戻す' : 'この日は止める'}</button></li>`).join('')
       : '<li class="muted">この1週間に鳴るアラームはないよ</li>';
   }
@@ -9076,7 +9086,8 @@ var WG_LOOK = {
     $('#alAutoSnd').innerHTML = sndOpts(a.sound);
     $('#alVol').innerHTML = volOpts(a.vol, false);
     $('#alAll').value = a.all;
-    $('#alNewVol').innerHTML = volOpts($('#alNewVol').value);
+    // 追加するところは1行に収めたいので短く（いつもの音量は上に出てる）
+    $('#alNewVol').innerHTML = volOpts($('#alNewVol').value).replace(/いつもの（.）/, 'いつもの');
     $('#alCls').innerHTML = Array.from({ length: state.periods }, (_, i) =>
       `<div class="alRow"><span>${i + 1}限からの日は</span>` +
       `<input type="time" data-alp="${i}" value="${a.cls[i]}"><span>に鳴らす</span>` +
@@ -9231,6 +9242,12 @@ var WG_LOOK = {
       return alSave();
     }
     if (el.dataset.alp != null) { a.cls[+el.dataset.alp] = okT(el.value) ? el.value : ''; return alSave(); }
+    if (el.dataset.alover) {
+      const k = el.dataset.alover, v = el.value;
+      if (!okT(v) || v === el.dataset.orig) delete a.over[k]; // 空にした・元と同じなら、いつもの時刻
+      else if (a.over[k] !== v) { a.over[k] = v; toast(`${md(parseYmd(k))}だけ ${v} に鳴らすよ`); }
+      return alSave();
+    }
     if (el.dataset.alj != null) {
       const r = a.jobs[+el.dataset.alj];
       if (!r) return;
@@ -9298,6 +9315,7 @@ var WG_LOOK = {
     }
     if (d.alpx != null) { a.cls[+d.alpx] = ''; return alSave(); }
     if (d.aljx != null) { a.jobs.splice(+d.aljx, 1); return alSave(); }
+    if (d.alback) { delete a.over[d.alback]; return alSave(); }
     if (d.alskip) {
       a.skip = a.skip.includes(d.alskip) ? a.skip.filter(k => k !== d.alskip) : a.skip.concat(d.alskip);
       return alSave();
@@ -11025,6 +11043,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     ['tb-forest', 'もり', '🌲 深い緑に金色', 50],
   ];
   const tb = $('#tabbar');
+  TB.sort((x, y) => x[3] - y[3]); // 交換所や選ぶところは、ポイントが少ない順
 
   TB.forEach(([id, name, desc, cost]) => SHOP.push({
     id, name: `タブバー「${name}」`, desc, cost,
