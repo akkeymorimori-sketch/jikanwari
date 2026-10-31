@@ -2902,8 +2902,8 @@ $('#termCreate').onclick = () => {
 };
 
 /* ===== 設定 ===== */
-let tmp = null;      // 保存を押すまでの一時データ
-let snapshot = '';   // 開いたときの状態（変更があったかの判定用）
+let tmp = null;      // 画面の入力を集めた一時データ（変えたらすぐ state に入れる）
+let snapshot = '';   // 最後に state に入れたときの中身（同じなら何もしない）
 
 $('#sProvider').innerHTML = Object.entries(PROVIDERS)
   .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
@@ -2976,7 +2976,7 @@ $('#sTimes').addEventListener('focusout', e => {
   const before = toMin(editBefore), after = toMin(el.value);
   editBefore = null;
   tmp.times[i][k] = el.value;
-  if (!$('#sShift').checked || before == null || after == null || before === after) return;
+  if (!$('#sShift').checked || before == null || after == null || before === after) return commitSettings();
 
   const delta = after - before;
   if (k === 'start') shiftTime(tmp.times[i], 'end', delta); // 開始を変えたら同じ時限の終了も
@@ -2985,6 +2985,7 @@ $('#sTimes').addEventListener('focusout', e => {
     shiftTime(tmp.times[j], 'end', delta);
   }
   syncTimeInputs();
+  commitSettings();
 });
 
 // 画面の入力を一時データに集める
@@ -2999,7 +3000,7 @@ function collect() {
   tmp.taskLead = getLeadUI('s') || '2w';
   tmp.weekStart = $('#sWeekStart').value === 'sun' ? 'sun' : 'mon';
   for (const c of document.querySelectorAll('#setFeat [data-feat]')) tmp.features[c.dataset.feat] = c.checked;
-  for (const c of document.querySelectorAll('#setFeat [data-fun]')) tmp.fun[c.dataset.fun] = c.checked;
+  for (const c of document.querySelectorAll('#setFun [data-fun]')) tmp.fun[c.dataset.fun] = c.checked;
   const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
   tmp.fun.sleepFrom = okHM($('#sSleepFrom').value) ? $('#sSleepFrom').value : tmp.fun.sleepFrom;
   tmp.fun.sleepTo = okHM($('#sSleepTo').value) ? $('#sSleepTo').value : tmp.fun.sleepTo;
@@ -3032,9 +3033,10 @@ function openSettings() {
   fillProviderFields(state.provider);
   $('#sWeekStart').value = tmp.weekStart;
   document.querySelectorAll('#setFeat [data-feat]').forEach(c => { c.checked = tmp.features[c.dataset.feat] !== false; });
-  document.querySelectorAll('#setFeat [data-fun]').forEach(c => { c.checked = tmp.fun[c.dataset.fun] === true; });
+  document.querySelectorAll('#setFun [data-fun]').forEach(c => { c.checked = tmp.fun[c.dataset.fun] === true; });
   $('#sSleepFrom').value = tmp.fun.sleepFrom; $('#sSleepTo').value = tmp.fun.sleepTo;
   $('#sPeriods').value = tmp.periods;
+  for (const id of ['sTimesErr', 'sSylErr']) if ($('#' + id)) $('#' + id).hidden = true;
   $('#sSat').checked = tmp.showSat;
   $('#sShift').checked = tmp.shiftTimes;
   $('#sSyllabus').value = tmp.syllabusSearch;
@@ -3052,21 +3054,27 @@ function openSettings() {
   $('#settingsDlg').scrollTop = 0;
 }
 
-async function closeSettings() {
-  collect();
-  if (JSON.stringify(tmp) !== snapshot) {
-    const a = await ask3();
-    if (a === 'back') return;
-    if (a === 'save') return $('#sSave').onclick();
-  }
-  applyTheme(state.theme); // 試した色や文字を元に戻す
+// 閉じる：入れ忘れがないように最後にもう一度入れる。時刻やURLがおかしいところは入れずに知らせる
+function closeSettings() {
+  clearTimeout(commitTimer);
+  const bad = commitSettings();
+  if (bad) toast(bad + 'は直してないので、前のままにしたよ');
   $('#settingsDlg').close();
 }
 
 $('#settingsBtn').onclick = openSettings;
 $('#sX').onclick = closeSettings;
-$('#sCancel').onclick = closeSettings;
+$('#sSave').onclick = closeSettings;
 $('#settingsDlg').addEventListener('cancel', e => { e.preventDefault(); closeSettings(); }); // Escキー
+
+// 変えたらすぐ入れる（文字を打ってる間は少し待つ）
+let commitTimer = 0;
+$('#settingsDlg').addEventListener('change', () => { if ($('#settingsDlg').open) { clearTimeout(commitTimer); commitSettings(); } });
+$('#settingsDlg').addEventListener('input', e => {
+  if (!$('#settingsDlg').open || e.target.matches('.ts, .te')) return; // 時刻は入れ終わったとき（focusout）に
+  clearTimeout(commitTimer);
+  commitTimer = setTimeout(commitSettings, 500);
+});
 
 // 選んだ時点で見た目を試せるように
 for (const id of ['sColor', 'sFont']) {
@@ -3082,35 +3090,50 @@ $('#sPeriods').addEventListener('input', e => {
   renderTimes();
 });
 
-$('#sSave').onclick = () => {
+// 画面の入力を state に入れる。入れられなかった欄の名前を返す（全部入れたら ''）
+function commitSettings() {
+  if (!tmp) return '';
   collect();
+  if (JSON.stringify(tmp) === snapshot) return '';
+  let bad = '';
+  let timesOk = true;
   for (let i = 0; i < tmp.periods; i++) {
-    const s = toMin(tmp.times[i].start), en = toMin(tmp.times[i].end);
-    if (s != null && en != null && s >= en) return alert(`${i + 1}限の終了が開始より前になってるよ`);
+    const st = toMin(tmp.times[i].start), en = toMin(tmp.times[i].end);
+    if (st != null && en != null && st >= en) { timesOk = false; break; }
   }
-  if (tmp.syllabusSearch && !isHttp(tmp.syllabusSearch)) return alert('シラバス検索のURLは https:// から始まる形で入れてね');
+  const sylOk = !tmp.syllabusSearch || isHttp(tmp.syllabusSearch);
+  const err = (id, msg) => {
+    let el = $('#' + id);
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = !msg;
+  };
+  err('sTimesErr', timesOk ? '' : '終了が開始より前の時限があるよ。直すと保存するね');
+  err('sSylErr', sylOk ? '' : 'https:// から始まる形で入れてね。直すと保存するね');
+  if (!timesOk) bad = '時限の時刻';
+  if (!sylOk) bad = bad ? bad + '・シラバス検索のURL' : 'シラバス検索のURL';
   state.provider = tmp.provider;
-  state.keys = tmp.keys;
-  state.models = tmp.models;
-  state.times = tmp.times;
-  state.periods = tmp.periods;
+  state.keys = { ...tmp.keys };
+  state.models = { ...tmp.models };
+  if (timesOk) { state.times = structuredClone(tmp.times); state.periods = tmp.periods; }
   state.showSat = tmp.showSat;
   state.shiftTimes = tmp.shiftTimes;
-  state.syllabusSearch = tmp.syllabusSearch;
-  state.theme = tmp.theme;
+  if (sylOk) state.syllabusSearch = tmp.syllabusSearch;
+  state.theme = { ...tmp.theme };
   state.taskLead = tmp.taskLead;
   state.useGrid = tmp.useGrid;
   state.weekStart = tmp.weekStart;
   const groupWasOff = !featOn('group');
   state.features = { ...tmp.features };
   state.fun = { ...tmp.fun };
+  snapshot = bad ? '' : JSON.stringify(tmp); // 直してないところがあれば、次もまた確かめる
   applyTheme(state.theme);
   scheduleChanged(); // renderAll → applyMode で、オフの機能を隠す
   // 共有グループをオンに戻したら、グループの予定を読み直す
   if (groupWasOff && featOn('group') && grMe() && navigator.onLine) loadGroups().catch(err => console.warn('共有グループ', err));
   if (curTab === 'cal' && calMonth) renderCal();
-  $('#settingsDlg').close();
-};
+  return bad;
+}
 
 /* ===== バックアップ ===== */
 $('#exportBtn').onclick = async () => {
@@ -5701,7 +5724,7 @@ const FEATURES = [
   { id: 'times', name: '時限の時刻', where: '設定 → 時限', desc: '何限が何時からか。1つずらすと後ろもまとめてずらせる', kw: '時刻 何限 時限 開始 終了', grid: 1, go: () => goSet('#sTimes') },
   { id: 'weekStart', name: 'カレンダーの週のはじまり', where: 'カレンダーの下の「週のはじまり」／設定 → 使い方', desc: 'カレンダーを月曜はじまりか日曜はじまりにする', kw: '週 はじまり 始まり 月曜 日曜 曜日 カレンダー', go: () => goSet('#sWeekStart') },
   { id: 'sat', name: '土曜日を表示', where: '設定 → 表示', desc: '時間割に土曜の列を出す', kw: '土曜', grid: 1, go: () => goSet('#sSat') },
-  { id: 'features', name: '機能のオン/オフ', where: '設定 → 機能', desc: 'バイト・共有・日記・ToDoなど、使わない機能を隠す。データは消えない', kw: '機能 オフ 隠す 非表示 いらない シンプル バイト 共有 日記 ToDo メモ 日課 ポイント', go: () => goSet('#setFeat') },
+  { id: 'features', name: '機能のオン/オフ', where: '設定 → 使う機能', desc: 'バイト・共有・日記・ToDoなど、使わない機能を隠す。データは消えない', kw: '機能 オフ 隠す 非表示 いらない シンプル バイト 共有 日記 ToDo メモ 日課 ポイント', go: () => goSet('#setFeat') },
   { id: 'useGrid', name: '時間割を使う・使わない', where: '設定 → 機能', desc: '時間割まわりを隠して、予定管理だけで使う', kw: '時間割 いらない 隠す 社会人 予定管理', go: () => goSet('#sUseGrid') },
   { id: 'ai', name: 'AIの準備（APIキー）', where: '設定 → AI', desc: '写真の読み取りに使うキーを入れる。Geminiなら無料枠あり', kw: 'AI APIキー キー Gemini', go: () => openPhoto('guide') },
   { id: 'feedback', name: '目安箱', where: '目安箱のボタン', desc: '匿名で意見や不具合を送れる', kw: '意見 要望 バグ 不具合 目安箱', go: () => window.open(FEEDBACK_URL, '_blank') }
@@ -6921,7 +6944,16 @@ function placeSecs() {
   mv('.icsBox', '#setCal');
   $('#setNotify').hidden = !$('#setNotify .nBox, #setNotify .wgBox');
   $('#setCal').hidden = !$('#setCal .csBox, #setCal .icsBox');
+  // 目覚ましは、上の⏰が出てるときだけ
+  const ah = $('#alHead');
+  $('#setAlarm').hidden = !ah || getComputedStyle(ah).display === 'none';
+  // 中身が全部隠れてるグループは、見出しごと隠す
+  for (const g of document.querySelectorAll('#settingsDlg .setGrp')) {
+    g.hidden = false;
+    g.hidden = ![...g.querySelectorAll(':scope > details.set, :scope > .setLink')].some(x => !x.hidden && getComputedStyle(x).display !== 'none');
+  }
 }
+$('#setAlarm').onclick = () => { closeSettings(); $('#alHead')?.click(); };
 
 // 閉じてても今の状態がわかるように
 function setSums() {
@@ -6932,7 +6964,10 @@ function setSums() {
   const opt = id => $(id)?.selectedOptions[0]?.textContent.trim() || '';
   const fOn = [$('#sUseGrid'), ...document.querySelectorAll('#setFeat [data-feat]')].filter(c => c.checked).length;
   put('setFeat', `${fOn}/${FEAT_KEYS.length + 1} オン`);
+  const funOn = [...document.querySelectorAll('#setFun [data-fun]')].filter(c => c.checked).length;
+  put('setFun', funOn ? `${funOn}個オン` : 'オフ');
   put('setUse', `週のはじまり ${opt('#sWeekStart')}`);
+  put('setGrid', `${$('#sPeriods').value}限まで・土曜${$('#sSat').checked ? 'あり' : 'なし'}`);
   put('setGrid', `${$('#sPeriods').value}限まで・土曜${$('#sSat').checked ? 'あり' : 'なし'}`);
   put('setLook', `${opt('#sColor')}・${opt('#sFont')}`);
   if ($('#nOn')) {
@@ -6980,10 +7015,10 @@ if (typeof FEATURES !== 'undefined') {
     theme: '#sColor', icon: '#iconBox', times: '#sTimes', sat: '#sSat', useGrid: '#sUseGrid'
   };
   const WHERE = {
-    taskLead: '設定 → 使い方', backup: '設定 → バックアップ', ics: '設定 → カレンダー連携',
-    notify: '設定 → 通知', calSync: '設定 → カレンダー連携', theme: 'その他 → 見た目',
-    icon: 'その他 → 見た目', times: '設定 → 授業と時限', sat: '設定 → 授業と時限',
-    useGrid: '設定 → 機能', ai: '設定 → AI', income: 'その他 → お金', share: 'その他 → だれかと使う'
+    taskLead: '設定 → 課題とカレンダー', backup: '設定 → バックアップ・復元', ics: '設定 → カレンダー連携',
+    notify: '設定 → 通知とウィジェット', calSync: '設定 → カレンダー連携', theme: 'その他 → 見た目',
+    icon: 'その他 → 見た目', times: '設定 → 時間割と時限', sat: '設定 → 時間割と時限',
+    useGrid: '設定 → 使う機能', ai: '設定 → AI', income: 'その他 →「収入」', share: 'その他 →「時間割を共有」'
   };
   for (const f of FEATURES) {
     if (WHERE[f.id]) f.where = WHERE[f.id];
@@ -6993,7 +7028,7 @@ if (typeof FEATURES !== 'undefined') {
     f.go = () => { go(); setPrep(sel); };
   }
   if (!FEATURES.some(f => f.id === 'group')) FEATURES.push({
-    id: 'group', name: '共有グループ', where: 'その他 → だれかと使う',
+    id: 'group', name: '共有グループ', where: 'その他 →「共有グループ」',
     desc: '家族やサークルと予定を共有する。招待コードで入れて、ロックもかけられる',
     kw: '共有 グループ 家族 招待 コード ロック 一緒', go: () => $('#groupBtn').click()
   });
@@ -13457,4 +13492,58 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   };
   drawUI();
   resume();
+}
+
+/* ===== 整理：その他タブ（よく使うものはタイル）・まとめて変えるは学期の画面へ ===== */
+{
+  // 授業の回数・欠席の上限・遅刻の数え方は、時間割タブの「学期・休み」の中へ
+  const bulk = document.createElement('details');
+  bulk.className = 'sec gridOnly';
+  bulk.id = 'bulkSec';
+  bulk.innerHTML = '<summary>授業をまとめて変える</summary><p class="hint">今の学期の授業に、回数や欠席の上限をまとめて入れるよ</p>';
+  bulk.append(...['#defSessBox', '.absBulk'].map(s => $(s)).filter(Boolean));
+  $('#newTermSec')?.before(bulk);
+  if (typeof FEATURES !== 'undefined') FEATURES.push({
+    id: 'bulk', name: '授業の回数・欠席の上限をまとめて入れる', where: '時間割 →「学期・休み」→ 授業をまとめて変える',
+    desc: '今の学期の授業に「全15回」「5回まで休める」をまとめて入れる。遅刻を何回で欠席1回と数えるかも',
+    kw: '回数 全15回 欠席 上限 まとめて 遅刻 一括', grid: 1, go: () => openTermDlg('bulkSec')
+  });
+
+  const view = $('#view-more');
+  const card = (cls, ...kids) => {
+    const c = document.createElement('div');
+    c.className = 'card menu ' + cls;
+    c.append(...kids.filter(Boolean));
+    return c;
+  };
+  const h2 = t => { const h = document.createElement('h2'); h.textContent = t; return h; };
+
+  // 目覚まし（上の⏰と同じ画面）
+  const al = document.createElement('button');
+  al.type = 'button';
+  al.id = 'moreAlarm';
+  al.innerHTML = '<b>⏰ 目覚まし</b><small>授業やバイトに合わせて鳴らす</small>';
+  al.onclick = () => $('#alHead')?.click();
+
+  // サポート（よくある質問・問い合わせ）
+  const sup = document.createElement('button');
+  sup.type = 'button';
+  sup.id = 'supportBtn';
+  sup.innerHTML = '<b>❓ よくある質問・問い合わせ</b><small>サポートのページを開く</small>';
+  sup.onclick = () => window.open(APP_URL + 'support.html', '_blank');
+
+  const arrange = () => {
+    const pick = sel => typeof sel === 'string' ? $(sel) : sel;
+    const tiles = card('moreTiles', ...['#incomeBtn', '#mnAllBtn', '#groupBtn', '#shareBtn', al, '#ptBtn'].map(pick));
+    tiles.id = 'moreTiles';
+    $('#mnAllBtn')?.classList.add('gridOnly');
+    const main = card('moreMain', ...['#wallBtn', '#settingsBtn'].map(pick));
+    const pv = $('#privacyBtn');
+    if (pv) { pv.className = ''; pv.innerHTML = '<b>🔒 プライバシーポリシー</b><small>集めるデータと使い方</small>'; }
+    const help = card('moreHelp', h2('困ったとき'), ...['#tourBtn', '#helpBtn', '#feedbackBtn', sup, pv].map(pick));
+    // 空になった古いカードを片づける（JS から使うボタンが入った隠しカードは残す）
+    for (const c of [...view.querySelectorAll(':scope > .card')]) if (!c.querySelector('button')) c.remove();
+    view.prepend(tiles, main, help);
+  };
+  setTimeout(arrange, 0); // ほかの section が足すボタン（機能の紹介など）を待ってから
 }

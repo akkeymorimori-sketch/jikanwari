@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=213">
+<link rel="stylesheet" href="style.css?v=214">
 </head>
 <body>
 <header>
@@ -474,9 +474,11 @@
       <button id="sX" class="x big" aria-label="閉じる">×</button>
     </div>
 
+    <div class="setGrp">
+      <h3 class="setGrpH">基本</h3>
     <!-- 機能のオン/オフ（オフにするとアプリのどこにも出ない。データは消えない） -->
     <details class="sec set" id="setFeat">
-      <summary>機能 <small></small></summary>
+      <summary>使う機能 <small></small></summary>
       <p class="hint">使わない機能はオフにすると、アプリのどこにも出なくなるよ。データは消えないから、オンに戻せば元通り</p>
       <div class="featList">
         <label class="feat"><input type="checkbox" id="sUseGrid"><span><b>📚 時間割</b><small>授業・持ち物・学期・欠席・ミニノート</small></span></label>
@@ -488,12 +490,15 @@
         <label class="feat"><input type="checkbox" data-feat="memo"><span><b>🗒 メモ</b><small>今日の画面とカレンダーのメモ</small></span></label>
         <label class="feat"><input type="checkbox" data-feat="habit"><span><b>🔁 日課</b><small>毎日やることのチェック</small></span></label>
         <label class="feat"><input type="checkbox" data-feat="points"><span><b>🎁 ポイント</b><small>ログインポイント、交換所、はじめにやること</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="alarm"><span><b>⏰ 目覚まし</b><small>上の⏰（アプリ版）</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="alarm"><span><b>⏰ 目覚まし</b><small>授業やバイトに合わせて鳴らす。上の⏰から（アプリ版）</small></span></label>
         <label class="feat"><input type="checkbox" data-feat="exam"><span><b>📝 試験前モード</b><small>試験の7日前から、その授業のノートや写真をすぐ見返せる</small></span></label>
         <label class="feat"><input type="checkbox" data-feat="ai"><span><b>📷 写真から読み取り（AI）</b><small>シフト表・時間割・給与明細・予定が書いてある画像やスクショ</small></span></label>
       </div>
-      <!-- おせっかい機能：ちょっと意地悪に手伝う。最初は全部オフ（state.fun） -->
-      <h4 class="funHead">おせっかい機能</h4>
+    </details>
+
+    <!-- おせっかい機能：ちょっと意地悪に手伝う。最初は全部オフ（state.fun） -->
+    <details class="sec set" id="setFun">
+      <summary>おせっかい機能 <small></small></summary>
       <p class="hint">ちょっとおせっかいに手伝ってくれる機能。使いたいものだけオンにしてね</p>
       <div class="featList">
         <label class="feat"><input type="checkbox" data-fun="saba"><span><b>🐟 締切サバ読み</b><small>課題の締切を1〜3日前に出す。何日ずらしたかは自分にもわからない</small></span></label>
@@ -506,24 +511,25 @@
       <div class="row funSleepRow"><span class="hint lbl">睡眠</span><input type="time" id="sSleepFrom" aria-label="寝る時刻"><span class="hint">〜</span><input type="time" id="sSleepTo" aria-label="起きる時刻"></div>
     </details>
 
-    <details class="sec set" id="setUse">
-      <summary>使い方 <small></small></summary>
-      <label class="inline">カレンダーの週のはじまり
-        <select id="sWeekStart" class="narrow" aria-label="週のはじまり">
-          <option value="mon">月曜</option>
-          <option value="sun">日曜</option>
-        </select>
-      </label>
-    </details>
-
     <details class="sec set gridOnly" id="setGrid">
-      <summary>授業と時限 <small></small></summary>
+      <summary>時間割と時限 <small></small></summary>
       <div class="row">
         <label class="inline">時限数 <input id="sPeriods" type="number" min="1" max="10" class="num"></label>
         <label class="inline"><input type="checkbox" id="sSat"> 土曜を表示</label>
       </div>
       <label class="inline"><input type="checkbox" id="sShift"> 時刻を変えたら、後ろの時限も同じだけずらす</label>
       <table id="sTimes"></table>
+      <p class="hint err" id="sTimesErr" hidden></p>
+    </details>
+
+    <details class="sec set" id="setUse">
+      <summary>課題とカレンダー <small></small></summary>
+      <label class="inline">カレンダーの週のはじまり
+        <select id="sWeekStart" class="narrow" aria-label="週のはじまり">
+          <option value="mon">月曜</option>
+          <option value="sun">日曜</option>
+        </select>
+      </label>
     </details>
 
     <details class="sec set" id="setLook">
@@ -548,7 +554,7 @@
           </select>
         </label>
       </div>
-      <p class="hint">選ぶとすぐ見た目が変わるよ。キャンセルすれば元に戻る。壁紙は「その他」の「見た目」から</p>
+      <p class="hint">選ぶとすぐ見た目が変わるよ。壁紙は「その他」の「見た目」から</p>
 
       <details class="sec" id="iconBox">
         <summary>アプリアイコンの色</summary>
@@ -565,11 +571,18 @@
         <p class="hint">アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
       </details>
     </details>
+    </div>
 
+    <div class="setGrp">
+      <h3 class="setGrpH">お知らせ</h3>
     <details class="sec set" id="setNotify" hidden>
-      <summary>通知 <small></small></summary>
+      <summary>通知とウィジェット <small></small></summary>
     </details>
+    <button type="button" class="setLink" id="setAlarm"><span>⏰ 目覚まし</span><small>アラームの画面へ</small></button>
+    </div>
 
+    <div class="setGrp">
+      <h3 class="setGrpH">つなぐ</h3>
     <details class="sec set" id="setCal">
       <summary>カレンダー連携 <small></small></summary>
     </details>
@@ -590,21 +603,26 @@
     <details class="sec set gridOnly" id="setSyl">
       <summary>シラバス検索 <small></small></summary>
       <input id="sSyllabus" type="url" inputmode="url" placeholder="シラバス検索ページのURL" aria-label="シラバス検索のURL">
+      <p class="hint err" id="sSylErr" hidden></p>
       <p class="hint">いつもシラバスを検索してるページのURLを入れてね。授業の「開く」を押すと、授業名をコピーしてこのページを開くよ。検索欄に貼り付ければOK</p>
     </details>
+    </div>
 
+    <div class="setGrp">
+      <h3 class="setGrpH">データ</h3>
     <details class="sec set" id="setData">
-      <summary>バックアップ <small></small></summary>
+      <summary>バックアップ・復元 <small></small></summary>
       <div class="row">
         <button id="exportBtn">書き出し</button>
         <label class="fileBtn">復元<input type="file" id="restoreFile" accept=".json" class="vh"></label>
       </div>
       <p class="hint" id="lastExport"></p>
     </details>
+    </div>
 
+    <p class="hint setAuto">変えたところはすぐ反映されるよ</p>
     <div class="row end">
-      <button id="sCancel">キャンセル</button>
-      <button id="sSave" class="primary">保存して閉じる</button>
+      <button id="sSave" class="primary">閉じる</button>
     </div>
   </div>
 </dialog>
@@ -612,6 +630,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=213"></script>
+<script src="app.js?v=214"></script>
 </body>
 </html>

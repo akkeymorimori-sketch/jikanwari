@@ -1731,3 +1731,21 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 #earRingDlg .dlg { text-align: center; gap: 14px; padding: 24px 18px; }
 #earRingDlg h2 { font-size: 1.4em; }
 #earRingDlg .big { font-size: 1.2em; padding: 14px; }
+
+/* 設定：グループの見出し・すぐ反映・目覚ましへのリンク */
+.setGrpH { margin: 14px 2px 4px; font-size: 12px; color: var(--sub); font-weight: bold; }
+.setGrp:first-of-type .setGrpH { margin-top: 4px; }
+.setGrp[hidden] { display: none; }
+.setLink { display: flex; width: 100%; justify-content: space-between; align-items: center; text-align: left; padding: 12px; margin: 4px 0; }
+.setLink[hidden] { display: none; }
+.setLink small { color: var(--muted); }
+.setLink small::after { content: ' ›'; }
+.setAuto { text-align: center; margin-top: 12px; }
+.hint.err { color: var(--danger); }
+
+/* その他タブ：よく使うものはタイル */
+.moreTiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.moreTiles button { margin: 0 !important; min-height: 64px; justify-content: center; }
+.moreTiles button b { font-size: 15px; }
+.moreTiles button small { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.off-points #ptBtn, .off-alarm #moreAlarm { display: none; }
