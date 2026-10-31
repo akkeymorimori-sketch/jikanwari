@@ -8072,7 +8072,8 @@ function wgData() {
     if (!x.done && x.due && dueOf(x) <= lim)
       tasks.push({ title: x.title || '', due: dueOf(x), from: c.short || c.name || '' });
   tasks.sort((a, b) => a.due.localeCompare(b.due));
-  return { v: 1, made: now.toISOString(), after: cfg.after, taskDays: cfg.days, theme: cfg.theme, days, tasks: tasks.slice(0, 20) };
+  return { v: 1, made: now.toISOString(), after: cfg.after, taskDays: cfg.days, theme: cfg.theme, days, tasks: tasks.slice(0, 20),
+    alarms: window.alNext?.() || [] };
 }
 window.wgData = wgData;
 
@@ -8886,6 +8887,10 @@ var WG_LOOK = {
       .sort((x, y) => x.at - y.at);
   }
 
+  // ウィジェットに出す、これから鳴るアラーム（鳴らせる端末で、オンのときだけ）
+  window.alNext = () => !alReady || !featOn('alarm') ? [] :
+    alItems().filter(x => x.at > Date.now()).slice(0, 12).map(x => ({ at: x.at, title: x.title }));
+
   // アラーム画面
   const dlg = document.createElement('dialog');
   dlg.id = 'alarmDlg';
@@ -9268,6 +9273,12 @@ var WG_LOOK = {
       try { alReady = !!(await AL.available()).value; } catch { alReady = false; }
     }
     window.alPush();
+    if (alReady) wgPush();
+    // ウィジェットのアラームを押したら（gakulog://alarm）、アラームの画面を開く
+    const APP = window.Capacitor?.Plugins?.App;
+    const fromUrl = u => { if (/^gakulog:\/\/alarm/.test(u || '')) openAlarm(); };
+    APP?.addListener?.('appUrlOpen', e => fromUrl(e?.url));
+    APP?.getLaunchUrl?.().then(r => fromUrl(r?.url)).catch(() => {});
     // アプリを開いたときに、イヤホンで鳴ってたら「止める」画面を出す
     if (earOk()) AL.earState?.().then(r => { if (r?.ringing) showRing(r.ringing); }).catch(() => {});
   }
