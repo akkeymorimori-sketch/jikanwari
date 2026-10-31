@@ -390,6 +390,19 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const pad = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// 外のページを開く。アプリ版はアプリの中の Safari／Chrome の画面で（window.open だと開かないことがある）
+function openUrl(url) {
+  const B = window.Capacitor?.isNativePlatform?.() && window.Capacitor?.Plugins?.Browser;
+  if (B) return B.open({ url }).catch(() => window.open(url, '_blank'));
+  window.open(url, '_blank', 'noopener');
+}
+// アプリ版では、別のタブで開くリンク（APIキーを取るページなど）も同じように
+if (window.Capacitor?.isNativePlatform?.()) document.addEventListener('click', e => {
+  const a = e.target.closest?.('a[target="_blank"][href^="http"]');
+  if (!a) return;
+  e.preventDefault();
+  openUrl(a.href);
+});
 const parseYmd = s => {
   if (!s) return null;
   const [y, m, d] = s.split('-').map(Number);
@@ -1778,7 +1791,7 @@ $('#cSyllabusOpen').onclick = () => {
   if (!url) return alert('設定の「シラバス検索」に、検索ページのURLを入れてね');
   // 授業ごとのURLがないときは授業名をコピー（開く前にやらないとiPhoneで止められる）
   if (!isHttp(c.syllabus) && c.name.trim()) navigator.clipboard?.writeText(c.name.trim()).catch(() => {});
-  window.open(url, '_blank', 'noopener');
+  openUrl(url);
 };
 
 function removeCourse(c) {
@@ -3585,7 +3598,7 @@ $('#nowCard').addEventListener('click', e => {
 });
 
 $('#feedbackBtn').hidden = !FEEDBACK_URL;
-$('#feedbackBtn').onclick = () => window.open(FEEDBACK_URL, '_blank', 'noopener');
+$('#feedbackBtn').onclick = () => openUrl(FEEDBACK_URL);
 
 function syncInForm() {
   $('#inHead').textContent = inEditId ? '記録を変更' : '収入を追加';
@@ -5727,7 +5740,7 @@ const FEATURES = [
   { id: 'features', name: '機能のオン/オフ', where: '設定 → 使う機能', desc: 'バイト・共有・日記・ToDoなど、使わない機能を隠す。データは消えない', kw: '機能 オフ 隠す 非表示 いらない シンプル バイト 共有 日記 ToDo メモ 日課 ポイント', go: () => goSet('#setFeat') },
   { id: 'useGrid', name: '時間割を使う・使わない', where: '設定 → 機能', desc: '時間割まわりを隠して、予定管理だけで使う', kw: '時間割 いらない 隠す 社会人 予定管理', go: () => goSet('#sUseGrid') },
   { id: 'ai', name: 'AIの準備（APIキー）', where: '設定 → AI', desc: '写真の読み取りに使うキーを入れる。Geminiなら無料枠あり', kw: 'AI APIキー キー Gemini', go: () => openPhoto('guide') },
-  { id: 'feedback', name: '目安箱', where: '目安箱のボタン', desc: '匿名で意見や不具合を送れる', kw: '意見 要望 バグ 不具合 目安箱', go: () => window.open(FEEDBACK_URL, '_blank') }
+  { id: 'feedback', name: '目安箱', where: '目安箱のボタン', desc: '匿名で意見や不具合を送れる', kw: '意見 要望 バグ 不具合 目安箱', go: () => openUrl(FEEDBACK_URL) }
 ];
 // 機能をさがす：項目ごとに、出すのに必要な機能（全部オンのときだけ出す）
 const FEAT_NEED = {
@@ -11620,8 +11633,8 @@ document.documentElement.classList.toggle('isWeb', !isApp);
 
 /* ===== プライバシーポリシー ===== */
 const PRIVACY_URL = APP_URL + 'privacy.html';
-$('#privacyBtn')?.addEventListener('click', () => window.open(PRIVACY_URL, '_blank'));
-FEATURES.push({ id: 'privacy', name: 'プライバシーポリシー', where: '下の「その他」 → 一番下の「🔒 プライバシーポリシー」', desc: 'データをどこに保存して、何を外に送るかの説明', kw: 'プライバシー ポリシー 個人情報 データ 規約', go: () => window.open(PRIVACY_URL, '_blank') });
+$('#privacyBtn')?.addEventListener('click', () => openUrl(PRIVACY_URL));
+FEATURES.push({ id: 'privacy', name: 'プライバシーポリシー', where: '下の「その他」 → 一番下の「🔒 プライバシーポリシー」', desc: 'データをどこに保存して、何を外に送るかの説明', kw: 'プライバシー ポリシー 個人情報 データ 規約', go: () => openUrl(PRIVACY_URL) });
 
 /* ===== 投稿の言葉フィルター ===== */
 const NG_WORDS = ['しね', 'ころす', 'きえろ', 'うざい', 'きもい'];
@@ -13530,7 +13543,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   sup.type = 'button';
   sup.id = 'supportBtn';
   sup.innerHTML = '<b>❓ よくある質問・問い合わせ</b><small>サポートのページを開く</small>';
-  sup.onclick = () => window.open(APP_URL + 'support.html', '_blank');
+  sup.onclick = () => openUrl(APP_URL + 'support.html');
 
   const arrange = () => {
     const pick = sel => typeof sel === 'string' ? $(sel) : sel;
