@@ -4098,6 +4098,24 @@ JSONだけを出力してください。説明文やコードブロック記号�
 - 日付は「月/日」の数字だけ。曜日は書かない。
 - 見つからなければ {"blocks":[]} だけを出力する。`;
 
+// 表の形を自動で見分ける：1回の読み取りで、AIに形を見分けてから、その形の読み方で書き出してもらう（AIに送る回数は増えない）
+const autoPrompt = name => `これはアルバイトのシフト表の画像です。まず表の形を見分けてから、「${name}」さんの勤務だけを読んでください。JSONだけを出力してください。説明文やコードブロック記号は書かないでください。
+表の形は次のどちらか：
+A. 1か月（数週間）の表：名前が縦に並び、日付が横に並んでいる。1つの日付の下に「始業」「終業」の2列があることが多い。
+B. それ以外：1日分の表、1週間の表、人ごとに日付と時刻が並んだリストなど。
+Aのときは、表の段ごとに、いちばん上の日付の行を左から順にすべて書き出し（勤務がない日も飛ばさない）、同じ段の「${name}」さんの行を左から順に、日付1つにつき [始業, 終業] の組で書き出す（空欄は ["",""]）。dates と cells の数は必ず同じにする。1ページに表が2段以上あることもある。
+形式: {"layout":"grid","blocks":[{"dates":["10/1","10/2"],"cells":[["13:00","22:00"],["",""]]}]}
+Bのときは、勤務を1つずつ書き出す。
+形式: {"layout":"day","shifts":[{"month":10,"day":17,"start":"09:30","end":"15:00","place":""}]}
+ルール:
+- 名前の欄が「${name}」と完全に同じものだけを使う。名字だけ同じ別の人（例：「鈴木」と「鈴木大介」）や、似た字の名前は使わない。
+- 時刻は24時間表記の HH:MM。休憩や時間数（h）の欄は使わない。読めないところは推測で埋めない。
+- Aの日付は「月/日」の数字だけ。Bの month と day は、その勤務の日付を数字で。年や曜日は書かない。
+- Bで1日に2回入っている場合（午前と午後の両方など）は、それぞれ別の要素にする。「公休」「休み」など時刻がない日は出力しない。
+- Bの place は、その勤務の店舗・場所が書いてあれば20文字以内で、なければ ""。
+- 見つからなければ {"layout":"day","shifts":[]} だけを出力する。
+- ほかの人の名前や、行事・メモの欄の内容は出力しない。`;
+
 // 名前がない表（自分の分だけ個別に送られてくるシフト・LINEのスクショなど）用：全部の勤務を読む
 // 何人分も書いてある表だったら multi にして、勤務は返さない（ほかの人のシフトを拾わないように）
 const minePrompt = () => `これはアルバイトのシフトが書いてある画像です（1人分だけのシフト表、シフトを知らせるLINEやメールのスクショ、手書きのメモなど）。勤務をすべて書き出して、JSONだけを出力してください。説明文やコードブロック記号は書かないでください。
@@ -4144,6 +4162,7 @@ shiftDlg.innerHTML =
   '<label>いつもの場所（なくてもOK）<input id="shPlace" placeholder="例：駅前店" maxlength="60" autocomplete="off"></label>' +
   '<p class="hint">表に場所が書いてない日は、ここの場所をメモに入れるよ</p>' +
   '<label>表の形<select id="shLayout">' +
+  '<option value="auto">自動で見分ける（おすすめ）</option>' +
   '<option value="day">1日ごとの表・その他</option>' +
   '<option value="grid">1か月の表（名前が縦、日付が横）</option>' +
   '</select></label>' +
@@ -4163,7 +4182,8 @@ const shDone = new Map(); // ページ番号 → 読み取り結果
 function openShift() {
   $('#shName').value = state.shiftName || '';
   $('#shJob').value = state.shiftJob || '';
-  $('#shLayout').value = state.shiftLayout || 'day';
+  // 自動ができる前に選んだ形（shiftLayoutV がない）は使わず、自動にする
+  $('#shLayout').value = state.shiftLayoutV === 2 && SH_LAYOUT_NAME[state.shiftLayout] ? state.shiftLayout : 'auto';
   $('#shPlace').value = evPlaceDefault($('#shJob').value);
   syncShName();
   const jobs = new Set();
@@ -4296,9 +4316,11 @@ $('#shRun').onclick = async () => {
   const layout = $('#shLayout').value;
   const mine = !name; // 名前なし＝自分の分だけの表
   const grid = !mine && layout === 'grid';
+  const auto = !mine && layout === 'auto';
   state.shiftName = name;
   state.shiftJob = $('#shJob').value.trim();
   state.shiftLayout = layout;
+  state.shiftLayoutV = 2;
   rememberShift(state.shiftJob, name, layout);
   save();
   // 名前か表の形が変わったら、読み取り済みのページもやり直す
@@ -4311,6 +4333,7 @@ $('#shRun').onclick = async () => {
 
   const st = $('#shStatus');
   let bad = 0, multi = 0;
+  const seen = new Set(); // 自動で見分けた表の形
   shRunning = true;
   $('#shRun').disabled = true;
   aiBegin('#shRun');
@@ -4318,21 +4341,27 @@ $('#shRun').onclick = async () => {
     for (const [k, i] of todo.entries()) {
       if (k > 0) await aiSleep(4000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
-      const cv = await shCut(i, grid ? 2400 : 1800);
+      const cv = await shCut(i, grid || auto ? 2400 : 1800);
       const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
       cv.width = cv.height = 0;
-      const txt = await callVision(b64, mine ? minePrompt() : grid ? gridPrompt(name) : shiftPrompt(name), st);
-      const [open, close] = grid || mine ? ['{', '}'] : ['[', ']'];
-      const s = txt.indexOf(open), e = txt.lastIndexOf(close);
+      const txt = await callVision(b64, mine ? minePrompt() : grid ? gridPrompt(name) : auto ? autoPrompt(name) : shiftPrompt(name), st);
+      const [open, close] = grid || mine || auto ? ['{', '}'] : ['[', ']'];
+      let s = txt.indexOf(open), e = txt.lastIndexOf(close);
+      // 自動のとき、AIが [ ... ] だけで返してきても読む
+      if (auto && txt.indexOf('[') >= 0 && (s < 0 || txt.indexOf('[') < s)) { s = txt.indexOf('['); e = txt.lastIndexOf(']'); }
       if (s < 0 || e < s) throw new Error(`${i + 1}ページ目の結果がうまく読めなかった`);
       const json = JSON.parse(txt.slice(s, e + 1));
       if (mine) {
         if (json?.multi === true) multi++;
         shDone.set(i, json?.multi === true ? [] : Array.isArray(json?.shifts) ? json.shifts : []);
-      } else if (grid) {
+      } else if (grid || (auto && (json?.layout === 'grid' || Array.isArray(json?.blocks)))) {
         const g = gridToRows(json);
         bad += g.bad;
         shDone.set(i, g.out);
+        if (auto) seen.add('grid');
+      } else if (auto) {
+        shDone.set(i, Array.isArray(json?.shifts) ? json.shifts : Array.isArray(json) ? json : []);
+        seen.add('day');
       } else {
         shDone.set(i, json);
       }
@@ -4342,7 +4371,7 @@ $('#shRun').onclick = async () => {
       ? `何人分も書いてある表${multi > 1 ? `が${multi}ページ` : ''}だったよ。上に表の中の自分の名前を入れて、もう一回読み取ってね`
       : bad
       ? `読み取り終わったよ。ただ${bad}段は日付と時刻の数が合わなかったから飛ばした。下を確認してね`
-      : '読み取り終わったよ。下を確認して追加してね';
+      : `読み取り終わったよ${seen.size === 1 ? `（${seen.has('grid') ? '1か月の表' : '1日ごとの表'}として読んだよ）` : ''}。下を確認して追加してね`;
     $('#shRun').textContent = '読み取る';
   } catch (err) {
     st.textContent = isAbort(err)
@@ -5911,14 +5940,14 @@ $('#helpQ').addEventListener('keydown', e => {
 });
 
 /* ===== シフト表：バイト先ごとに読み方を覚える ===== */
-const SH_LAYOUT_NAME = { day: '1日ごとの表', grid: '1か月の表' };
+const SH_LAYOUT_NAME = { auto: '表の形は自動', day: '1日ごとの表', grid: '1か月の表' };
 const shMem = () => {
   const m = state.shiftByJob;
   return m && typeof m === 'object' && !Array.isArray(m) ? m : (state.shiftByJob = {});
 };
 function rememberShift(job, name, layout) {
   if (!job) return;
-  shMem()[job] = { name, layout, at: Date.now() };
+  shMem()[job] = { name, layout, v: 2, at: Date.now() };
   save();
 }
 
@@ -5947,7 +5976,7 @@ function applyShMem(job) {
   const x = shMem()[job];
   if (x) {
     $('#shName').value = x.name || ''; // 空欄＝自分の分だけの表
-    if (SH_LAYOUT_NAME[x.layout]) $('#shLayout').value = x.layout;
+    $('#shLayout').value = x.v === 2 && SH_LAYOUT_NAME[x.layout] ? x.layout : 'auto'; // 自動ができる前に覚えた形は使わない
     syncShName();
   }
   syncShMemHint();
@@ -5955,7 +5984,7 @@ function applyShMem(job) {
 function syncShMemHint() {
   const x = shMem()[$('#shJob').value.trim()];
   shMemHint.textContent = x
-    ? x.name ? `前回（${md(new Date(x.at))}）は「${x.name}」・${SH_LAYOUT_NAME[x.layout] || ''}で読んだよ`
+    ? x.name ? `前回（${md(new Date(x.at))}）は「${x.name}」・${(x.v === 2 && SH_LAYOUT_NAME[x.layout]) || '表の形は自動'}で読んだよ`
       : `前回（${md(new Date(x.at))}）は名前なし（自分の分だけの表）で読んだよ`
     : '';
   shMemHint.hidden = !x;
