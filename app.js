@@ -548,6 +548,11 @@ function normalize(s) {
   s.showSat ??= false;
   s.weekStart = s.weekStart === 'sun' ? 'sun' : 'mon'; // カレンダーの週のはじまり（最初は月曜）
   s.dayStart = DAY_STARTS.includes(+s.dayStart) ? +s.dayStart : 0; // 日付が変わる時刻（0なら夜中の0時）
+  // 共有グループの新着：見た時刻・開いた予定
+  const num = v => Number.isFinite(+v) && +v > 0 ? +v : 0;
+  s.grSeen = Object.fromEntries(Object.entries(s.grSeen && typeof s.grSeen === 'object' ? s.grSeen : {})
+    .filter(([, v]) => v && typeof v === 'object').map(([k, v]) => [k, { at: num(v.at), base: num(v.base) }]));
+  s.grOpen = Object.fromEntries(Object.entries(s.grOpen && typeof s.grOpen === 'object' ? s.grOpen : {}).map(([k, v]) => [k, num(v)]));
   // カレンダーに出さない予定の出どころ（'me' = 自分の予定、ほかはグループID）。新しいグループは出す
   s.shiftJoin = s.shiftJoin !== false; // シフト表：続いてるコマを1つにまとめる（最初はまとめる）
   // 予定の名前ごとの「いつもの場所」（画像から読んだ予定に場所が書いてないときに使う）
@@ -1961,7 +1966,7 @@ function renderCal() {
     for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
     for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
-    for (const e of calEvents(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
+    for (const e of calEvents(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}${grIsNew(e) ? ' isNew' : ''}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
 
     const cls = ['cd', pending.length && 'due',
       date.getMonth() !== m && 'out', off && 'offday',
@@ -6202,6 +6207,15 @@ $('#gList').addEventListener('click', async e => {
           for (const d of evs.docs.slice(i, i + 400)) b.delete(d.ref);
           await b.commit();
         }
+        // 変更の記録も消す（ルールが古くて読めなくても、グループは消す。記録は30日で消える）
+        try {
+          const acts = await F.getDocs(F.collection(db, 'groups', g.id, 'acts'));
+          for (let i = 0; i < acts.docs.length; i += 400) {
+            const b = F.writeBatch(db);
+            for (const d of acts.docs.slice(i, i + 400)) b.delete(d.ref);
+            await b.commit();
+          }
+        } catch (err) { console.warn('変更の記録', err); }
         await F.deleteDoc(ref);
       } else await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
       await refreshGroups(`「${g.name}」から抜けたよ`);
@@ -6241,11 +6255,15 @@ const GREV_KEY = 'gakulog-grev-v1';
 const grEv = new Map();   // id → 共有した予定
 let grNames = {};         // グループID → 名前
 let grMyUid = '';
+let grSync = {};          // グループID → 前に受け取った予定のいちばん新しい時刻（サーバーの時刻、ms）
+let grFull = {};          // グループID → 全部を確かめた日
+let grActs = {};          // グループID → 変更の記録（新しい順）
 try {
   const c = JSON.parse(localStorage.getItem(GREV_KEY));
   if (c) {
     grNames = c.names || {};
     grMyUid = c.uid || '';
+    grSync = c.sync || {}; grFull = c.full || {}; grActs = c.acts || {};
     for (const e of c.events || []) grEv.set(e.id, e);
   }
 } catch {}
@@ -6255,20 +6273,21 @@ function grSaveCache() {
   window.grShared = [...grEv.values()];
   try {
     localStorage.setItem(GREV_KEY, JSON.stringify({
-      uid: fb?.uid || grMyUid, names: grNames, events: window.grShared
+      uid: fb?.uid || grMyUid, names: grNames, events: window.grShared, sync: grSync, full: grFull, acts: grActs
     }));
   } catch {}
 }
 function findAnyEv(id) { return state.events.find(x => x.id === id) || grEv.get(id); }
 function grIsMine(e) { return !e.gid || e.own === (fb?.uid || grMyUid); }
 function grLabel(e) {
-  return ` <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.lock ? '🔒' : ''}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
+  return `${grIsNew(e) ? ' <span class="newMk">NEW</span>' : ''} <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.lock ? '🔒' : ''}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
 }
 const grFail = err => alert(fbErr(err));
 
 // サーバーの予定 → アプリの形
+const tsMs = v => typeof v?.toMillis === 'function' ? v.toMillis() : 0;
 function toGrEv(gid, d) {
-  const x = d.data();
+  const x = d.data({ serverTimestamps: 'estimate' });
   return {
     id: `g_${gid}_${d.id}`, doc: d.id, gid,
     date: String(x.date || ''),
@@ -6276,35 +6295,103 @@ function toGrEv(gid, d) {
     title: String(x.title || '').slice(0, 60),
     start: String(x.start || ''), end: String(x.end || ''),
     own: String(x.own || ''), by: String(x.by || ''), byName: String(x.byName || ''),
-    lock: x.lock === true
+    lock: x.lock === true, at: tsMs(x.at)
   };
 }
 
 // グループごとに見張る（変わったらすぐ届く）
+// 読む回数を増やさないように：
+// ・はじめて：60日前から先の予定を全部読む
+// ・2回目から：前に受け取ったあとに変わった予定だけ（at が新しいもの）。何も変わってなければ1回分しか読まない
+// ・消えた予定は変更の記録（acts の del）で知る
+// ・古い版（1.0）は記録を書かないので、消した予定に気づけるように1日1回だけ全部を確かめる（1.0 の人がいなくなったら false に）
+const GR_RECHECK = true;
+const GR_DAYS = 60, GR_SLACK = 60e3; // サーバーの時刻のずれの分、少し前から読む（同じ予定を読み直すだけ）
+const ACT_KEEP = 14, ACT_MAX = 50;   // 変更の記録は14日・50件まで手元に置く
 const grUnsub = new Map();
+let grWatchAt = 0;
 function grListen() {
   if (!fb) return;
-  const { db, F } = fb;
   grMyUid = fb.uid;
   const ids = new Set(grGroups.map(g => g.id));
   grNames = Object.fromEntries(grGroups.map(g => [g.id, g.name || 'グループ']));
   for (const [gid, un] of grUnsub) if (!ids.has(gid)) { un(); grUnsub.delete(gid); }
   for (const e of [...grEv.values()]) if (!ids.has(e.gid)) grEv.delete(e.id);
-  const from = ymd(addDays(new Date(), -60));
-  for (const gid of ids) {
-    if (grUnsub.has(gid)) continue;
-    const q = F.query(F.collection(db, 'groups', gid, 'events'), F.where('date', '>=', from));
-    grUnsub.set(gid, F.onSnapshot(q, snap => {
-      for (const ch of snap.docChanges()) {
-        const id = `g_${gid}_${ch.doc.id}`;
-        if (ch.type === 'removed') grEv.delete(id);
-        else grEv.set(id, toGrEv(gid, ch.doc));
-      }
-      grSaveCache(); grRedraw();
-    }, err => console.warn('共有した予定', err)));
-  }
+  for (const m of [grSync, grFull, grActs]) for (const gid of Object.keys(m)) if (!ids.has(gid)) delete m[gid];
+  for (const gid of ids) if (!grUnsub.has(gid)) grUnsub.set(gid, grWatch(gid));
+  grSeenInit(ids);
   grSaveCache(); grRedraw();
 }
+function grWatch(gid) {
+  const { db, F } = fb;
+  grWatchAt = Date.now();
+  const from = ymd(addDays(new Date(), -GR_DAYS)), today = ymd(new Date());
+  const evCol = F.collection(db, 'groups', gid, 'events');
+  const since = grSync[gid];
+  if (since && GR_RECHECK && grFull[gid] !== today) grRecheck(gid, from, today).catch(err => console.warn('共有した予定', err));
+  if (!since) grFull[gid] = today;
+  const q = since ? F.query(evCol, F.where('at', '>', F.Timestamp.fromMillis(since - GR_SLACK)))
+    : F.query(evCol, F.where('date', '>=', from));
+  const u1 = F.onSnapshot(q, snap => {
+    for (const ch of snap.docChanges()) {
+      const id = `g_${gid}_${ch.doc.id}`;
+      // どちらの問い合わせでも「外れた」＝消えた（at は書くたびに新しくなるので、ほかの理由では外れない）
+      if (ch.type === 'removed') { grEv.delete(id); continue; }
+      const e = toGrEv(gid, ch.doc);
+      if (e.date >= from) grEv.set(id, e); else grEv.delete(id);
+      if (!ch.doc.metadata?.hasPendingWrites) grSync[gid] = Math.max(grSync[gid] || 0, e.at);
+    }
+    grSaveCache(); grRedraw();
+  }, err => console.warn('共有した予定', err));
+  // 変更の記録：前に受け取ったあとの分だけ
+  const list = grActs[gid] || [];
+  const aSince = Math.max(list[0]?.at || 0, Date.now() - ACT_KEEP * 864e5) - GR_SLACK;
+  const qa = F.query(F.collection(db, 'groups', gid, 'acts'),
+    F.where('at', '>', F.Timestamp.fromMillis(aSince)), F.orderBy('at', 'desc'), F.limit(ACT_MAX));
+  const u2 = F.onSnapshot(qa, snap => {
+    const l = grActs[gid] ||= [];
+    for (const ch of snap.docChanges()) {
+      if (ch.type === 'removed') continue; // 50件を超えて押し出されただけ
+      const a = toGrAct(gid, ch.doc);
+      const i = l.findIndex(x => x.id === a.id);
+      if (i >= 0) l[i] = a; else l.push(a);
+      if (a.type === 'del') grEv.delete(`g_${gid}_${a.eid}`);
+    }
+    const old = Date.now() - ACT_KEEP * 864e5;
+    grActs[gid] = l.filter(a => a.at > old).sort((x, y) => y.at - x.at).slice(0, ACT_MAX);
+    grSaveCache(); grRedraw();
+  }, err => console.warn('変更の記録', err));
+  return () => { u1(); u2(); };
+}
+// 1日1回、全部を読んで、もうない予定を手元から消す
+async function grRecheck(gid, from, today) {
+  const { db, F } = fb;
+  const snap = await F.getDocs(F.query(F.collection(db, 'groups', gid, 'events'), F.where('date', '>=', from)));
+  const have = new Set();
+  for (const d of snap.docs) {
+    const e = toGrEv(gid, d);
+    have.add(e.id); grEv.set(e.id, e);
+    grSync[gid] = Math.max(grSync[gid] || 0, e.at);
+  }
+  for (const e of [...grEv.values()]) if (e.gid === gid && !have.has(e.id)) grEv.delete(e.id);
+  grFull[gid] = today;
+  grSaveCache(); grRedraw();
+}
+function toGrAct(gid, d) {
+  const x = d.data({ serverTimestamps: 'estimate' });
+  return {
+    id: d.id, gid, type: ['add', 'edit', 'del'].includes(x.type) ? x.type : 'edit', eid: String(x.eid || ''),
+    title: String(x.title || '').slice(0, 60), date: String(x.date || ''),
+    by: String(x.by || ''), byName: String(x.byName || '').slice(0, 20), at: tsMs(x.at)
+  };
+}
+// しばらく閉じてたら見張りを付け直す（30分以上切れてると、つなぎ直すときに前に読んだ分まで読み直しになるので、新しい時刻から）
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !fb || !grUnsub.size || Date.now() - grWatchAt < 30 * 60e3) return;
+  for (const un of grUnsub.values()) un();
+  grUnsub.clear();
+  grListen();
+});
 
 let grTimer = 0;
 function grRedraw() {
@@ -6327,18 +6414,45 @@ function grData(v) {
     by: fb.uid, byName: grMe(), at: fb.F.serverTimestamp()
   };
 }
+// 予定を書くときは、同じバッチで「変更の記録」（acts）も1件書く（誰が何をしたか・新着の数。30日で消える）
+const ACT_DAYS = 30;
+function grAct(F, db, b, gid, type, eid, v) {
+  b.set(F.doc(F.collection(db, 'groups', gid, 'acts')), {
+    type, eid, title: String(v.title || '').slice(0, 200), date: String(v.date || ''),
+    by: fb.uid, byName: grMe(), at: F.serverTimestamp(), exp: F.Timestamp.fromMillis(Date.now() + ACT_DAYS * 864e5)
+  });
+}
+// Firebase のルールがまだ古い（記録を書けない）ときは、予定だけ書き直す
+let grActsOk = true;
+async function grCommit(F, db, ops, act) {
+  const run = withAct => {
+    const b = F.writeBatch(db);
+    ops(b);
+    if (withAct) grAct(F, db, b, ...act);
+    return b.commit();
+  };
+  if (!grActsOk) return run(false);
+  try { return await run(true); } catch (err) {
+    if (!String(err?.code).includes('permission-denied')) throw err;
+    await run(false);
+    grActsOk = false;
+  }
+}
 async function grAdd(gid, v) {
   const { db, F } = await fbInit();
-  return F.addDoc(F.collection(db, 'groups', gid, 'events'), { ...grData(v), own: fb.uid });
+  const ref = F.doc(F.collection(db, 'groups', gid, 'events')), d = { ...grData(v), own: fb.uid };
+  await grCommit(F, db, b => b.set(ref, d), [gid, 'add', ref.id, d]);
+  return ref;
 }
 async function grUpdate(e, v) {
   const { db, F } = await fbInit();
-  return F.updateDoc(F.doc(db, 'groups', e.gid, 'events', e.doc), grData({ ...e, ...v }));
+  const d = grData({ ...e, ...v });
+  return grCommit(F, db, b => b.update(F.doc(db, 'groups', e.gid, 'events', e.doc), d), [e.gid, 'edit', e.doc, d]);
 }
 async function grDelete(e) {
   const { db, F } = await fbInit();
   const ref = F.doc(db, 'groups', e.gid, 'events', e.doc);
-  await F.deleteDoc(ref);
+  await grCommit(F, db, b => b.delete(ref), [e.gid, 'del', e.doc, e]);
   try { await grWipeComments(F, db, ref); } catch (err) { console.warn('comments', err); }
 }
 // 予定の下のコメントをまとめて消す
@@ -6520,6 +6634,139 @@ if (grMe()) setTimeout(() => {
   if (navigator.onLine && featOn('group')) loadGroups().catch(err => console.warn('共有グループ', err));
 }, 2000);
 
+/* ===== 共有グループの新着（ほかの人の追加・変更・削除に気づく） ===== */
+// state.grSeen[gid] = { at: 最近の変更を見た時刻, base: このグループを初めて見た時刻（それより前の予定には NEW を付けない） }
+// state.grOpen[予定のid] = 開いたときの予定の at（そのあと誰かが変えたら、また NEW）
+// どちらも state に入れてるので、Googleで同期してれば PC とスマホで見た分がそろう
+function grMine() { return fb?.uid || grMyUid; }
+function grSeenInit(ids) {
+  let ch = false;
+  for (const gid of ids) if (!state.grSeen[gid]) { state.grSeen[gid] = { at: Date.now(), base: Date.now() }; ch = true; }
+  for (const gid of Object.keys(state.grSeen)) if (!ids.has(gid)) { delete state.grSeen[gid]; ch = true; }
+  for (const id of Object.keys(state.grOpen)) if (!grEv.has(id)) { delete state.grOpen[id]; ch = true; }
+  if (ch) save();
+}
+// まだ見てない、ほかの人の変更
+function grUnseen(gid) {
+  const s = state.grSeen[gid];
+  return s ? (grActs[gid] || []).filter(a => a.by !== grMine() && a.at > s.at) : [];
+}
+const grNewCount = () => featOn('group') ? Object.keys(grNames).reduce((n, gid) => n + grUnseen(gid).length, 0) : 0;
+// ほかの人が足した・変えた予定で、まだ開いてないもの
+function grIsNew(e) {
+  if (!e?.gid || !e.by || e.by === grMine() || !e.at) return false;
+  const s = state.grSeen[e.gid];
+  return !!s && e.at > s.base && e.at > (state.grOpen[e.id] || 0) && Date.now() - e.at < 14 * 864e5 // 14日たったら NEW は消す;
+}
+// 開いたら NEW を消す
+{
+  const se = startEvEdit;
+  startEvEdit = function (id) {
+    const e = findAnyEv(id);
+    if (grIsNew(e)) { state.grOpen[e.id] = e.at; save(); grBadge(); }
+    return se.apply(this, arguments);
+  };
+}
+
+// その他タブの「共有グループ」に赤丸、下のバーの「その他」に点
+function grBadge() {
+  const n = grNewCount(), btn = $('#groupBtn'), tab = $('#tabbar [data-tab="more"]');
+  if (btn) {
+    let b = btn.querySelector('.grNewN');
+    if (!b) { b = document.createElement('span'); b.className = 'grNewN'; btn.append(b); }
+    b.textContent = n > 99 ? '99+' : n;
+    b.hidden = !n;
+    btn.setAttribute('aria-label', n ? `共有グループ（新着${n}件）` : '共有グループ');
+  }
+  if (tab) {
+    let d = tab.querySelector('.tabDot');
+    if (!d) { d = document.createElement('span'); d.className = 'tabDot'; d.setAttribute('aria-hidden', 'true'); tab.append(d); }
+    d.hidden = !n;
+  }
+}
+
+// 共有グループの画面：「最近の変更」
+const ACT_WORD = { add: '追加', edit: '変更', del: '削除' };
+function ago(ms) {
+  const m = Math.floor((Date.now() - ms) / 60e3);
+  if (m < 1) return 'たった今';
+  if (m < 60) return `${m}分前`;
+  if (m < 24 * 60) return `${Math.floor(m / 60)}時間前`;
+  return md(new Date(ms));
+}
+const gActs = document.createElement('div');
+gActs.id = 'gActs';
+$('#gStatus').after(gActs);
+let grShownSeen = {}; // 画面を開いたときの「見た時刻」（開いてる間は、新しく来た分に印を付けたままにする）
+function renderGrActs() {
+  const all = Object.keys(grNames).flatMap(gid => grActs[gid] || []).filter(a => a.by !== grMine())
+    .sort((x, y) => y.at - x.at).slice(0, 30);
+  gActs.hidden = !Object.keys(grNames).length;
+  gActs.innerHTML = '<h3>最近の変更</h3>' + (all.length ? '<ul class="gActList">' + all.map(a => {
+    const isNew = a.at > (grShownSeen[a.gid] ?? Infinity);
+    const when = isYmd(a.date) ? md(parseYmd(a.date)) + ' ' : '';
+    return `<li><button type="button" class="gAct${isNew ? ' new' : ''}${a.type === 'del' ? ' del' : ''}" data-gact="${esc(a.id)}" data-gid="${esc(a.gid)}">` +
+      `${isNew ? '<span class="newMk">NEW</span>' : ''}<b>${esc(a.byName || '名前なし')}さん</b>が<span class="actW ${a.type}">${ACT_WORD[a.type]}</span>` +
+      `<span class="actT">${esc(when)}${esc(a.title || '予定')}</span>` +
+      `<small>👥${esc(grNames[a.gid] || 'グループ')}・${ago(a.at)}</small></button></li>`;
+  }).join('') + '</ul>' : '<p class="hint">ほかの人が予定を追加・変更・削除すると、ここに出るよ</p>');
+}
+// 見たことにする（画面を開いてる間に届いた分も）
+function grMarkSeen() {
+  let ch = false;
+  for (const gid of Object.keys(grNames)) {
+    const s = state.grSeen[gid];
+    const last = (grActs[gid] || [])[0]?.at || 0;
+    if (s && last > s.at) { s.at = last; ch = true; }
+  }
+  if (ch) save();
+  grBadge();
+}
+gActs.addEventListener('click', e => {
+  const b = e.target.closest('[data-gact]');
+  if (!b) return;
+  const a = (grActs[b.dataset.gid] || []).find(x => x.id === b.dataset.gact);
+  if (!a) return;
+  const ev = grEv.get(`g_${a.gid}_${a.eid}`);
+  if (!ev) return toast(a.type === 'del' ? 'この予定は削除されたよ' : 'この予定はもうないみたい');
+  groupDlg.close();
+  showTab('cal');
+  calSel = ev.date;
+  const d = parseYmd(ev.date);
+  calMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+  renderCal(); renderDay();
+  startEvEdit(ev.id);
+});
+// 開いたら：最近の変更を出して、新着は0に。グループの一覧にはグループごとの新着の数
+{
+  const og = openGroups;
+  openGroups = async function () {
+    grShownSeen = Object.fromEntries(Object.keys(grNames).map(gid => [gid, state.grSeen[gid]?.at ?? Infinity]));
+    renderGrActs();
+    grMarkSeen();
+    return og.apply(this, arguments);
+  };
+  grBtn.onclick = () => openGroups();
+  const rg = renderGroups;
+  renderGroups = function () {
+    rg.apply(this, arguments);
+    for (const li of $('#gList').querySelectorAll('.gItem')) {
+      const gid = li.querySelector('[data-ginv]')?.dataset.ginv;
+      const n = (grActs[gid] || []).filter(a => a.by !== grMine() && a.at > (grShownSeen[gid] ?? Infinity)).length;
+      if (n) li.querySelector('b').insertAdjacentHTML('afterend', ` <span class="grNewN">新着${n}</span>`);
+    }
+  };
+}
+// 届いたら描き直す
+{
+  const rd = grRedraw;
+  grRedraw = function () {
+    rd.apply(this, arguments);
+    if (groupDlg.open) { renderGrActs(); grMarkSeen(); } else grBadge();
+  };
+}
+grBadge();
+
 /* ===== 共有した予定：動かす・ロック（v63） ===== */
 function grLocked(e) { return !!e?.gid && e.lock === true && !grIsMine(e); }
 function grLockMsg(e) {
@@ -6530,8 +6777,8 @@ function grLockMsg(e) {
 // 日付だけ変える（ほかの人の変更を上書きしない）
 async function grPatch(e, patch) {
   const { db, F } = await fbInit();
-  return F.updateDoc(F.doc(db, 'groups', e.gid, 'events', e.doc),
-    { ...patch, by: fb.uid, byName: grMe(), at: F.serverTimestamp() });
+  return grCommit(F, db, b => b.update(F.doc(db, 'groups', e.gid, 'events', e.doc),
+    { ...patch, by: fb.uid, byName: grMe(), at: F.serverTimestamp() }), [e.gid, 'edit', e.doc, { ...e, ...patch }]);
 }
 function grMove(e, to) {
   const from = e.date;

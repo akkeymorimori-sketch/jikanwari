@@ -1774,3 +1774,32 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .moreTiles button b { font-size: 15px; }
 .moreTiles button small { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .off-points #ptBtn, .off-alarm #moreAlarm { display: none; }
+
+/* ===== 共有グループの新着 ===== */
+.newMk {
+  display: inline-block; background: var(--over); color: var(--surface); border-radius: 6px;
+  padding: 0 5px; font-size: 10px; font-weight: bold; line-height: 16px; vertical-align: 1px; margin-right: 2px;
+}
+.ev.isNew::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--over); margin-right: 2px; vertical-align: 1px; }
+#groupBtn { position: relative; }
+.grNewN {
+  display: inline-block; background: var(--over); color: var(--surface); border-radius: 10px;
+  min-width: 20px; padding: 0 6px; font-size: 12px; font-weight: bold; line-height: 20px; text-align: center;
+}
+#groupBtn > .grNewN { position: absolute; top: 6px; right: 6px; }
+.grNewN[hidden], .tabDot[hidden] { display: none; }
+#tabbar [data-tab="more"] { position: relative; }
+.tabDot { position: absolute; top: 7px; left: calc(50% + 9px); width: 9px; height: 9px; border-radius: 50%; background: var(--over); box-shadow: 0 0 0 2px var(--bg); }
+.off-group .tabDot, .off-group .newMk, .off-group .ev.isNew::before { display: none; }
+#gActs h3 { margin-bottom: 4px; }
+.gActList { list-style: none; padding: 0; margin: 0 0 8px; max-height: 40vh; overflow-y: auto; }
+.gAct {
+  display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 0;
+  padding: 8px 2px; margin: 0; color: var(--text); font-weight: normal; line-height: 1.5;
+}
+.gAct.new { background: color-mix(in srgb, var(--over) 8%, transparent); }
+.gAct .actW { font-weight: bold; margin: 0 4px 0 1px; }
+.gAct .actW.add { color: var(--accent); }
+.gAct .actW.del { color: var(--danger); }
+.gAct.del .actT { text-decoration: line-through; color: var(--muted); }
+.gAct small { display: block; color: var(--muted); font-size: 12px; }
