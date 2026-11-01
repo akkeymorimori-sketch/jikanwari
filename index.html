@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=221">
+<link rel="stylesheet" href="style.css?v=222">
 </head>
 <body>
 <header>
@@ -369,6 +369,7 @@
       <label class="inline"><input type="checkbox" id="shareOff"> 授業がない日・曜日の振替も入れる</label>
       <p class="hint">先生の一言・課題・欠席・バイトなどの予定は送らないよ</p>
       <div class="row end">
+        <button id="shareCopy" type="button">コピー</button>
         <button id="shareSend" class="primary">共有コードを送る</button>
       </div>
 
@@ -605,7 +606,8 @@
       <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
       <p id="sNote" class="hint"></p>
       <h3>APIキー</h3>
-      <input id="sKey" type="password" placeholder="ここに貼り付け" aria-label="APIキー">
+      <!-- type="password" にすると、PC のブラウザがメモや予定を追加するたびに「パスワードを保存？」と聞いてくるので、見た目だけ伏せ字 -->
+      <input id="sKey" type="text" class="secretIn" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="ここに貼り付け" aria-label="APIキー">
       <h3>モデル</h3>
       <select id="sModelPick" aria-label="モデル"></select>
       <input id="sModel" placeholder="モデルIDを直接入力" aria-label="モデルID" hidden>
@@ -641,6 +643,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=221"></script>
+<script src="app.js?v=222"></script>
 </body>
 </html>

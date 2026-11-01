@@ -1806,3 +1806,11 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .gPushRow { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--sub); margin: 4px 0 6px; }
 .gPushRow select { width: auto; flex: 0 1 auto; padding: 4px 8px; font-size: 13px; }
 #gPush button { width: 100%; }
+
+/* APIキーは見た目だけ伏せ字（type="password" だと PC のブラウザが毎回パスワードの保存を聞いてくる） */
+.secretIn { -webkit-text-security: disc; }
+/* メモの文字：押すと書き直せる */
+.noteText {
+  background: none; border: none; border-radius: 0; padding: 0; margin: 0; min-height: 0;
+  color: inherit; font: inherit; font-weight: normal; text-align: left; cursor: pointer; overflow-wrap: anywhere;
+}

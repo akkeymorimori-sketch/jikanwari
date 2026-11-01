@@ -2003,7 +2003,7 @@ function renderDay() {
     (e.img ? `<button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る">📄</button>` : '') +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   if (featOn('memo')) for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
-    `<li><span><span class="tag next">メモ</span>${esc(n.text)}</span>` +
+    `<li><span><span class="tag next">メモ</span><button type="button" class="noteText" data-nedit="${n.id}">${esc(n.text)}</button></span>` +
     `<button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`);
   if (featOn('diary') && (state.diary[k] || k <= todayStr())) rows.push(
     `<li><button type="button" class="evText" data-diary="${k}"><span class="tag">日記</span>` +
@@ -3269,14 +3269,14 @@ function shareJSON() {
 async function renderShareCode() {
   const n = courses().filter(c => c.name.trim()).length;
   const seq = ++shareSeq;
-  $('#shareSend').disabled = true;
+  $('#shareSend').disabled = $('#shareCopy').disabled = true;
   shareCode = '';
   $('#shareInfo').textContent = n ? `「${term().name}」の授業${n}件を送るよ` : '送れる授業がまだないよ';
   if (!n) return;
   const code = await packText(shareJSON());
   if (seq !== shareSeq) return;
   shareCode = code;
-  $('#shareSend').disabled = false;
+  $('#shareSend').disabled = $('#shareCopy').disabled = false;
 }
 
 function shareText() {
@@ -3298,6 +3298,8 @@ $('#shareSec').addEventListener('toggle', e => { if (e.target.open) renderShareC
 $('#shareItems').onchange = renderShareCode;
 $('#shareOff').onchange = renderShareCode;
 
+// PC だと「送る」は共有の画面が出るので、そのままコピーもできるように
+$('#shareCopy').onclick = () => { if (shareCode) copyShare(shareText()); };
 $('#shareSend').onclick = () => {
   if (!shareCode) return;
   const text = shareText();
@@ -3554,7 +3556,7 @@ function renderNotes() {
   const day = state.notes.filter(n => !n.pin && n.date === today);
   $('#noteList').innerHTML = [...pin, ...day].map(n =>
     `<li><span><button class="tag ${n.pin ? '' : 'next'}" data-ntoggle="${n.id}">${n.pin ? '残す' : '今日だけ'}</button>` +
-    `${esc(n.text)}</span><button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`).join('')
+    `<button type="button" class="noteText" data-nedit="${n.id}">${esc(n.text)}</button></span><button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`).join('')
     || '<li class="muted">なし</li>';
   const d = $('#diaryInput');
   if (document.activeElement !== d) d.value = state.diary[today] || ''; // 書いてる途中は上書きしない
@@ -3578,7 +3580,20 @@ function delNote(id) {
   if (curTab === 'cal') { renderCal(); renderDay(); }
 }
 
+// メモを押したら書き直す（空にしたら消す）
+async function editNote(id) {
+  const n = state.notes.find(x => String(x.id) === id);
+  if (!n) return;
+  const v = await askLine('メモを直す', n.text, { placeholder: '空にすると消えるよ' });
+  if (v == null || v.trim() === n.text) return;
+  if (!v.trim()) return delNote(id);
+  n.text = v.trim();
+  save(); renderNotes();
+  if (curTab === 'cal') { renderCal(); renderDay(); }
+}
 $('#noteList').addEventListener('click', e => {
+  const ed = e.target.closest('[data-nedit]');
+  if (ed) return editNote(ed.dataset.nedit);
   const tg = e.target.closest('[data-ntoggle]');
   if (tg) {
     const n = state.notes.find(x => String(x.id) === tg.dataset.ntoggle);
@@ -3602,6 +3617,8 @@ $('#diaryInput').addEventListener('input', e => {
 $('#dayList').addEventListener('click', async e => {
   const dl = e.target.closest('[data-ndel]');
   if (dl) return delNote(dl.dataset.ndel);
+  const ed = e.target.closest('[data-nedit]');
+  if (ed) return editNote(ed.dataset.nedit);
   const dy = e.target.closest('[data-diary]');
   if (!dy) return;
   const k = dy.dataset.diary;
@@ -6161,6 +6178,12 @@ async function makeInvite(gid) {
 $('#gList').addEventListener('click', async e => {
   const inv = e.target.closest('[data-ginv]');
   const sh = e.target.closest('[data-gshare]');
+  const cp = e.target.closest('[data-gcopy]');
+  if (cp) {
+    try { await navigator.clipboard.writeText(cp.dataset.gcopy); toast('招待コードをコピーしたよ'); }
+    catch { prompt('これをコピーしてね', cp.dataset.gcopy); }
+    return;
+  }
   const lv = e.target.closest('[data-gleave]');
 
   if (inv) {
@@ -6173,7 +6196,8 @@ $('#gList').addEventListener('click', async e => {
       const g = grGroups.find(x => x.id === gid);
       box.innerHTML = `<p class="gCode">${code}</p>` +
         `<p class="hint">${md(new Date(exp))}まで使えるよ。相手の「共有グループ」→「招待コードで入る」に入れてもらってね</p>` +
-        `<button type="button" data-gshare="${code}" data-gname="${esc(g?.name || '')}">送る</button>`;
+        `<div class="row"><button type="button" data-gcopy="${code}">コードをコピー</button>` +
+        `<button type="button" data-gshare="${code}" data-gname="${esc(g?.name || '')}">送る</button></div>`;
     } catch (err) { box.textContent = fbErr(err); }
     return;
   }
@@ -13279,6 +13303,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     s0();
     try { scheduleChanged(); } catch {}
     try { renderHabits(); } catch {}
+    try { renderPtBtn(); if (ptDlg.open) renderPoints(); } catch {} // その他タブの「🎁 ○p」も
     document.dispatchEvent(new Event('mn-changed'));
   }
   // 入力の途中なら、終わってから入れる
