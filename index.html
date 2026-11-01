@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=223">
+<link rel="stylesheet" href="style.css?v=225">
 </head>
 <body>
 <header>
@@ -40,7 +40,7 @@
   <section class="view" id="view-cal" hidden>
     <!-- 画像の日付を読むので、選んでる日とは関係ない。時間割タブと同じく上に置く -->
     <div class="gridBar calBar" id="calBar">
-      <button type="button" id="evPhoto">📷 画像から予定を追加</button>
+      <button type="button" id="evPhoto" data-ico="camera">画像から予定を追加</button>
     </div>
     <div class="card calCard">
       <div class="row calNav">
@@ -143,8 +143,8 @@
     <!-- 授業：どちらも時間割タブの上にあるので出さない（ボタンはJSから使うので残す） -->
     <div class="card menu gridOnly" hidden>
       <h2>授業</h2>
-      <button id="importBtn"><b>📷 画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
-      <button id="termBtn"><b>🗓 学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
+      <button id="importBtn"><b>画像から読み込む</b><small>時間割表の画像をAIで読み取る</small></button>
+      <button id="termBtn"><b>学期・休み・振替</b><small>開始日・終了日、授業がない日、曜日の振替、新しい学期</small></button>
     </div>
     <div class="card menu">
       <h2>お金</h2>
@@ -156,7 +156,7 @@
     </div>
     <div class="card menu">
       <h2>見た目</h2>
-      <button id="lookBtn"><b>🎨 テーマの色・文字</b><small>アプリの色、フォント、アイコンの色</small></button>
+      <button id="lookBtn"><b>テーマの色・文字</b><small>アプリの色、フォント、アイコンの色</small></button>
     </div>
     <div class="card menu">
       <h2>困ったとき</h2>
@@ -482,18 +482,18 @@
       <summary>使う機能 <small></small></summary>
       <p class="hint">使わない機能はオフにすると、アプリのどこにも出なくなるよ。データは消えないから、オンに戻せば元通り</p>
       <div class="featList">
-        <label class="feat"><input type="checkbox" id="sUseGrid"><span><b>📚 時間割</b><small>授業・持ち物・学期・欠席・ミニノート</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="job"><span><b>💼 バイト・収入</b><small>バイトの予定、シフト表・給与明細の読み取り、収入</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="group"><span><b>👥 共有グループ</b><small>家族やサークルと予定を共有、コメント</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="share"><span><b>🔗 時間割の見せ合い</b><small>共有コード・QR、友達の時間割、空きコマ</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="diary"><span><b>📖 一言日記</b><small>今日の画面とカレンダーの日記</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="todo"><span><b>✅ ToDo</b><small>今日の画面とカレンダーのToDo</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="memo"><span><b>🗒 メモ</b><small>今日の画面とカレンダーのメモ</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="habit"><span><b>🔁 日課</b><small>毎日やることのチェック</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="points"><span><b>🎁 ポイント</b><small>ログインポイント、交換所、はじめにやること</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="alarm"><span><b>⏰ 目覚まし</b><small>授業やバイトに合わせて鳴らす。上の⏰から（アプリ版）</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="exam"><span><b>📝 試験前モード</b><small>試験の7日前から、その授業のノートや写真をすぐ見返せる</small></span></label>
-        <label class="feat"><input type="checkbox" data-feat="ai"><span><b>📷 写真から読み取り（AI）</b><small>シフト表・時間割・給与明細・予定が書いてある画像やスクショ</small></span></label>
+        <label class="feat"><input type="checkbox" id="sUseGrid"><span><b data-ico="course">時間割</b><small>授業・持ち物・学期・欠席・ミニノート</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="job"><span><b data-ico="job">バイト・収入</b><small>バイトの予定、シフト表・給与明細の読み取り、収入</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="group"><span><b data-ico="group">共有グループ</b><small>家族やサークルと予定を共有、コメント</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="share"><span><b data-ico="link">時間割の見せ合い</b><small>共有コード・QR、友達の時間割、空きコマ</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="diary"><span><b data-ico="diary">一言日記</b><small>今日の画面とカレンダーの日記</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="todo"><span><b data-ico="todo">ToDo</b><small>今日の画面とカレンダーのToDo</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="memo"><span><b data-ico="memo">メモ</b><small>今日の画面とカレンダーのメモ</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="habit"><span><b data-ico="habit">日課</b><small>毎日やることのチェック</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="points"><span><b data-ico="gift">ポイント</b><small>ログインポイント、交換所、はじめにやること</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="alarm"><span><b data-ico="alarm">目覚まし</b><small>授業やバイトに合わせて鳴らす。上の目覚ましのボタンから（アプリ版）</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="exam"><span><b data-ico="exam">試験前モード</b><small>試験の7日前から、その授業のノートや写真をすぐ見返せる</small></span></label>
+        <label class="feat"><input type="checkbox" data-feat="ai"><span><b data-ico="camera">写真から読み取り（AI）</b><small>シフト表・時間割・給与明細・予定が書いてある画像やスクショ</small></span></label>
       </div>
     </details>
 
@@ -590,7 +590,7 @@
     <details class="sec set" id="setNotify" hidden>
       <summary>通知とウィジェット <small></small></summary>
     </details>
-    <button type="button" class="setLink" id="setAlarm"><span>⏰ 目覚まし</span><small>アラームの画面へ</small></button>
+    <button type="button" class="setLink" id="setAlarm"><span data-ico="alarm">目覚まし</span><small>アラームの画面へ</small></button>
     </div>
 
     <div class="setGrp">
@@ -643,6 +643,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=223"></script>
+<script src="app.js?v=225"></script>
 </body>
 </html>

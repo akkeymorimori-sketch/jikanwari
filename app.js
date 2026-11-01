@@ -1108,7 +1108,7 @@ function renderNow() {
   if (!courses().length) {
     el.innerHTML = '<h2>はじめに</h2><p class="muted">まずは時間割を作ろう</p><div class="startBtns">' +
       '<button data-go="grid" class="primary">手入力で作る</button>' +
-      '<button data-go="import">📷 写真から読み込む</button>' +
+      '<button data-go="import" data-ico="camera">写真から読み込む</button>' +
       '<button data-go="share">共有コードから読み込む</button></div>' +
       '<p class="hint startAlt">時間割はいらない？</p>' +
       '<button data-go="nogrid" class="addEv">予定管理だけで使う</button>';
@@ -1167,7 +1167,7 @@ function camLine(now, t = term()) {
     const o = occurrence(c, now);
     return o && !c.absences.includes(today) &&
       now >= addMin(o.start, -CAM_BEFORE) && now <= addMin(o.end, CAM_AFTER);
-  }).map(c => `<button type="button" class="camNow" data-cam="${c.id}">📷 ${esc(nm(c))}の板書を撮る</button>`).join('');
+  }).map(c => `<button type="button" class="camNow" data-ico="camera" data-cam="${c.id}">${esc(nm(c))}の板書を撮る</button>`).join('');
 }
 const addMin = (d, m) => new Date(d.getTime() + m * 60000);
 
@@ -1210,7 +1210,7 @@ function todayFlow(now, t = term()) {
     rows.push({
       min: s ?? -1, time: e.start || '',
       label: esc(e.title || EV_LABEL[e.kind]) + (end ? ` <small>${esc(end)}</small>` : '') +
-        (e.img ? ` <button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(now) + ' ' + (e.title || 'バイト'))}">📄</button>` : ''),
+        (e.img ? ` <button type="button" class="evImg icoOnly" data-ico="doc" data-evimg="${esc(e.img)}" data-label="${esc(md(now) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る"></button>` : ''),
       past: s != null && en != null && en > s && en <= nowMin, id: '', cls: `f-${e.kind}`
     });
   }
@@ -1380,7 +1380,7 @@ function renderTermSelect() {
   $('#termSelect').innerHTML = state.terms.map(t =>
     `<option value="${t.id}" ${t.id === state.currentTermId ? 'selected' : ''}>${esc(t.name)}</option>`).join('') +
     '<option value="__new">＋ 新しい学期を作る</option>' +
-    '<option value="__edit">⚙ 学期の設定</option>';
+    '<option value="__edit">学期の設定…</option>';
 }
 
 /* ===== 画面：集中講義 ===== */
@@ -2000,7 +2000,7 @@ function renderDay() {
   for (const e of calEvents(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
     `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}${e.gid ? grLabel(e) : ''}${placeOf(e.memo) ? ` <span class="from evPlace">${PIN}${esc(placeOf(e.memo))}</span>` : ''}${e.memo ? '<span class="evMemoMk" aria-label="メモあり">📝</span>' : ''}</button>` +
-    (e.img ? `<button type="button" class="evImg" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る">📄</button>` : '') +
+    (e.img ? `<button type="button" class="evImg icoOnly" data-ico="doc" data-evimg="${esc(e.img)}" data-label="${esc(md(date) + ' ' + (e.title || 'バイト'))}" aria-label="シフト表を見る"></button>` : '') +
     `<button class="x" data-evdel="${e.id}" aria-label="削除">×</button></li>`);
   if (featOn('memo')) for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
     `<li><span><span class="tag next">メモ</span><button type="button" class="noteText" data-nedit="${n.id}">${esc(n.text)}</button></span>` +
@@ -2211,7 +2211,7 @@ function syncEvForm() {
   $('#evWeeklyBox').hidden = ed;
   $('#evEditBox').hidden = !ed;
   if (ed) {
-    $('#evHead').textContent = '✏️ 予定を編集中';
+    $('#evHead').textContent = '予定を編集中';
     renderEvScope();
   }
 }
@@ -2256,7 +2256,7 @@ function renderTaskForm() {
     : (list.some(c => c.id === ctLastCid) ? ctLastCid : list[0].id);
   $('#ctCourse').innerHTML = list.map(c =>
     `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(nm(c) || '名前なし')}${slotLabel(c)}</option>`).join('') + '<option value="__newcat">＋ 新しい名目を作る</option>';
-  $('#ctHead').textContent = ed ? '✏️ 課題を編集中' : `${md(parseYmd(calSel))}締切の課題を追加`;
+  $('#ctHead').textContent = ed ? '課題を編集中' : `${md(parseYmd(calSel))}締切の課題を追加`;
   $('#ctAdd').hidden = !!ed;
   for (const id of ['ctDueBox', 'ctDel', 'ctCancel', 'ctSave']) $('#' + id).hidden = !ed;syncCatTools(); 
 }
@@ -3990,9 +3990,9 @@ photoDlg.innerHTML =
   '<button type="button" class="x" id="phX" aria-label="閉じる">×</button></div>' +
   '<div id="phPick">' +
   '<p class="hint">何の写真か選んでね。AIが読み取って、確認してから保存するよ</p>' +
-  '<button type="button" class="phOpt" data-ph="grid"><b>📚 時間割</b><small>時間割の画像から授業をまとめて登録</small></button>' +
-  '<button type="button" class="phOpt" data-ph="pay"><b>💴 給与明細</b><small>支給日と金額を読み取って収入に記録</small></button>' +
-  '<button type="button" class="phOpt" data-ph="shift"><b>💼 シフト表</b><small>PDFや写真から自分の勤務をカレンダーに追加</small></button>' +
+  '<button type="button" class="phOpt" data-ph="grid"><b data-ico="course">時間割</b><small>時間割の画像から授業をまとめて登録</small></button>' +
+  '<button type="button" class="phOpt" data-ph="pay"><b data-ico="wallet">給与明細</b><small>支給日と金額を読み取って収入に記録</small></button>' +
+  '<button type="button" class="phOpt" data-ph="shift"><b data-ico="job">シフト表</b><small>PDFや写真から自分の勤務をカレンダーに追加</small></button>' +
   '</div>' +
   '<div id="phGuide" hidden>' +
   '<p>読み取りには、AIの「APIキー」が1回だけ必要。GoogleのAI Studioなら無料で取れるよ</p>' +
@@ -4043,7 +4043,7 @@ function syncScanGuide() {
     b = document.createElement('button');
     b.type = 'button';
     b.id = 'scanGuide';
-    b.textContent = '📷 AIの準備をする';
+    b.dataset.ico = 'camera'; b.textContent = 'AIの準備をする';
     b.onclick = () => openPhoto('guide');
     $('#scanNote').after(b);
   }
@@ -4963,7 +4963,7 @@ function buildIcs() {
 const icsBox = document.createElement('div');
 icsBox.className = 'icsBox';
 icsBox.innerHTML =
-  '<button type="button" id="icsBtn">📅 カレンダーに書き出す</button>' +
+  '<button type="button" id="icsBtn" data-ico="calendar">カレンダーに書き出す</button>' +
   '<p class="hint">課題の締切と、学期の終わりまでの持ち物を書き出すよ。通知は前日21時。「次回だけ」の持ち物や課題を足したら書き出し直してね。前に入れた予定は上書きされるよ</p>';
 $('#exportBtn').parentElement.after(icsBox);
 
@@ -5747,9 +5747,9 @@ const goTerm = sel => {
 };
 const FEATURES = [
   { id: 'grid', name: '時間割', where: '下の「時間割」タブ', desc: '授業を曜日と時限で並べる。マスをタップすると授業の詳細', kw: '時間割 授業 科目 登録', grid: 1, go: () => showTab('grid') },
-  { id: 'photoGrid', name: '写真から時間割を読み込む', where: '＋ →「📷 写真から追加」→ 時間割', desc: '大学サイトの時間割のスクショから、AIが授業を入れる', kw: '写真 画像 スクショ 読み取り 読み込み 自動', grid: 1, go: () => startPhoto('grid') },
-  { id: 'photoPay', name: '給与明細を読み取る', where: '＋ →「📷 写真から追加」→ 給与明細', desc: '明細の写真から支給日・総支給・手取りを読み取る。いらない所は塗りつぶせる', kw: '給与 明細 給料 写真 読み取り', go: () => openPhoto('pick') },
-  { id: 'photoShift', name: 'シフト表を読み取る', where: '＋ →「📷 写真から追加」→ シフト表／カレンダーの上の「📷 画像から予定を追加」 → シフト表', desc: 'シフト表の写真やPDFから自分の勤務だけ拾ってバイト予定にする。他の人の所は海苔で隠せる', kw: 'シフト PDF 海苔 読み取り', go: () => openPhoto('pick') },
+  { id: 'photoGrid', name: '写真から時間割を読み込む', where: '＋ →「写真から追加」→ 時間割', desc: '大学サイトの時間割のスクショから、AIが授業を入れる', kw: '写真 画像 スクショ 読み取り 読み込み 自動', grid: 1, go: () => startPhoto('grid') },
+  { id: 'photoPay', name: '給与明細を読み取る', where: '＋ →「写真から追加」→ 給与明細', desc: '明細の写真から支給日・総支給・手取りを読み取る。いらない所は塗りつぶせる', kw: '給与 明細 給料 写真 読み取り', go: () => openPhoto('pick') },
+  { id: 'photoShift', name: 'シフト表を読み取る', where: '＋ →「写真から追加」→ シフト表／カレンダーの上の「画像から予定を追加」 → シフト表', desc: 'シフト表の写真やPDFから自分の勤務だけ拾ってバイト予定にする。他の人の所は海苔で隠せる', kw: 'シフト PDF 海苔 読み取り', go: () => openPhoto('pick') },
   { id: 'items', name: '持ち物', where: '授業の詳細 →「持ち物」', desc: '「次回だけ」と「毎回」を選べる。今日と明日の分はホームにまとめて出る', kw: '持ち物 忘れ物 準備 教科書', grid: 1, go: () => showTab('grid') },
   { id: 'tasks', name: '課題', where: 'カレンダーで日付をタップ →「＋ 課題」（授業の詳細からも）', desc: '締切つきで登録すると、ホームに近い順で出る。授業と関係ない「その他」もOK', kw: '課題 宿題 レポート 締切 提出 期限', go: () => showTab('cal') },
   { id: 'taskLead', name: '課題をホームに出すタイミング', where: '設定 → 課題', desc: '締切の何日・何週間前からホームに出すか。課題ごとにも変えられる', kw: 'いつから タイミング 前から 隠す', go: () => goSet('#sLeadU') },
@@ -5757,8 +5757,8 @@ const FEATURES = [
   { id: 'cal', name: 'カレンダー', where: '下の「カレンダー」タブ', desc: '課題・バイト・予定・休みを月の表で見る。上の年月をタップすると飛べる', kw: 'カレンダー 予定 スケジュール 月', go: () => showTab('cal') },
   { id: 'job', name: 'バイトの予定', where: 'カレンダーで日付をタップ →「＋ 予定」→ 種類を「バイト」', desc: '同じ曜日に4週分まとめて追加できる。夜勤もOK', kw: 'バイト アルバイト 勤務 塾', go: () => showTab('cal') },
   { id: 'income', name: '収入', where: '「収入」ボタン', desc: '月ごと・バイト先ごとの収入、年間の上限まであといくら、時給からの見込み', kw: '収入 給料 お金 扶養 見込み 時給 上限', go: () => $('#incomeBtn').click() },
-  { id: 'term', name: '学期', where: '時間割タブの上の「🗓 学期・休み」／上の学期の選択', desc: '前期・後期の切り替え、新しい学期づくり、開始日と終了日', kw: '学期 前期 後期 年度 新学期 開始日', grid: 1, go: () => goTerm('#termList') },
-  { id: 'offday', name: '授業がない日・曜日の振替', where: '時間割タブの上の「🗓 学期・休み」', desc: '祝日や行事で授業がない日、ほかの曜日の授業をする日', kw: '祝日 振替 授業がない 休み', grid: 1, go: () => goTerm('#offFrom') },
+  { id: 'term', name: '学期', where: '時間割タブの上の「学期・休み」／上の学期の選択', desc: '前期・後期の切り替え、新しい学期づくり、開始日と終了日', kw: '学期 前期 後期 年度 新学期 開始日', grid: 1, go: () => goTerm('#termList') },
+  { id: 'offday', name: '授業がない日・曜日の振替', where: '時間割タブの上の「学期・休み」', desc: '祝日や行事で授業がない日、ほかの曜日の授業をする日', kw: '祝日 振替 授業がない 休み', grid: 1, go: () => goTerm('#offFrom') },
   { id: 'intensive', name: '集中講義', where: '時間割の下', desc: '期間だけ決まってる授業を登録', kw: '集中講義 集中', grid: 1, go: () => showTab('grid') },
   { id: 'absence', name: '欠席の記録', where: '授業の詳細 →「詳細」', desc: '欠席の回数と、あと何回休めるか', kw: '欠席 出席 休める 単位', grid: 1, go: () => showTab('grid') },
   { id: 'cancel', name: '休講', where: '授業の詳細 →「詳細」', desc: 'その日だけ授業がないことにする。持ち物も次の回にずれる', kw: '休講', grid: 1, go: () => showTab('grid') },
@@ -5850,7 +5850,7 @@ document.body.append(helpDlg);
 const helpBtn = document.createElement('button');
 helpBtn.type = 'button';
 helpBtn.id = 'helpBtn';
-helpBtn.textContent = '🔍 機能をさがす';
+helpBtn.textContent = '機能をさがす';
 $('#settingsBtn').before(helpBtn);
 helpBtn.onclick = () => {
   $('#helpQ').value = '';
@@ -6034,7 +6034,7 @@ document.body.append(groupDlg);
 const grBtn = document.createElement('button');
 grBtn.type = 'button';
 grBtn.id = 'groupBtn';
-grBtn.textContent = '👥 共有グループ';
+grBtn.textContent = '共有グループ';
 $('#settingsBtn').before(grBtn);
 
 const gSay = t => { $('#gStatus').textContent = t; };
@@ -6204,7 +6204,7 @@ $('#gList').addEventListener('click', async e => {
 
   if (sh) {
     const text = `がくログの共有グループ「${sh.dataset.gname}」に招待するよ。\n` +
-      `「👥 共有グループ」→「招待コードで入る」にこのコードを入れてね：${sh.dataset.gshare}\n` +
+      `「共有グループ」→「招待コードで入る」にこのコードを入れてね：${sh.dataset.gshare}\n` +
       `（7日間使えるよ）\n${APP_URL}`;
     try {
       if (navigator.share) await navigator.share({ text });
@@ -6305,7 +6305,7 @@ function grSaveCache() {
 function findAnyEv(id) { return state.events.find(x => x.id === id) || grEv.get(id); }
 function grIsMine(e) { return !e.gid || e.own === (fb?.uid || grMyUid); }
 function grLabel(e) {
-  return `${grIsNew(e) ? ' <span class="newMk">NEW</span>' : ''} <span class="from">👥${esc(grNames[e.gid] || 'グループ')}${e.lock ? '🔒' : ''}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
+  return `${grIsNew(e) ? ' <span class="newMk">NEW</span>' : ''} <span class="from" data-ico="group">${esc(grNames[e.gid] || 'グループ')}${e.lock ? '🔒' : ''}${e.byName ? '・' + esc(e.byName) : ''}</span>`;
 }
 const grFail = err => alert(fbErr(err));
 
@@ -6498,7 +6498,7 @@ evShareRow.innerHTML = '共有<select id="evShare"></select>';
 function renderShareSel() {
   const sel = $('#evShare'), v = sel.value;
   sel.innerHTML = '<option value="">しない（自分だけ）</option>' +
-    Object.entries(grNames).map(([id, n]) => `<option value="${id}">👥 ${esc(n)}</option>`).join('');
+    Object.entries(grNames).map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('');
   sel.value = grNames[v] ? v : '';
   evShareRow.hidden = !Object.keys(grNames).length; syncLockUI();
 
@@ -6513,7 +6513,7 @@ const evAddLocal = $('#evAdd').onclick;
 $('#evAdd').onclick = () => {
   const gid = featOn('group') ? $('#evShare').value : ''; // 共有グループがオフなら送らない
   if (!gid) return evAddLocal();
-  if (!grMe()) return alert('先に「👥 共有グループ」で自分の名前を入れてね');
+  if (!grMe()) return alert('先に「共有グループ」で自分の名前を入れてね');
   const v = evForm();
   if (ngCheck(v.title)) return alert('タイトルに使えない言葉が入ってるみたい。書き直してね');
   let dates;
@@ -6553,7 +6553,7 @@ function saveEvEdit() {
   if (!e.gid) {
     const ts = evTargets($('#evScope').value);
     if (!ts.length) return endEvEdit();
-    if (gid && !grMe()) return alert('先に「👥 共有グループ」で自分の名前を入れてね');
+    if (gid && !grMe()) return alert('先に「共有グループ」で自分の名前を入れてね');
     n = ts.length;
     const skip = delta ? ts.filter(x => x.src === 'cal').length : 0;
     const cidv = examCidOf(v.kind);
@@ -6733,7 +6733,7 @@ function renderGrActs() {
     return `<li><button type="button" class="gAct${isNew ? ' new' : ''}${a.type === 'del' ? ' del' : ''}" data-gact="${esc(a.id)}" data-gid="${esc(a.gid)}">` +
       `${isNew ? '<span class="newMk">NEW</span>' : ''}<b>${esc(a.byName || '名前なし')}さん</b>が<span class="actW ${a.type}">${ACT_WORD[a.type]}</span>` +
       `<span class="actT">${esc(when)}${esc(a.title || '予定')}</span>` +
-      `<small>👥${esc(grNames[a.gid] || 'グループ')}・${ago(a.at)}</small></button></li>`;
+      `<small data-ico="group">${esc(grNames[a.gid] || 'グループ')}・${ago(a.at)}</small></button></li>`;
   }).join('') + '</ul>' : '<p class="hint">ほかの人が予定を追加・変更・削除すると、ここに出るよ</p>');
 }
 // 見たことにする（画面を開いてる間に届いた分も）
@@ -6859,8 +6859,8 @@ function renderPushHead() {
   gPush.hidden = !FM || !grGroups.length;
   if (gPush.hidden) return;
   gPush.innerHTML = pushPerm === 'granted' ? ''
-    : pushPerm === 'denied' ? '<p class="hint">🔔 通知が届かない設定になってるよ。スマホの「設定」→ がくログ → 通知 でオンにしてね</p>'
-    : '<button type="button" id="gPushAsk">🔔 グループの通知をオンにする</button><p class="hint">ほかの人が予定を足したり変えたりしたら、まとめて知らせるよ（夜は朝にまとめて）</p>';
+    : pushPerm === 'denied' ? '<p class="hint">通知が届かない設定になってるよ。スマホの「設定」→ がくログ → 通知 でオンにしてね</p>'
+    : '<button type="button" id="gPushAsk" data-ico="bell">グループの通知をオンにする</button><p class="hint">ほかの人が予定を足したり変えたりしたら、まとめて知らせるよ（夜は朝にまとめて）</p>';
 }
 gPush.addEventListener('click', async e => {
   if (!e.target.closest('#gPushAsk')) return;
@@ -6878,7 +6878,7 @@ if (FM) {
       if (!gid) continue;
       const v = modes[gid] || 'all';
       li.querySelector('.gMembers').insertAdjacentHTML('afterend',
-        `<label class="gPushRow">🔔 通知<select data-gpush="${esc(gid)}">` +
+        `<label class="gPushRow"><span data-ico="bell">通知</span><select data-gpush="${esc(gid)}">` +
         PUSH_MODES.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('') + '</select></label>');
     }
     renderPushHead();
@@ -6966,9 +6966,9 @@ const gridBar = document.createElement('div');
 gridBar.id = 'gridBar';
 gridBar.className = 'gridBar';
 // 3つ並べても1段に収まるように、ボタンの文字は短く（読み上げ用には長い名前）
-gridBar.innerHTML = '<button type="button" id="gridImport" aria-label="画像から時間割を読み込む">📷 画像から</button>' +
-  '<button type="button" id="gridTerm" aria-label="学期・休み・振替">🗓 学期・休み</button>' +
-  '<button type="button" id="gridShare" aria-label="時間割を共有">🔗 共有</button>';
+gridBar.innerHTML = '<button type="button" id="gridImport" data-ico="camera" aria-label="画像から時間割を読み込む">画像から</button>' +
+  '<button type="button" id="gridTerm" data-ico="calendar" aria-label="学期・休み・振替">学期・休み</button>' +
+  '<button type="button" id="gridShare" data-ico="link" aria-label="時間割を共有">共有</button>';
 $('#grid').before(gridBar);
 $('#gridImport').onclick = () => startPhoto('grid');
 $('#gridTerm').onclick = () => openTermDlg();
@@ -6984,12 +6984,12 @@ const fab = document.createElement('div');
 fab.id = 'fab';
 fab.innerHTML =
   '<div id="fabMenu" hidden>' +
-  '<button type="button" data-fab="photo" class="fabPhoto">📷 写真から追加</button>' +
-  '<button type="button" data-fab="task">📝 課題</button>' +
-  '<button type="button" data-fab="other">📅 予定</button>' +
-  '<button type="button" data-fab="job">💼 バイト</button>' +
-  '<button type="button" data-fab="note">🗒 メモ</button>' +
-  '<button type="button" data-fab="course">📚 授業</button>' +
+  '<button type="button" data-fab="photo" data-ico="camera" class="fabPhoto">写真から追加</button>' +
+  '<button type="button" data-fab="task" data-ico="task">課題</button>' +
+  '<button type="button" data-fab="other" data-ico="calendar">予定</button>' +
+  '<button type="button" data-fab="job" data-ico="job">バイト</button>' +
+  '<button type="button" data-fab="note" data-ico="memo">メモ</button>' +
+  '<button type="button" data-fab="course" data-ico="course">授業</button>' +
   '</div>' +
   '<button type="button" id="fabBtn" class="primary" aria-label="追加">＋</button>';
 document.body.append(fab);
@@ -7113,7 +7113,7 @@ function examLine(now) {
   return xs.slice(0, 3).map(e => {
     const n = evDayDiff(today, e.date);
     const when = n === 0 ? '今日' : n === 1 ? '明日' : `あと${n}日`;
-    return `<div class="examLine"><p>📝 <b>${when}</b> ${esc(e.title || '試験')}` +
+    return `<div class="examLine"><p data-ico="exam"><b>${when}</b> ${esc(e.title || '試験')}` +
       ` <small>${md(parseYmd(e.date))}${e.start ? ' ' + esc(e.start) : ''}</small></p>` +
       (prep && n < EXAM_PREP_DAYS ? examActs(e) : '') + '</div>';
   }).join('') + (xs.length > 3 ? `<p class="hint">ほかに試験${xs.length - 3}件</p>` : '');
@@ -7123,11 +7123,11 @@ function examLine(now) {
 function examActs(e) {
   if (e.cid === 'none') return ''; // 「つながない」を選んだ試験は何も出さない
   const c = examCourse(e);
-  if (!c) return `<div class="examActs"><button type="button" data-exlink="${esc(e.id)}">🔗 授業とつなぐ</button></div>`;
+  if (!c) return `<div class="examActs"><button type="button" data-exlink="${esc(e.id)}" data-ico="link">授業とつなぐ</button></div>`;
   const ns = c.notes || [], pics = ns.reduce((n, x) => n + (x.pics?.length || 0), 0);
   return `<div class="examActs">` +
-    `<button type="button" data-exnotes="${esc(c.id)}">📒 ノート ${ns.length}件</button>` +
-    (pics ? `<button type="button" data-expics="${esc(c.id)}">🖼 写真 ${pics}枚</button>` : '') + '</div>';
+    `<button type="button" data-exnotes="${esc(c.id)}" data-ico="note">ノート ${ns.length}件</button>` +
+    (pics ? `<button type="button" data-expics="${esc(c.id)}" data-ico="image">写真 ${pics}枚</button>` : '') + '</div>';
 }
 
 /* ===== 明日の予定（日記の下） ===== */
@@ -7264,11 +7264,11 @@ const wallDlg = document.createElement('dialog');
 wallDlg.id = 'wallDlg';
 wallDlg.innerHTML =
   '<div class="dlg">' +
-  '<div class="dlgHead"><h2>🖼 壁紙</h2><button type="button" class="x big" data-wclose aria-label="閉じる">×</button></div>' +
+  '<div class="dlgHead"><h2>壁紙</h2><button type="button" class="x big" data-wclose aria-label="閉じる">×</button></div>' +
   '<div class="wallTiles">' + WALLS.map(([k, n]) =>
     `<button type="button" class="wallTile" data-wall="${k}"><i class="wp-${k}"></i><span>${n}</span></button>`).join('') +
   '</div>' +
-  '<label class="fileBtn" id="wallPick"><span id="wallPickT">📷 写真を選ぶ</span>' +
+  '<label class="fileBtn" id="wallPick"><span id="wallPickT" data-ico="camera">写真を選ぶ</span>' +
   '<input type="file" accept="image/*" class="vh" id="wallFile"></label>' +
   '<label class="wallDim">背景の薄さ<input type="range" id="wallDim" min="0" max="80" step="5"><b id="wallDimV"></b></label>' +
   '<p class="hint">選ぶとすぐに変わるよ。写真はこの端末の中だけに保存されて、バックアップの書き出しには入らない</p>' +
@@ -7279,7 +7279,7 @@ function renderWall() {
   const w = wallState();
   for (const b of wallDlg.querySelectorAll('[data-wall]')) b.classList.toggle('on', b.dataset.wall === w.type);
   wallDlg.querySelector('i.wp-photo').style.backgroundImage = wallUrl ? `url("${wallUrl}")` : '';
-  $('#wallPickT').textContent = wallUrl ? '📷 写真を変える' : '📷 写真を選ぶ';
+  $('#wallPickT').textContent = wallUrl ? '写真を変える' : '写真を選ぶ';
   $('#wallDim').value = w.dim;
   $('#wallDimV').textContent = w.dim + '%';
 }
@@ -7335,7 +7335,7 @@ $('#wallDim').onchange = () => save();
   const b = document.createElement('button');
   b.type = 'button';
   b.id = 'wallBtn';
-  b.innerHTML = '🖼 壁紙<small>写真やかわいい柄を背景にする</small>';
+  b.innerHTML = '壁紙<small>写真やかわいい柄を背景にする</small>';
   b.onclick = openWall;
   const gb = $('#groupBtn');
   if (gb) gb.after(b); else $('#termBtn')?.closest('.menu')?.append(b);
@@ -7352,7 +7352,7 @@ applyWall();
     $(before).before(b);
   };
   put('groupBtn', '<b>共有グループ</b><small>家族やサークルと予定を共有する</small>', '#shareBtn');
-  put('wallBtn', '<b>🖼 壁紙</b><small>写真やかわいい柄を背景にする</small>', '#lookBtn');
+  put('wallBtn', '<b>壁紙</b><small>写真やかわいい柄を背景にする</small>', '#lookBtn');
   put('helpBtn', '<b>機能をさがす</b><small>やりたいことから、どこにあるか探す</small>', '#feedbackBtn');
 }
 
@@ -7667,7 +7667,7 @@ wallDlg.addEventListener('change', e => {
 }
 
 // 名前を「壁紙・色」に
-wallDlg.querySelector('.dlgHead h2').textContent = '🖼 壁紙・色';
+wallDlg.querySelector('.dlgHead h2').textContent = '壁紙・色';
 if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>壁紙・色</b><small>背景の写真や柄、背景・カード・文字の色</small>';
 
 applyPageColor();
@@ -7740,15 +7740,15 @@ const ptDlg = document.createElement('dialog');
 ptDlg.id = 'ptDlg';
 ptDlg.innerHTML =
   '<div class="dlg">' +
-  '<div class="dlgHead"><h2>🎁 ポイント</h2><button type="button" class="x big" data-ptclose aria-label="閉じる">×</button></div>' +
+  '<div class="dlgHead"><h2>ポイント</h2><button type="button" class="x big" data-ptclose aria-label="閉じる">×</button></div>' +
   '<div id="ptBody"></div></div>';
 document.body.append(ptDlg);
 
 // 交換所をグループに分けてたたむ
 const SHOP_GROUPS = [
-  ['wg-', '🧩 ウィジェット'],
-  ['tb-', '🎨 タブバー'],
-　['bg-', '🖼 背景'],
+  ['wg-', 'ウィジェット'],
+  ['tb-', 'タブバー'],
+　['bg-', '背景'],
 ];
 const SHOP_OPEN_KEY = 'ptShopOpen';
 function shopOpenList() {
@@ -7802,7 +7802,7 @@ function renderPoints() {
     `<details class="ptLogBox"${localStorage.getItem('ptLogOpen') === '1' ? ' open' : ''}>` +
     `<summary>最近もらったポイント <small>${Math.min(p.log.length, 10)}件</small></summary>` +
     '<ul class="ptLog">' + (p.log.slice(0, 10).map(x =>
-      `<li><span>${md(parseYmd(x.date))} ${x.gift ? `🎁 ${esc(x.gift)}` : `連続${x.streak}日目${x.bonus ? ` <small>🎉${esc(x.bonus)}</small>` : ''}`}</span><b>+${x.get}p</b></li>`
+      `<li><span>${md(parseYmd(x.date))} ${x.gift ? `交換：${esc(x.gift)}` : `連続${x.streak}日目${x.bonus ? ` <small>🎉${esc(x.bonus)}</small>` : ''}`}</span><b>+${x.get}p</b></li>`
     ).join('') || '<li class="muted">まだないよ</li>') + '</ul></details>' +
 
     '<p class="hint">毎日1回アプリを開くと1p。7日連続ごとに+5p、30日連続ごとに+30p。1日あくと連続は1日目から数え直しになるけど、貯めたポイントは減らないよ</p>';
@@ -8009,7 +8009,7 @@ $('#evLock')?.addEventListener('change', e => {
   if (!ev?.gid || !grIsMine(ev)) return; // 新しく追加するときは「追加」で保存
   const on = e.target.checked;
   grPatch(ev, { lock: on })
-    .then(() => toast(on ? '🔒 ロックしたよ' : 'ロックを外したよ'))
+    .then(() => toast(on ? 'ロックしたよ' : 'ロックを外したよ'))
     .catch(err => { e.target.checked = !on; grFail(err); });
 });
 
@@ -8155,7 +8155,7 @@ if ($('#nSign')) {
   };
   const keyKind = s => findKey(s)?.[0] || '';
   window.keyKind = keyKind;
-  $('#sKey').insertAdjacentHTML('afterend', '<button type="button" id="sKeyPaste">📋 貼り付け</button>');
+  $('#sKey').insertAdjacentHTML('afterend', '<button type="button" id="sKeyPaste">貼り付け</button>');
 
   // 余計な空白・改行は消す
   $('#sKey').addEventListener('input', e => {
@@ -8195,7 +8195,7 @@ if ($('#nSign')) {
     '<button type="button" id="dyClose">閉じる</button>';
   document.body.append(dyDlg);
   $('#diaryInput').insertAdjacentHTML('afterend',
-    '<button type="button" class="more" id="diaryListBtn">📖 月ごとに見る</button>');
+    '<button type="button" class="more" id="diaryListBtn">月ごとに見る</button>');
 
   let dyM = 1; // 1〜12月
   const renderDiaryList = () => {
@@ -8261,7 +8261,7 @@ function applyKinds() {
   sel.querySelectorAll('option[value^="k-"], option[value^="__"]').forEach(o => o.remove());
   for (const k of state.evKinds) sel.add(new Option(k.name, k.id));
   sel.add(new Option('＋ 新しい名目を作る', '__newkind'));
-  if (state.evKinds.length) sel.add(new Option('⚙ 名目の整理', '__editkind'));
+  if (state.evKinds.length) sel.add(new Option('名目の整理…', '__editkind'));
   sel.value = [...sel.options].some(o => o.value === v) ? v : 'job';
   syncJobOption();
 }
@@ -8398,7 +8398,7 @@ renderAll();
     '<button type="button" id="syClose">閉じる</button></div>';
   document.body.append(syDlg);
   $('#cSyllabusHint').insertAdjacentHTML('afterend',
-    '<button type="button" id="syBtn">📷 シラバスの画像から課題・試験を読む</button>' +
+    '<button type="button" id="syBtn" data-ico="camera">シラバスの画像から課題・試験を読む</button>' +
     '<input type="file" id="syFile" accept="image/*" multiple hidden>');
 
   let syList = [];
@@ -8570,7 +8570,7 @@ window.wgData = wgData;
     const own = state.points?.owned || [];
     $('#wAfter').value = c.after;
     $('#wDays').value = String(c.days);
-    $('#wTheme').innerHTML = '<option value="">📘 シンプル</option>' +
+    $('#wTheme').innerHTML = '<option value="">シンプル</option>' +
       WG_THEMES.filter(t => own.includes(t[0]))
         .map(t => `<option value="${t[0]}">${t[2].split(' ')[0]} ${t[1]}</option>`).join('');
     $('#wTheme').value = c.theme;
@@ -8811,7 +8811,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
       qr.addData(text);
       qr.make();
       qBox.innerHTML = qr.createSvgTag(4, 4) +
-        '<p class="hint">相手のがくログで「📷 QRコードを読む」を押して、これを撮ってもらってね</p>';
+        '<p class="hint">相手のがくログで「QRコードを読む」を押して、これを撮ってもらってね</p>';
     } catch {
       return alert('授業が多すぎてQRコードに入りきらなかった。「送る」のほうを使ってね');
     }
@@ -8825,7 +8825,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
   // 読む側：「読み込む」の横に「QRコードを読む」
   const rBtn = document.createElement('label');
   rBtn.className = 'fileBtn';
-  rBtn.innerHTML = '📷 QRコードを読む<input type="file" accept="image/*" class="vh" id="shareQrIn">';
+  rBtn.dataset.ico = 'camera'; rBtn.innerHTML = 'QRコードを読む<input type="file" accept="image/*" class="vh" id="shareQrIn">';
   $('#shareRead').after(rBtn);
 
   $('#shareQrIn').onchange = async e => {
@@ -8871,7 +8871,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     '<button type="button" id="fmClose">閉じる</button>';
   document.body.append(fmDlg);
   $('#shareRead').insertAdjacentHTML('afterend',
-    '<button type="button" id="fmAdd">🤝 空きコマを比べる</button>');
+    '<button type="button" id="fmAdd">空きコマを比べる</button>');
 
   let fmList = [];
   const busyOf = cs => new Set(cs.filter(c => c.day >= 0).map(c => c.day + '-' + c.period));
@@ -8929,9 +8929,9 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
   const ST = window.Capacitor?.Plugins?.CapacitorShareTarget;
   // [種類, ボタンの文字, 説明, 入れる欄, PDFが読めるか, 複数枚いけるか]
   const ROUTES = [
-    ['shift', '💼 シフト表', '自分の勤務をカレンダーに追加', '#shFile', true, true],
-    ['grid', '📚 時間割', '授業をまとめて登録', '#imgFile', false, true],
-    ['pay', '💴 給与明細', '支給日と金額を収入に記録', '#scanFile', false, true],
+    ['shift', 'シフト表', '自分の勤務をカレンダーに追加', '#shFile', true, true],
+    ['grid', '時間割', '授業をまとめて登録', '#imgFile', false, true],
+    ['pay', '給与明細', '支給日と金額を収入に記録', '#scanFile', false, true],
   ];
   const inDlg = document.createElement('dialog');
   inDlg.id = 'inShareDlg';
@@ -8941,7 +8941,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     '<button type="button" class="x" id="inShareX" aria-label="閉じる">×</button></div>' +
     '<p class="hint" id="inShareInfo"></p>' +
     ROUTES.map(([k, l, d]) =>
-      `<button type="button" class="phOpt" data-inshare="${k}"><b>${l}</b><small>${d}</small></button>`).join('') +
+      `<button type="button" class="phOpt" data-inshare="${k}"><b data-ico="${{ shift: 'job', grid: 'course', pay: 'wallet' }[k]}">${l}</b><small>${d}</small></button>`).join('') +
     '</div>';
   document.body.append(inDlg);
 
@@ -9121,7 +9121,7 @@ var WG_LOOK = {
 
   // 「写真から追加」の選択肢に足す
   $('#phPick').insertAdjacentHTML('beforeend',
-    '<button type="button" class="phOpt" data-ph="memo"><b>📝 予定が書いてある画像</b><small>手帳・プリント・LINEやメールのスクショなどから予定をカレンダーに追加</small></button>');
+    '<button type="button" class="phOpt" data-ph="memo"><b data-ico="memo">予定が書いてある画像</b><small>手帳・プリント・LINEやメールのスクショなどから予定をカレンダーに追加</small></button>');
 
   let mmRows = [];
   window.openMemo = () => {
@@ -9396,14 +9396,14 @@ var WG_LOOK = {
     '<h4>この先1週間</h4>' +
     '<p class="hint">授業とバイトが両方ある日は、早いほうで1回だけ鳴らすよ。上の「アラーム」は別に鳴る</p>' +
     '<ul id="alNext" class="alNext"></ul>' +
-    '<button type="button" class="alEarLink" id="alEarLink" hidden>🎧 イヤホンで鳴らす <small id="alEarState"></small></button>' +
+    '<button type="button" class="alEarLink" id="alEarLink" hidden>イヤホンで鳴らす <small id="alEarState"></small></button>' +
     '</div>';
   document.body.append(dlg);
 
   // イヤホンで鳴らす：案内とオン/オフ（すみっこのボタンから開く）
   const earDlg = document.createElement('dialog');
   earDlg.id = 'earDlg';
-  earDlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>🎧 イヤホンで鳴らす</h2>' +
+  earDlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>イヤホンで鳴らす</h2>' +
     '<button type="button" class="x big" id="earX" aria-label="閉じる">×</button></div>' +
     '<p>イヤホンをつないでると、アラームがイヤホンだけで鳴るよ（つないでなければスマホから鳴る）。同室の人がいるときに。</p>' +
     '<h4>使い方</h4>' +
@@ -9435,7 +9435,8 @@ var WG_LOOK = {
   hb.id = 'alHead';
   hb.className = 'alHead';
   hb.setAttribute('aria-label', '目覚ましアラーム');
-  hb.innerHTML = '⏰<small id="alHeadT"></small>';
+  hb.dataset.ico = 'alarm';
+  hb.innerHTML = '<small id="alHeadT"></small>';
   $('#termSelect').before(hb);
   hb.onclick = () => openAlarm();
 
@@ -9957,7 +9958,7 @@ document.addEventListener('click', e => {
   const b = document.createElement('button');
   b.type = 'button';
   b.id = 'toPeriods';
-  b.textContent = '⚙ 授業と時限の設定へ';
+  b.textContent = '授業と時限の設定へ';
   $('#termList').after(b);
   b.onclick = () => {
     $('#termDlg').close();
@@ -10137,7 +10138,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     // 名前を変える
     if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>壁紙・文字・アイコン</b><small>背景、カード・文字の色、テーマ、フォント、アイコン</small>';
     const h = head.querySelector('h2, h3, b');
-    if (h) h.textContent = '🖼 壁紙・文字・アイコン';
+    if (h) h.textContent = '壁紙・文字・アイコン';
 
     [...document.querySelectorAll('button')]
       .find(b => b.textContent.includes('テーマの色・文字'))?.remove();
@@ -10406,7 +10407,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   // 授業の画面に欄を足す（「先生の一言」の下）
   const box = document.createElement('div');
   box.id = 'mnBox';
-  box.innerHTML = '<h3>📒 ミニノート</h3><ul class="mnList" id="mnList"></ul>' +
+  box.innerHTML = '<h3>ミニノート</h3><ul class="mnList" id="mnList"></ul>' +
     '<button type="button" id="mnNew">＋ ノートを書く</button>';
   let a = $('#memoAdd');
   while (a.parentElement && !a.parentElement.contains($('#memoList'))) a = a.parentElement;
@@ -10420,7 +10421,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     $('#mnList').innerHTML = notes(c).slice().sort((x, y) => y.date.localeCompare(x.date) || (x.cont || 1) - (y.cont || 1)).map(n =>
       `<li data-mn="${n.id}"><span class="memo-date">${md(parseYmd(n.date))}${n.cont ? '（続き）' : ''}</span>` +
       (n.until && n.until >= k ? '<span class="tag next">次回に表示</span>' : '') +
-      (n.pics.length ? `<small> 📷${n.pics.length}</small>` : '') +
+      (n.pics.length ? ` <small data-ico="camera">${n.pics.length}</small>` : '') +
       `<div class="mnText">${esc(n.text) || '（写真だけ）'}</div></li>`).join('')
       || '<li class="muted">なし</li>';
   };
@@ -10430,11 +10431,11 @@ if (window.Capacitor?.isNativePlatform?.()) {
   // 書く画面
   const dlg = document.createElement('dialog');
   dlg.id = 'mnDlg';
-  dlg.innerHTML = '<div class="dlgHead"><h2>📒 ミニノート</h2>' +
+  dlg.innerHTML = '<div class="dlgHead"><h2>ミニノート</h2>' +
     '<button type="button" class="x big" id="mnX" aria-label="閉じる">×</button></div>' +
     '<textarea id="mnText" maxlength="2000" rows="8" placeholder="次回の自分へ。範囲、先生が言ってたこと、気づいたこと…"></textarea>' +
     '<div class="mnPics" id="mnPics"></div>' +
-    '<label class="mnAddPic">📷 写真を足す（4枚まで）<input type="file" id="mnFile" accept="image/*" multiple hidden></label>' +
+    '<label class="mnAddPic" data-ico="camera">写真を足す（4枚まで）<input type="file" id="mnFile" accept="image/*" multiple hidden></label>' +
     '<label class="mnChk"><input type="checkbox" id="mnNext"> 次の授業で見せる</label>' +
     '<div class="mnBtns"><button type="button" id="mnDel">削除</button>' +
     '<button type="button" id="mnSave" class="primary">保存</button></div>';
@@ -10574,7 +10575,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       .sort((a, b) => b.date.localeCompare(a.date))[0];
     if (!n) return html;
     const line = (n.text.split('\n')[0] || '写真あり').slice(0, 40);
-    return html.replace(/<\/div>$/, `<div class="nc-note">📒 ${esc(line)}</div></div>`);
+    return html.replace(/<\/div>$/, `<div class="nc-note" data-ico="note">${esc(line)}</div></div>`);
   };
 
   // 今日画面の「📷 板書を撮る」：カメラで撮って、その授業の今日のノートに入れる
@@ -10641,17 +10642,17 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const native = !!window.Capacitor?.isNativePlatform?.();
   const tryGo = fn => () => { try { fn(); } catch (e) { console.warn('tour', e); } };
   const CARDS = [
-    { e: '👋', t: 'がくログへようこそ', d: 'できることをざっくり紹介するね。1分くらい。気になるものは「やってみる」で、その場所へ飛べるよ。閉じたら続きから再開するよ' },
-    { e: '📅', t: '時間割と授業', grid: 1, d: '授業を押すと、欠席の記録、オンデマの回、先生の一言、ミニノート（写真つきメモ）が使えるよ' },
-    { e: '📷', t: '写真で読み取る', feat: ['ai'], d: 'シフト表、時間割、給与明細、シラバス、手帳やLINE・メールのスクショの予定を、撮るだけで登録できる。AIのキーを入れると使えるよ', go: () => openPhoto('guide') },
-    { e: '☀️', t: '今日の画面', d: '次の授業、ToDo、持ち物、課題がまとまってる。いらないものは一番下のボタンで隠せるよ', go: () => openHomePick() },
-    { e: '💴', t: 'バイトと収入', feat: ['job'], d: 'バイトの予定を入れると、月ごとの収入を円グラフで見られる。シフトはカレンダーからも取り込めるよ' },
-    { e: '⏰', t: 'アラーム', app: 1, feat: ['alarm'], d: '「1限の日は7時」「このバイトが朝からある日は6時」みたいに、予定に合わせて鳴らせるよ。上の⏰から', go: () => $('#alHead').click() },
-    { e: '🔔', t: '通知とウィジェット', app: 1, d: `前の日に持ち物や締め切りを知らせてくれる。ホーム画面${window.Capacitor?.getPlatform?.() === 'ios' ? 'とロック画面' : ''}にはウィジェットも置けるよ`, go: () => goSet('#nOn') },
-    { e: '👥', t: '友達と共有', feat: ['share', 'group'], d: '時間割はQRコードで交換できて、空きコマが合う時間もわかる。共有グループで予定も一緒に見られるよ', go: () => openTermDlg('shareSec') },
-    { e: '🎨', t: '見た目', d: '壁紙、テーマの色、フォント、アイコンの色を変えられるよ', go: () => openLook('bg') },
-    { e: '💾', t: 'バックアップ', d: '機種変更の前は「書き出し」しておいてね。新しいほうで「復元」すれば元どおり', go: () => goSet('#exportBtn') },
-    { e: '🔍', t: '困ったら', d: '「その他」の「機能をさがす」で、やりたいことから場所を探せる。この紹介も「その他」の「📘機能の紹介」からまた見られるよ', go: () => $('#helpBtn').click() }
+    { e: 'smile', t: 'がくログへようこそ', d: 'できることをざっくり紹介するね。1分くらい。気になるものは「やってみる」で、その場所へ飛べるよ。閉じたら続きから再開するよ' },
+    { e: 'calendar', t: '時間割と授業', grid: 1, d: '授業を押すと、欠席の記録、オンデマの回、先生の一言、ミニノート（写真つきメモ）が使えるよ' },
+    { e: 'camera', t: '写真で読み取る', feat: ['ai'], d: 'シフト表、時間割、給与明細、シラバス、手帳やLINE・メールのスクショの予定を、撮るだけで登録できる。AIのキーを入れると使えるよ', go: () => openPhoto('guide') },
+    { e: 'sun', t: '今日の画面', d: '次の授業、ToDo、持ち物、課題がまとまってる。いらないものは一番下のボタンで隠せるよ', go: () => openHomePick() },
+    { e: 'wallet', t: 'バイトと収入', feat: ['job'], d: 'バイトの予定を入れると、月ごとの収入を円グラフで見られる。シフトはカレンダーからも取り込めるよ' },
+    { e: 'alarm', t: 'アラーム', app: 1, feat: ['alarm'], d: '「1限の日は7時」「このバイトが朝からある日は6時」みたいに、予定に合わせて鳴らせるよ。上の目覚ましのボタンから', go: () => $('#alHead').click() },
+    { e: 'bell', t: '通知とウィジェット', app: 1, d: `前の日に持ち物や締め切りを知らせてくれる。ホーム画面${window.Capacitor?.getPlatform?.() === 'ios' ? 'とロック画面' : ''}にはウィジェットも置けるよ`, go: () => goSet('#nOn') },
+    { e: 'group', t: '友達と共有', feat: ['share', 'group'], d: '時間割はQRコードで交換できて、空きコマが合う時間もわかる。共有グループで予定も一緒に見られるよ', go: () => openTermDlg('shareSec') },
+    { e: 'palette', t: '見た目', d: '壁紙、テーマの色、フォント、アイコンの色を変えられるよ', go: () => openLook('bg') },
+    { e: 'save', t: 'バックアップ', d: '機種変更の前は「書き出し」しておいてね。新しいほうで「復元」すれば元どおり', go: () => goSet('#exportBtn') },
+    { e: 'search', t: '困ったら', d: '「その他」の「機能をさがす」で、やりたいことから場所を探せる。この紹介も「その他」の「機能の紹介」からまた見られるよ', go: () => $('#helpBtn').click() }
   ];
   // feat：その中のどれかがオンなら出す
   const list = () => CARDS.filter(c => (!c.app || native) && (!c.grid || state.useGrid) && (!c.feat || c.feat.some(featOn)));
@@ -10680,7 +10681,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     const cs = list();
     const c = cs[i];
     $('#tourNo').textContent = `${i + 1} / ${cs.length}`;
-    $('#tourE').textContent = c.e;
+    $('#tourE').dataset.ico = c.e;
     $('#tourT').textContent = c.t;
     $('#tourD').textContent = c.d;
     $('#tourDots').innerHTML = cs.map((_, k) => `<i class="${k === i ? 'on' : ''}"></i>`).join('');
@@ -10706,7 +10707,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if (!$('#tourPill')) {
       const p = document.createElement('div');
       p.id = 'tourPill';
-      p.innerHTML = '<button type="button" id="tourResume">📘 紹介の続きへ</button>' +
+      p.innerHTML = '<button type="button" id="tourResume">紹介の続きへ</button>' +
         '<button type="button" class="x" id="tourQuit" aria-label="紹介をやめる">×</button>';
       document.body.append(p);
       $('#tourResume').onclick = resume;
@@ -10785,7 +10786,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const box = document.createElement('div');
   box.id = 'cmBox';
   box.hidden = true;
-  box.innerHTML = '<h3>💬 コメント</h3><ul class="cmList" id="cmList"></ul>' +
+  box.innerHTML = '<h3>コメント</h3><ul class="cmList" id="cmList"></ul>' +
     '<div class="todoAdd"><input id="cmIn" maxlength="200" placeholder="コメントを書く">' +
     '<button type="button" id="cmSend">送る</button></div>' +
     '<p class="hint">グループのみんなに見えるよ。困ったコメントは「…」から通報・ブロックできる</p>' +
@@ -10933,7 +10934,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   $('#shareAdd').insertAdjacentHTML('afterend',
     '<div class="frSaveBox">' +
     '<input id="frName" maxlength="20" placeholder="友達の名前（例：たけし）">' +
-    '<button type="button" id="frSave">👥 友達の時間割として保存</button>' +
+    '<button type="button" id="frSave" data-ico="group">友達の時間割として保存</button>' +
     '</div>');
 
   $('#frSave').onclick = () => {
@@ -10970,7 +10971,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
   // 時間割の上のボタン
   $('#grid').insertAdjacentHTML('beforebegin',
-    '<button type="button" id="frOpen" class="frOpen" hidden>👥 友達の時間割</button>');
+    '<button type="button" id="frOpen" class="frOpen" data-ico="group" hidden>友達の時間割</button>');
   $('#frOpen').onclick = () => openFriends();
   function syncFrBtn() { $('#frOpen').hidden = !state.friendGrids.length; }
 
@@ -10978,7 +10979,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const dlg = document.createElement('dialog');
   dlg.id = 'frDlg';
   dlg.innerHTML =
-    '<div class="dlgHead"><b>👥 友達の時間割</b><button type="button" class="x big" id="frX">×</button></div>' +
+    '<div class="dlgHead"><b>友達の時間割</b><button type="button" class="x big" id="frX">×</button></div>' +
     '<div class="frTabs" id="frTabs"></div>' +
     '<p class="hint" id="frInfo"></p>' +
     '<div id="frGrid" class="frGrid"></div>' +
@@ -10995,7 +10996,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
   window.openFriends = id => {
     if (!state.friendGrids.length) {
-      return alert('まだ友達の時間割がないよ。友達に共有コードをもらって、読み込んだあと「👥 友達の時間割として保存」を押してね');
+      return alert('まだ友達の時間割がないよ。友達に共有コードをもらって、読み込んだあと「友達の時間割として保存」を押してね');
     }
     frCur = id && state.friendGrids.some(f => f.id === id) ? id : (cur()?.id || state.friendGrids[0].id);
     renderFr();
@@ -11066,7 +11067,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
   // アプリ内検索に出す
   if (typeof FEATURES !== 'undefined') FEATURES.push({
-    id: 'friendGrid', name: '友達の時間割', where: '時間割 → 👥 友達の時間割',
+    id: 'friendGrid', name: '友達の時間割', where: '時間割 → 友達の時間割',
     desc: '共有コードでもらった友達の時間割を、名前ごとに見る',
     kw: '友達 時間割 共有 見る 名前', go: () => openFriends()
   });
@@ -11080,12 +11081,12 @@ if (window.Capacitor?.isNativePlatform?.()) {
   if (qIn) {
     // 今のボタンは「画像から読む」に名前を変える
     const lb = qIn.closest('label');
-    if (lb?.firstChild?.nodeType === 3) lb.firstChild.textContent = '🖼 画像から読む';
+    if (lb?.firstChild?.nodeType === 3) lb.firstChild.textContent = '画像から読む';
 
     const cBtn = document.createElement('button');
     cBtn.type = 'button';
     cBtn.id = 'qrCamBtn';
-    cBtn.textContent = '📷 カメラで読む';
+    cBtn.dataset.ico = 'camera'; cBtn.textContent = 'カメラで読む';
     (lb || qIn).before(cBtn);
 
     const dlg = document.createElement('dialog');
@@ -11135,7 +11136,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     cBtn.onclick = async () => {
       if (typeof jsQR !== 'function') return alert('QRコードの部品が読み込めてないみたい');
       if (!navigator.mediaDevices?.getUserMedia) {
-        return alert('この端末だとカメラで読めないみたい。「🖼 画像から読む」を使ってね');
+        return alert('この端末だとカメラで読めないみたい。「画像から読む」を使ってね');
       }
       $('#qrCamMsg').textContent = 'QRコードを枠の中に映してね';
       dlg.showModal();
@@ -11152,7 +11153,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
         dlg.close();
         alert(e.name === 'NotAllowedError'
           ? 'カメラが許可されてないよ。スマホの設定 → アプリ → がくログ → カメラ をONにしてね'
-          : 'カメラを開けなかった。「🖼 画像から読む」を使ってね');
+          : 'カメラを開けなかった。「画像から読む」を使ってね');
       }
     };
 
@@ -11402,7 +11403,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const _cl = courseLine;
   courseLine = function (x) {
     const h = _cl.apply(this, arguments);
-    const btn = ` <button type="button" class="mnQuick" data-mnq="${x.c.id}" aria-label="ミニノートを足す">📒＋</button>`;
+    const btn = ` <button type="button" class="mnQuick" data-mnq="${x.c.id}" aria-label="ミニノートを足す" data-ico="note">＋</button>`;
     const i = h.indexOf('<div', 5);
     const at = i > 0 ? i : h.lastIndexOf('</div>');
     return h.slice(0, at) + btn + h.slice(at);
@@ -11473,7 +11474,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
   const dlg = document.createElement('dialog');
   dlg.id = 'tbDlg';
-  dlg.innerHTML = '<div class="dlgHead"><b>🎨 タブバーの見た目</b><button type="button" class="x big" id="tbX">×</button></div>' +
+  dlg.innerHTML = '<div class="dlgHead"><b>タブバーの見た目</b><button type="button" class="x big" id="tbX">×</button></div>' +
     '<div id="tbList" class="tbList"></div><p class="hint">ポイント交換で増やせるよ</p>';
   document.body.append(dlg);
 
@@ -11782,8 +11783,8 @@ setTimeout(() => {
   dlg.id = 'evPhDlg';
   dlg.innerHTML =
     '<div class="dlgHead"><b>画像から追加</b><button type="button" class="x big" data-epx aria-label="閉じる">×</button></div>' +
-    '<button type="button" class="evPhOpt" data-ep="shift"><b>📅 バイトのシフト表</b><small>シフト表の写真・PDFから自分の勤務を追加</small></button>' +
-    '<button type="button" class="evPhOpt" data-ep="memo"><b>📝 予定が書いてある画像</b><small>手帳・プリント・LINEやメールのスクショなど</small></button>';
+    '<button type="button" class="evPhOpt" data-ep="shift"><b data-ico="job">バイトのシフト表</b><small>シフト表の写真・PDFから自分の勤務を追加</small></button>' +
+    '<button type="button" class="evPhOpt" data-ep="memo"><b data-ico="memo">予定が書いてある画像</b><small>手帳・プリント・LINEやメールのスクショなど</small></button>';
   document.body.append(dlg);
   dlg.addEventListener('click', e => {
     if (e.target === dlg || e.target.closest('[data-epx]')) return dlg.close();
@@ -11925,7 +11926,7 @@ setTimeout(() => {
     const a = document.createElement('button');
     a.type = 'button';
     a.className = 'wgMoved';
-    a.textContent = '🧩 ウィジェットの設定は「壁紙・文字・アイコン」に移ったよ →';
+    a.textContent = 'ウィジェットの設定は「壁紙・文字・アイコン」に移ったよ →';
     a.onclick = () => { nf.closest('dialog')?.close(); openLook('wg'); };
     nf.append(a);
   }
@@ -11936,7 +11937,7 @@ if (isApp && !window.Capacitor?.Plugins?.AppIcon) {
   const i = FEATURES.findIndex(f => f.id === 'icon');
   if (i >= 0) FEATURES.splice(i, 1);
 }
-FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 🖼 壁紙・文字・アイコン → 「ウィジェット」タブ', desc: 'ホーム画面のウィジェットの見た目やテーマを変える', kw: 'ウィジェット ホーム画面 テーマ 着せかえ', app: 1, go: () => openLook('wg') });
+FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 壁紙・文字・アイコン → 「ウィジェット」タブ', desc: 'ホーム画面のウィジェットの見た目やテーマを変える', kw: 'ウィジェット ホーム画面 テーマ 着せかえ', app: 1, go: () => openLook('wg') });
 
 /* ===== AIの準備を1画面で ===== */
 {
@@ -11983,12 +11984,12 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
         dots(3) +
         '<p class="awLead">コピーしたキーを貼り付けて試す</p>' +
         '<div class="row"><input id="awKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ここに貼り付け" aria-label="APIキー">' +
-        '<button type="button" id="awPaste">📋 貼り付け</button></div>' +
+        '<button type="button" id="awPaste">貼り付け</button></div>' +
         '<button type="button" class="primary awMain" id="awTest">つながるか試す</button>' +
         `<p class="awMsg" id="awMsg">${msg}</p>` +
         '<button type="button" data-aw="1">戻る</button>',
 
-        '<p class="awDone">✅ 準備OK！</p>' +
+        '<p class="awDone">準備OK！</p>' +
         '<p class="hint">キーはこのスマホの中にだけ保存されて、書き出しにも入らないよ</p>' +
         '<button type="button" class="primary awMain" id="awGo">写真から追加へ</button>',
       ][step] +
@@ -12058,7 +12059,7 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
   }
 }
 
-FEATURES.push({ id: 'photoMemo', name: '画像から予定を読み取る', where: '＋ → 「📷 写真から追加」 → 予定が書いてある画像／カレンダーの上の「📷 画像から予定を追加」 → 予定が書いてある画像', desc: '手帳・手書きのメモ・プリント・LINEやメールのスクショなどから、予定を読み取ってカレンダーに追加する。「明日」「来週の金曜」も日付に直すよ', kw: '予定 手書き 手帳 メモ 紙 プリント 板書 写真 画像 スクショ スクリーンショット LINE ライン メール トーク 読み取り カレンダー', go: () => openPhoto('pick') });
+FEATURES.push({ id: 'photoMemo', name: '画像から予定を読み取る', where: '＋ → 「写真から追加」 → 予定が書いてある画像／カレンダーの上の「画像から予定を追加」 → 予定が書いてある画像', desc: '手帳・手書きのメモ・プリント・LINEやメールのスクショなどから、予定を読み取ってカレンダーに追加する。「明日」「来週の金曜」も日付に直すよ', kw: '予定 手書き 手帳 メモ 紙 プリント 板書 写真 画像 スクショ スクリーンショット LINE ライン メール トーク 読み取り カレンダー', go: () => openPhoto('pick') });
 
 /* ===== Web版では「通知とウィジェット」の欄ごと隠す ===== */
 document.documentElement.classList.toggle('isWeb', !isApp);
@@ -12066,7 +12067,7 @@ document.documentElement.classList.toggle('isWeb', !isApp);
 /* ===== プライバシーポリシー ===== */
 const PRIVACY_URL = APP_URL + 'privacy.html';
 $('#privacyBtn')?.addEventListener('click', () => openUrl(PRIVACY_URL));
-FEATURES.push({ id: 'privacy', name: 'プライバシーポリシー', where: '下の「その他」 → 一番下の「🔒 プライバシーポリシー」', desc: 'データをどこに保存して、何を外に送るかの説明', kw: 'プライバシー ポリシー 個人情報 データ 規約', go: () => openUrl(PRIVACY_URL) });
+FEATURES.push({ id: 'privacy', name: 'プライバシーポリシー', where: '下の「その他」 → 一番下の「プライバシーポリシー」', desc: 'データをどこに保存して、何を外に送るかの説明', kw: 'プライバシー ポリシー 個人情報 データ 規約', go: () => openUrl(PRIVACY_URL) });
 
 /* ===== 投稿の言葉フィルター ===== */
 const NG_WORDS = ['しね', 'ころす', 'きえろ', 'うざい', 'きもい'];
@@ -12200,16 +12201,16 @@ window.ngCheck = text => {
 // 答えで機能をオン/オフ。あとから「設定 → 機能」で変えられる（前から使ってる人には出さない）
 {
   const QS = [
-    ['grid', '📚', '大学の時間割を使う？', '使う', '使わない'],
-    ['job', '💼', 'バイトしてる？', 'してる', 'してない'],
-    ['share', '👥', '友達や家族と予定を共有する？', 'する', 'しない'],
-    ['log', '📝', '日記やToDoで毎日の記録もする？', 'する', 'しない'],
+    ['grid', 'course', '大学の時間割を使う？', '使う', '使わない'],
+    ['job', 'job', 'バイトしてる？', 'してる', 'してない'],
+    ['share', 'group', '友達や家族と予定を共有する？', 'する', 'しない'],
+    ['log', 'memo', '日記やToDoで毎日の記録もする？', 'する', 'しない'],
   ];
   const dlg = document.createElement('dialog');
   dlg.id = 'obDlg';
   dlg.innerHTML = '<div class="dlg"><h2>はじめに少しだけ教えてね</h2>' +
     QS.map(([k, e, q, y, n]) =>
-      `<div class="obQ"><p>${e} ${q}</p><div class="obA">` +
+      `<div class="obQ"><p><span class="obIco" data-ico="${e}"></span>${q}</p><div class="obA">` +
       `<label><input type="radio" name="ob-${k}" value="1" checked><span>${y}</span></label>` +
       `<label><input type="radio" name="ob-${k}" value="0"><span>${n}</span></label></div></div>`).join('') +
     '<p class="hint">あとから「設定 → 機能」でいつでも変えられるよ</p>' +
@@ -12274,8 +12275,8 @@ function syncEvCourse() {
   dlg.id = 'exDlg';
   dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2 id="exTitle"></h2>' +
     '<button type="button" class="x big" id="exX" aria-label="閉じる">×</button></div>' +
-    '<div class="exTabs"><button type="button" data-exmode="notes">📒 ノート</button>' +
-    '<button type="button" data-exmode="pics">🖼 写真</button></div>' +
+    '<div class="exTabs"><button type="button" data-exmode="notes" data-ico="note">ノート</button>' +
+    '<button type="button" data-exmode="pics" data-ico="image">写真</button></div>' +
     '<div id="exBody"></div></div>';
   document.body.append(dlg);
   let cur = null, mode = 'notes';
@@ -12356,11 +12357,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 }
 
 /* ===== カレンダー：どの予定を出すか（自分の予定・共有グループごと） ===== */
-// 上の「📷 画像から予定を追加」の横に半分の幅で置く。グループに入ってないときは出さない
+// 上の「画像から予定を追加」の横に半分の幅で置く。グループに入ってないときは出さない
 {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'calShow';
+  btn.dataset.ico = 'group';
   $('#evPhoto').after(btn);
   const dlg = document.createElement('dialog');
   dlg.id = 'calShowDlg';
@@ -12368,7 +12370,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     '<button type="button" class="x big" data-close aria-label="閉じる">×</button></div>' +
     '<p class="hint" id="calShowHint"></p>' +
     '<div id="calShowList" class="calShowList"></div>' +
-    '<button type="button" id="calShowGroup">👥 共有グループを作る・入る</button>' +
+    '<button type="button" id="calShowGroup" data-ico="group">共有グループを作る・入る</button>' +
     '<button type="button" class="primary" data-close>OK</button></div>';
   document.body.append(dlg);
 
@@ -12383,10 +12385,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   function sync() {
     // 共有グループの機能がオンなら、まだグループがなくても出す（ここから作れる）
     btn.hidden = !featOn('group');
-    btn.textContent = groups().length ? `👥 表示：${label()}` : '👥 共有';
+    btn.textContent = groups().length ? `表示：${label()}` : '共有';
     btn.setAttribute('aria-label', groups().length ? `カレンダーに出す予定（今は${label()}）` : '共有グループ');
     // 半分の幅のときは短く
-    $('#evPhoto').textContent = btn.hidden ? '📷 画像から予定を追加' : '📷 画像から追加';
+    $('#evPhoto').textContent = btn.hidden ? '画像から予定を追加' : '画像から追加';
     $('#evPhoto').setAttribute('aria-label', '画像から予定を追加');
     // 画像から（AIオフで隠れる）も、これも出ないときは段ごと隠す
     const bar = $('#calBar');
@@ -12398,12 +12400,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     $('#calShowHint').textContent = has
       ? 'チェックを外すと、カレンダーに出なくなるよ（今日の画面や通知はそのまま）。授業と課題はいつも出る'
       : '共有グループを作ると、家族や友達と予定を一緒に見られるよ。グループの予定を出すか、ここで選べるようになる';
-    $('#calShowGroup').textContent = has ? '👥 共有グループの設定' : '👥 共有グループを作る・入る';
+    $('#calShowGroup').textContent = has ? '共有グループの設定' : '共有グループを作る・入る';
     dlg.querySelector('h2').textContent = has ? 'カレンダーに出す予定' : '共有グループ';
     $('#calShowList').hidden = !has;
     $('#calShowList').innerHTML = srcs().map(([id, name]) =>
       `<label class="inline"><input type="checkbox" data-calsrc="${esc(id)}"${state.calHide.includes(id) ? '' : ' checked'}> ` +
-      `${id === 'me' ? '🙂 ' : '👥 '}${esc(name)}</label>`).join('');
+      `<span data-ico="${id === 'me' ? 'person' : 'group'}"></span>${esc(name)}</label>`).join('');
   }
   btn.onclick = () => { renderList(); dlg.showModal(); };
   dlg.addEventListener('click', e => {
@@ -12487,7 +12489,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const r = rd.apply(this, arguments);
     const list = $('#dayList');
     if (!state.evTapSeen && list.querySelector('[data-evedit], [data-taskedit]'))
-      list.insertAdjacentHTML('beforeend', '<li class="evTapHint">💡 予定や課題をタップすると、変更・削除できるよ</li>');
+      list.insertAdjacentHTML('beforeend', '<li class="evTapHint">予定や課題をタップすると、変更・削除できるよ</li>');
     return r;
   };
   for (const name of ['startEvEdit', 'startTaskEdit']) {
@@ -12511,7 +12513,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     '<div class="peWrap"><canvas id="peCv"></canvas></div>' +
     '<div class="peTools">' +
     '<button type="button" data-pe="rot">↻ 回転</button>' +
-    '<button type="button" data-pe="enh" aria-pressed="false">✨ くっきり</button>' +
+    '<button type="button" data-pe="enh" aria-pressed="false">くっきり</button>' +
     '<button type="button" data-pe="gray" aria-pressed="false">◐ 白黒</button>' +
     '<button type="button" data-pe="reset">元に戻す</button></div>' +
     '<div class="peBtns"><button type="button" data-pe="cancel">やめる</button>' +
@@ -13769,13 +13771,13 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const hm = t => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   const statusText = () => {
     if (!sy.on) return '';
-    if (status === 'busy') return picsLeft ? `☁ 同期中…（写真 あと${picsLeft}枚）` : '☁ 同期中…';
-    if (status === 'offline') return '☁ オフライン。つながったら送るよ';
-    if (status === 'login') return '☁ ログインし直すと同期するよ';
-    if (status === 'err') return '☁ 同期できなかった。あとでもう一度やってみるね';
-    if (!sy.last) return '☁ まだ同期してない';
+    if (status === 'busy') return picsLeft ? `同期中…（写真 あと${picsLeft}枚）` : '同期中…';
+    if (status === 'offline') return 'オフライン。つながったら送るよ';
+    if (status === 'login') return 'ログインし直すと同期するよ';
+    if (status === 'err') return '同期できなかった。あとでもう一度やってみるね';
+    if (!sy.last) return 'まだ同期してない';
     const m = Math.floor((Date.now() - sy.last) / 60000);
-    return `☁ ${m < 1 ? 'たった今' : m < 60 ? m + '分前に' : hm(sy.last) + ' に'}同期した` +
+    return `${m < 1 ? 'たった今' : m < 60 ? m + '分前に' : hm(sy.last) + ' に'}同期した` +
       (pending ? '（ほかの端末の変更は、この画面を閉じると反映するよ）' : sy.dirty.length ? '（送り待ちあり）' : '');
   };
   setInterval(() => { if (sy.on && !document.hidden) drawStatus(); }, 20000);
@@ -13860,7 +13862,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   if (ob) {
     const box = document.createElement('div');
     box.className = 'obRestore';
-    box.innerHTML = '<button type="button" id="obRestore">☁ 前に使ってたデータをGoogleから戻す</button>' +
+    box.innerHTML = '<button type="button" id="obRestore">前に使ってたデータをGoogleから戻す</button>' +
       '<p class="hint">ほかのスマホやPCで「Googleで同期」をオンにしてた人は、ログインするだけで元どおりになるよ</p>';
     ob.querySelector('h2')?.after(box);
     box.hidden = !avail();
@@ -13875,13 +13877,13 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // ----- 画面：ミニノート一覧（どの学期のノートもまとめて。PCで書くときにも） -----
   const dlg = document.createElement('dialog');
   dlg.id = 'mnAllDlg';
-  dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>📒 ミニノート</h2>' +
+  dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>ミニノート</h2>' +
     '<button type="button" class="x big" id="mnAllX" aria-label="閉じる">×</button></div>' +
     '<p class="hint" id="mnAllSync"></p><div id="mnAllBody"></div></div>';
   document.body.append(dlg);
   const noteLi = n =>
     `<li data-mna="${esc(n.id)}"><span class="memo-date">${md(parseYmd(n.date))}${n.cont ? '（続き）' : ''}</span>` +
-    (n.pics.length ? `<small> 📷${n.pics.length}</small>` : '') +
+    (n.pics.length ? ` <small data-ico="camera">${n.pics.length}</small>` : '') +
     `<div class="mnText">${esc(n.text) || '（写真だけ）'}</div></li>`;
   const sorted = ns => ns.slice().sort((x, y) => y.date.localeCompare(x.date) || (x.cont || 1) - (y.cont || 1));
   const findNote = id => {
