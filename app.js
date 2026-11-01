@@ -409,7 +409,19 @@ const parseYmd = s => {
   return new Date(y, m - 1, d);
 };
 const isYmd = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
-const todayStr = () => ymd(new Date());
+// 日付が変わる時刻（設定。夜ふかしする人向け）。0〜5時。この時刻までは前の日の続きとして「今日」を出す
+const DAY_STARTS = [0, 1, 2, 3, 4, 5];
+const dayStartH = () => (typeof state === 'object' && state && state.dayStart) || 0;
+// 「今日」の画面に使う時計：日付が変わる時刻の前なら、前の日の 23:59:59 として扱う
+// （授業やバイトの時刻、アラーム、通知は本当の時刻のまま）
+function clock() {
+  const n = new Date();
+  if (n.getHours() >= dayStartH()) return n;
+  const d = addDays(n, -1);
+  d.setHours(23, 59, 59, 0);
+  return d;
+}
+const todayStr = () => ymd(clock());
 const dayIndex = d => (d.getDay() + 6) % 7; // 月=0 … 日=6
 const addDays = (d, k) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
 const md = d => `${d.getMonth() + 1}/${d.getDate()}(${WEEK[d.getDay()]})`;
@@ -535,6 +547,7 @@ function normalize(s) {
   s.periods ??= 7;
   s.showSat ??= false;
   s.weekStart = s.weekStart === 'sun' ? 'sun' : 'mon'; // カレンダーの週のはじまり（最初は月曜）
+  s.dayStart = DAY_STARTS.includes(+s.dayStart) ? +s.dayStart : 0; // 日付が変わる時刻（0なら夜中の0時）
   // カレンダーに出さない予定の出どころ（'me' = 自分の予定、ほかはグループID）。新しいグループは出す
   s.shiftJoin = s.shiftJoin !== false; // シフト表：続いてるコマを1つにまとめる（最初はまとめる）
   // 予定の名前ごとの「いつもの場所」（画像から読んだ予定に場所が書いてないときに使う）
@@ -1060,7 +1073,7 @@ function upcoming(now) {
 
 function courseLine(x) {
   const its = itemsFor(x.c, x.start);
-  const today = ymd(new Date());
+  const today = todayStr();
   const on = x.c.absences.includes(today);
   const abs = ymd(x.start) === today
     ? ` <button type="button" class="flowAbs${on ? ' on' : ''}" data-abs="${x.c.id}">${on ? '欠席済' : '欠席'}</button>`
@@ -1079,7 +1092,7 @@ function whenLabel(start, now) {
 }
 
 function renderNow() {
-  const el = $('#nowCard'), now = new Date(), t = term();
+  const el = $('#nowCard'), now = clock(), t = term();
   // 時間割を使わないときは、予定とバイトだけ
   if (!state.useGrid) {
     const f = todayFlow(now, { ...t, courses: [] });
@@ -1428,7 +1441,7 @@ $('#nowCard').addEventListener('click', e => {
   if (ab) {
     const c = findCourse(ab.dataset.abs);
     if (!c) return;
-    const d = ymd(new Date());
+    const d = todayStr();
     const on = c.absences.includes(d);
     withUndo(on ? `「${nm(c)}」の欠席を取り消したよ` : `「${nm(c)}」を欠席にしたよ`, () => {
       c.absences = on ? c.absences.filter(x => x !== d) : c.absences.concat(d);
@@ -3012,6 +3025,7 @@ function collect() {
   tmp.theme = { color: $('#sColor').value, font: $('#sFont').value };
   tmp.taskLead = getLeadUI('s') || '2w';
   tmp.weekStart = $('#sWeekStart').value === 'sun' ? 'sun' : 'mon';
+  tmp.dayStart = DAY_STARTS.includes(+$('#sDayStart').value) ? +$('#sDayStart').value : 0;
   for (const c of document.querySelectorAll('#setFeat [data-feat]')) tmp.features[c.dataset.feat] = c.checked;
   for (const c of document.querySelectorAll('#setFun [data-fun]')) tmp.fun[c.dataset.fun] = c.checked;
   const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
@@ -3040,11 +3054,13 @@ function openSettings() {
     taskLead: state.taskLead,
     useGrid: state.useGrid,
     weekStart: state.weekStart,
+    dayStart: state.dayStart || 0,
     features: { ...state.features },
     fun: { ...state.fun }
   };
   fillProviderFields(state.provider);
   $('#sWeekStart').value = tmp.weekStart;
+  $('#sDayStart').value = String(tmp.dayStart);
   document.querySelectorAll('#setFeat [data-feat]').forEach(c => { c.checked = tmp.features[c.dataset.feat] !== false; });
   document.querySelectorAll('#setFun [data-fun]').forEach(c => { c.checked = tmp.fun[c.dataset.fun] === true; });
   $('#sSleepFrom').value = tmp.fun.sleepFrom; $('#sSleepTo').value = tmp.fun.sleepTo;
@@ -3136,6 +3152,7 @@ function commitSettings() {
   state.taskLead = tmp.taskLead;
   state.useGrid = tmp.useGrid;
   state.weekStart = tmp.weekStart;
+  state.dayStart = tmp.dayStart;
   const groupWasOff = !featOn('group');
   state.features = { ...tmp.features };
   state.fun = { ...tmp.fun };
@@ -6725,7 +6742,7 @@ tmrBox.className = 'card';
 $('#noteCard').after(tmrBox);
 
 function renderTomorrow() {
-  const tm = addDays(new Date(), 1), k = ymd(tm), t = term();
+  const tm = addDays(clock(), 1), k = ymd(tm), t = term();
   const rows = [];
   for (const { c, x } of tasksDue(k)) if (!x.done) rows.push({
     min: -4, time: '締切', cls: 'f-task',
@@ -6979,7 +6996,7 @@ function setSums() {
   put('setFeat', `${fOn}/${FEAT_KEYS.length + 1} オン`);
   const funOn = [...document.querySelectorAll('#setFun [data-fun]')].filter(c => c.checked).length;
   put('setFun', funOn ? `${funOn}個オン` : 'オフ');
-  put('setUse', `週のはじまり ${opt('#sWeekStart')}`);
+  put('setUse', `週のはじまり ${opt('#sWeekStart')}` + (+$('#sDayStart').value ? `・日付は${$('#sDayStart').value}時に変わる` : ''));
   put('setGrid', `${$('#sPeriods').value}限まで・土曜${$('#sSat').checked ? 'あり' : 'なし'}`);
   put('setGrid', `${$('#sPeriods').value}限まで・土曜${$('#sSat').checked ? 'あり' : 'なし'}`);
   put('setLook', `${opt('#sColor')}・${opt('#sFont')}`);
@@ -7489,7 +7506,7 @@ if (hbAnchor) hbAnchor.before(hbCard); else $('#view-today').append(hbCard);
 let hbEdit = false;
 
 function renderHabits() {
-  const now = new Date(), k = ymd(now);
+  const now = clock(), k = ymd(now);
   const today = hb.list.filter(h => hbOn(h, now));
   const left = today.filter(h => !h.done.includes(k)).length;
   let html = '<div class="hbHead"><h2>日課 <small>' +
@@ -8086,7 +8103,7 @@ function wgCfg() {
 
 // ウィジェットに渡すデータ（今日から7日後まで）
 function wgData() {
-  const cfg = wgCfg(), t = term(), now = new Date();
+  const cfg = wgCfg(), t = term(), now = clock();
   const today = addDays(now, 0);
   const days = [];
   for (let i = 0; i <= 7; i++) {
@@ -8121,7 +8138,7 @@ function wgData() {
       tasks.push({ title: x.title || '', due: dueOf(x), from: c.short || c.name || '' });
   tasks.sort((a, b) => a.due.localeCompare(b.due));
   return { v: 1, made: now.toISOString(), after: cfg.after, taskDays: cfg.days, theme: cfg.theme, days, tasks: tasks.slice(0, 20),
-    alarms: window.alNext?.() || [] };
+    alarms: window.alNext?.() || [], dayStart: dayStartH() };
 }
 window.wgData = wgData;
 
@@ -9529,7 +9546,7 @@ document.addEventListener('click', e => {
   const t = term(), c = t.courses.find(x => x.id === b.dataset.odt);
   if (!c) return;
   if (c.onDemand) return alert('この授業は前の「毎回オンデマンド」のまま。授業の画面を1回開くと、ここで切り替えられるよ');
-  const k = ymd(new Date());
+  const k = todayStr();
   const had = (t.ondemands || []).some(x => x.courseId === c.id && x.date === k);
   t.ondemands = (t.ondemands || []).filter(x => !(x.courseId === c.id && x.date === k));
   if (!had) t.ondemands.push({ id: uid(), courseId: c.id, date: k });

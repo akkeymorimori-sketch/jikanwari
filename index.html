@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=217">
+<link rel="stylesheet" href="style.css?v=218">
 </head>
 <body>
 <header>
@@ -530,6 +530,17 @@
           <option value="sun">日曜</option>
         </select>
       </label>
+      <label class="inline">日付が変わる時刻
+        <select id="sDayStart" class="narrow" aria-label="日付が変わる時刻">
+          <option value="0">0時（ふつう）</option>
+          <option value="1">1時</option>
+          <option value="2">2時</option>
+          <option value="3">3時</option>
+          <option value="4">4時</option>
+          <option value="5">5時</option>
+        </select>
+      </label>
+      <p class="hint">夜ふかしする人に。たとえば4時にすると、夜中の1時は前の日の続きとして「今日」「明日の予定」を出すよ</p>
     </details>
 
     <details class="sec set" id="setLook">
@@ -630,6 +641,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=217"></script>
+<script src="app.js?v=218"></script>
 </body>
 </html>
