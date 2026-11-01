@@ -6648,15 +6648,15 @@ function grSeenInit(ids) {
 }
 // まだ見てない、ほかの人の変更
 function grUnseen(gid) {
-  const s = state.grSeen[gid];
+  const s = state?.grSeen?.[gid];
   return s ? (grActs[gid] || []).filter(a => a.by !== grMine() && a.at > s.at) : [];
 }
 const grNewCount = () => featOn('group') ? Object.keys(grNames).reduce((n, gid) => n + grUnseen(gid).length, 0) : 0;
 // ほかの人が足した・変えた予定で、まだ開いてないもの
 function grIsNew(e) {
   if (!e?.gid || !e.by || e.by === grMine() || !e.at) return false;
-  const s = state.grSeen[e.gid];
-  return !!s && e.at > s.base && e.at > (state.grOpen[e.id] || 0) && Date.now() - e.at < 14 * 864e5 // 14日たったら NEW は消す;
+  const s = state?.grSeen?.[e.gid];
+  return !!s && e.at > s.base && e.at > (state.grOpen?.[e.id] || 0) && Date.now() - e.at < 14 * 864e5; // 14日たったら NEW は消す
 }
 // 開いたら NEW を消す
 {
@@ -6765,7 +6765,7 @@ gActs.addEventListener('click', e => {
     if (groupDlg.open) { renderGrActs(); grMarkSeen(); } else grBadge();
   };
 }
-grBadge();
+setTimeout(grBadge, 0); // state を読み込んだあと（この section は state の読み込みより前に動く）
 
 /* ===== 共有した予定：動かす・ロック（v63） ===== */
 function grLocked(e) { return !!e?.gid && e.lock === true && !grIsMine(e); }
