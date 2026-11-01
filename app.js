@@ -7351,9 +7351,9 @@ applyWall();
     b.innerHTML = html;
     $(before).before(b);
   };
-  put('groupBtn', '<b>👥 共有グループ</b><small>家族やサークルと予定を共有する</small>', '#shareBtn');
+  put('groupBtn', '<b>共有グループ</b><small>家族やサークルと予定を共有する</small>', '#shareBtn');
   put('wallBtn', '<b>🖼 壁紙</b><small>写真やかわいい柄を背景にする</small>', '#lookBtn');
-  put('helpBtn', '<b>🔍 機能をさがす</b><small>やりたいことから、どこにあるか探す</small>', '#feedbackBtn');
+  put('helpBtn', '<b>機能をさがす</b><small>やりたいことから、どこにあるか探す</small>', '#feedbackBtn');
 }
 
 /* ===== 整理：設定を開いたり閉じたり ===== */
@@ -7668,7 +7668,7 @@ wallDlg.addEventListener('change', e => {
 
 // 名前を「壁紙・色」に
 wallDlg.querySelector('.dlgHead h2').textContent = '🖼 壁紙・色';
-if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>🖼 壁紙・色</b><small>背景の写真や柄、背景・カード・文字の色</small>';
+if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>壁紙・色</b><small>背景の写真や柄、背景・カード・文字の色</small>';
 
 applyPageColor();
 
@@ -7853,7 +7853,7 @@ ptDlg.addEventListener('toggle', e => {
 }
 function renderPtBtn() {
   const p = ptState();
-  $('#ptBtn').innerHTML = `<b>🎁 ${p.pt}p</b><small>連続${p.streak}日・総ログイン${p.days}日</small>`;
+  $('#ptBtn').innerHTML = `<b>${p.pt}p</b><small>連続${p.streak}日・総ログイン${p.days}日</small>`;
 }
 
 function ptRun() {
@@ -10135,7 +10135,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if (!theme || !icon || !head) { if (++tries < 30) setTimeout(setup, 200); return; }
 
     // 名前を変える
-    if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>🖼 壁紙・文字・アイコン</b><small>背景、カード・文字の色、テーマ、フォント、アイコン</small>';
+    if ($('#wallBtn')) $('#wallBtn').innerHTML = '<b>壁紙・文字・アイコン</b><small>背景、カード・文字の色、テーマ、フォント、アイコン</small>';
     const h = head.querySelector('h2, h3, b');
     if (h) h.textContent = '🖼 壁紙・文字・アイコン';
 
@@ -10745,7 +10745,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     b.type = 'button';
     b.id = 'tourBtn';
     b.className = help.className;
-    b.innerHTML = '<b>📘 機能の紹介</b><small>がくログでできることを、ざっくり見る</small>';
+    b.innerHTML = '<b>機能の紹介</b><small>がくログでできることを、ざっくり見る</small>';
     b.onclick = () => openTour();
     help.before(b);
   }, 0);
@@ -13920,7 +13920,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const card = document.createElement('div');
   card.className = 'card menu gridOnly';
   card.id = 'mnAllCard';
-  card.innerHTML = '<h2>ノート</h2><button type="button" id="mnAllBtn"><b>📒 ミニノート</b><small>授業ごとのノートを、学期をまたいでまとめて見る</small></button>';
+  card.innerHTML = '<h2>ノート</h2><button type="button" id="mnAllBtn"><b>ミニノート</b><small>授業ごとのノートを、学期をまたいでまとめて見る</small></button>';
   const anchor = $('#lookBtn')?.closest('.card');
   if (anchor) anchor.before(card); else $('#view-more').append(card);
   $('#mnAllBtn').onclick = openAll;
@@ -13968,14 +13968,14 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const al = document.createElement('button');
   al.type = 'button';
   al.id = 'moreAlarm';
-  al.innerHTML = '<b>⏰ 目覚まし</b><small>授業やバイトに合わせて鳴らす</small>';
+  al.innerHTML = '<b>目覚まし</b><small>授業やバイトに合わせて鳴らす</small>';
   al.onclick = () => $('#alHead')?.click();
 
   // サポート（よくある質問・問い合わせ）
   const sup = document.createElement('button');
   sup.type = 'button';
   sup.id = 'supportBtn';
-  sup.innerHTML = '<b>❓ よくある質問・問い合わせ</b><small>サポートのページを開く</small>';
+  sup.innerHTML = '<b>よくある質問・問い合わせ</b><small>サポートのページを開く</small>';
   sup.onclick = () => openUrl(APP_URL + 'support.html');
 
   const arrange = () => {
@@ -13985,7 +13985,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     $('#mnAllBtn')?.classList.add('gridOnly');
     const main = card('moreMain', ...['#wallBtn', '#settingsBtn'].map(pick));
     const pv = $('#privacyBtn');
-    if (pv) { pv.className = ''; pv.innerHTML = '<b>🔒 プライバシーポリシー</b><small>集めるデータと使い方</small>'; }
+    if (pv) { pv.className = ''; pv.innerHTML = '<b>プライバシーポリシー</b><small>集めるデータと使い方</small>'; }
     const help = card('moreHelp', h2('困ったとき'), ...['#tourBtn', '#helpBtn', '#feedbackBtn', sup, pv].map(pick));
     // 空になった古いカードを片づける（JS から使うボタンが入った隠しカードは残す）
     for (const c of [...view.querySelectorAll(':scope > .card')]) if (!c.querySelector('button')) c.remove();
