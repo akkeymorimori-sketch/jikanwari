@@ -1803,3 +1803,6 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .gAct .actW.del { color: var(--danger); }
 .gAct.del .actT { text-decoration: line-through; color: var(--muted); }
 .gAct small { display: block; color: var(--muted); font-size: 12px; }
+.gPushRow { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--sub); margin: 4px 0 6px; }
+.gPushRow select { width: auto; flex: 0 1 auto; padding: 4px 8px; font-size: 13px; }
+#gPush button { width: 100%; }

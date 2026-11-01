@@ -6068,6 +6068,7 @@ async function fbGoogle(at) {
         return 'kept';
       }
     }
+    await window.pushDrop?.(); // 切り替える前に、今のアカウントからこの端末の通知を外す（二重に届かないように）
     await A.signInWithCredential(auth, c2);
     fb.uid = auth.currentUser.uid;
     await loadGroups();
@@ -6766,6 +6767,130 @@ gActs.addEventListener('click', e => {
   };
 }
 setTimeout(grBadge, 0); // state を読み込んだあと（この section は state の読み込みより前に動く）
+
+/* ===== 共有グループのプッシュ通知（アプリ版だけ） ===== */
+// 通知を送るのは Cloud Functions（functions/index.js）。アプリは送り先と設定を users/{uid} に置くだけ：
+// ・tokens.{端末ID} = { t: 通知トークン, p: ios | android, at }（トークン・アカウント・オンオフが変わったときだけ書く）
+// ・mode.{グループID} = all（すべて）| near（今日・明日だけ）| off
+const FM = isApp ? window.Capacitor?.Plugins?.FirebaseMessaging : null;
+const PUSH_KEY = 'gakulog-push-v1'; // { dev: 端末ID, uid, t: 最後に書いたトークン, modes }
+const PUSH_MODES = [['all', 'すべて'], ['near', '今日・明日だけ'], ['off', 'オフ']];
+const pushLoad = () => { try { return JSON.parse(localStorage.getItem(PUSH_KEY)) || {}; } catch { return {}; } };
+const pushSave = p => { try { localStorage.setItem(PUSH_KEY, JSON.stringify(p)); } catch {} };
+let pushPerm = '';
+
+// 今の状態に合わせて、送り先を置く・片づける
+async function pushSync() {
+  if (!FM || !fb) return;
+  const p = pushLoad();
+  if (!p.dev) { p.dev = uid(); pushSave(p); }
+  try { pushPerm = (await FM.checkPermissions()).receive; } catch { return; }
+  const { db, F } = fb;
+  if (!featOn('group') || !grGroups.length || pushPerm !== 'granted') return pushDrop();
+  let t = '';
+  try { t = (await FM.getToken()).token; } catch (err) { console.warn('通知のトークン', err); return; }
+  if (!t || (p.t === t && p.uid === fb.uid)) return;
+  await F.setDoc(F.doc(db, 'users', fb.uid),
+    { tokens: { [p.dev]: { t, p: window.Capacitor.getPlatform(), at: F.serverTimestamp() } } }, { merge: true });
+  Object.assign(p, { t, uid: fb.uid });
+  pushSave(p);
+}
+// この端末には送らないようにする（共有グループをオフ・グループがない・別のアカウントに切り替える前）
+async function pushDrop() {
+  const p = pushLoad();
+  if (!p.t || !p.uid || !fb) return;
+  try { await fb.F.updateDoc(fb.F.doc(fb.db, 'users', p.uid), { [`tokens.${p.dev}`]: fb.F.deleteField() }); } catch (err) { console.warn('通知', err); }
+  delete p.t; delete p.uid;
+  pushSave(p);
+}
+window.pushDrop = pushDrop;
+
+if (FM) {
+  if (window.Capacitor.getPlatform() === 'android') {
+    FM.createChannel?.({ id: 'group', name: '共有グループ', description: 'グループの予定が追加・変更・削除されたとき', importance: 3 }).catch(() => {});
+  }
+  // 通知を押したら、共有グループの「最近の変更」を開く
+  FM.addListener('notificationActionPerformed', e => {
+    if (e?.notification?.data?.gid) setTimeout(() => openGroups(), 300);
+  });
+  FM.addListener('tokenReceived', () => pushSync().catch(err => console.warn('通知', err)));
+  const lg = loadGroups;
+  loadGroups = async function () {
+    const r = await lg.apply(this, arguments);
+    pushSync().catch(err => console.warn('通知', err));
+    return r;
+  };
+  // 設定アプリで通知をオンにして戻ってきたとき
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && fb) pushSync().catch(() => {});
+  });
+}
+
+// 共有グループの画面：グループごとの通知の設定と、許可のボタン
+const gPush = document.createElement('div');
+gPush.id = 'gPush';
+gPush.hidden = true;
+$('#gList').before(gPush);
+function renderPushHead() {
+  gPush.hidden = !FM || !grGroups.length;
+  if (gPush.hidden) return;
+  gPush.innerHTML = pushPerm === 'granted' ? ''
+    : pushPerm === 'denied' ? '<p class="hint">🔔 通知が届かない設定になってるよ。スマホの「設定」→ がくログ → 通知 でオンにしてね</p>'
+    : '<button type="button" id="gPushAsk">🔔 グループの通知をオンにする</button><p class="hint">ほかの人が予定を足したり変えたりしたら、まとめて知らせるよ（夜は朝にまとめて）</p>';
+}
+gPush.addEventListener('click', async e => {
+  if (!e.target.closest('#gPushAsk')) return;
+  try { pushPerm = (await FM.requestPermissions()).receive; } catch {}
+  renderPushHead();
+  await pushSync().catch(err => gSay(fbErr(err)));
+});
+if (FM) {
+  const rg = renderGroups;
+  renderGroups = function () {
+    rg.apply(this, arguments);
+    const modes = pushLoad().modes || {};
+    for (const li of $('#gList').querySelectorAll('.gItem')) {
+      const gid = li.querySelector('[data-ginv]')?.dataset.ginv;
+      if (!gid) continue;
+      const v = modes[gid] || 'all';
+      li.querySelector('.gMembers').insertAdjacentHTML('afterend',
+        `<label class="gPushRow">🔔 通知<select data-gpush="${esc(gid)}">` +
+        PUSH_MODES.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('') + '</select></label>');
+    }
+    renderPushHead();
+  };
+  $('#gList').addEventListener('change', async e => {
+    const s = e.target.closest('[data-gpush]');
+    if (!s) return;
+    const p = pushLoad();
+    p.modes = { ...p.modes, [s.dataset.gpush]: s.value };
+    pushSave(p);
+    try {
+      const { db, F } = await fbInit();
+      await F.setDoc(F.doc(db, 'users', fb.uid), { mode: { [s.dataset.gpush]: s.value } }, { merge: true });
+      gSay(s.value === 'off' ? 'このグループの通知はオフにしたよ' : '通知の設定を変えたよ');
+    } catch (err) { gSay(fbErr(err)); }
+  });
+  // 開いたとき：ほかの端末で変えた設定を読む（1回だけ）
+  let modesRead = false;
+  const og = openGroups;
+  openGroups = async function () {
+    const r = await og.apply(this, arguments);
+    if (!modesRead && fb && grGroups.length) {
+      try {
+        const d = await fb.F.getDoc(fb.F.doc(fb.db, 'users', fb.uid));
+        modesRead = true;
+        const p = pushLoad();
+        p.modes = d.exists() ? d.data().mode || {} : {};
+        pushSave(p);
+        renderGroups();
+      } catch (err) { console.warn('通知の設定', err); }
+    }
+    pushSync().then(renderPushHead).catch(() => {});
+    return r;
+  };
+  grBtn.onclick = () => openGroups();
+}
 
 /* ===== 共有した予定：動かす・ロック（v63） ===== */
 function grLocked(e) { return !!e?.gid && e.lock === true && !grIsMine(e); }
