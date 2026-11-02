@@ -6748,15 +6748,39 @@ function ago(ms) {
   if (m < 24 * 60) return `${Math.floor(m / 60)}時間前`;
   return md(new Date(ms));
 }
+// 「グループ」と「最近の変更」をタブで切り替える（全部並べるとごちゃつくので）
+const gTabs = document.createElement('div');
+gTabs.className = 'gTabs';
+gTabs.setAttribute('role', 'tablist');
+gTabs.innerHTML = '<button type="button" role="tab" data-gtab="groups">グループ</button>' +
+  '<button type="button" role="tab" data-gtab="acts">最近の変更<span class="grNewN" hidden></span></button>';
 const gActs = document.createElement('div');
 gActs.id = 'gActs';
-$('#gStatus').after(gActs);
+$('#gStatus').after(gTabs, gActs);
+function setGrTab(t) {
+  groupDlg.dataset.tab = t;
+  for (const b of gTabs.querySelectorAll('[data-gtab]')) {
+    b.classList.toggle('on', b.dataset.gtab === t);
+    b.setAttribute('aria-selected', b.dataset.gtab === t);
+  }
+  if (t === 'acts') grMarkSeen();
+  drawGrTabN();
+}
+function drawGrTabN() {
+  const n = grNewCount(), b = gTabs.querySelector('.grNewN');
+  b.textContent = n > 99 ? '99+' : n;
+  b.hidden = !n;
+}
+gTabs.addEventListener('click', e => {
+  const b = e.target.closest('[data-gtab]');
+  if (b) setGrTab(b.dataset.gtab);
+});
 let grShownSeen = {}; // 画面を開いたときの「見た時刻」（開いてる間は、新しく来た分に印を付けたままにする）
 function renderGrActs() {
   const all = Object.keys(grNames).flatMap(gid => grActs[gid] || []).filter(a => a.by !== grMine())
     .sort((x, y) => y.at - x.at).slice(0, 30);
-  gActs.hidden = !Object.keys(grNames).length;
-  gActs.innerHTML = '<h3>最近の変更</h3>' + (all.length ? '<ul class="gActList">' + all.map(a => {
+  gActs.hidden = gTabs.hidden = !Object.keys(grNames).length;
+  gActs.innerHTML = (all.length ? '<ul class="gActList">' + all.map(a => {
     const isNew = a.at > (grShownSeen[a.gid] ?? Infinity);
     const when = isYmd(a.date) ? md(parseYmd(a.date)) + ' ' : '';
     return `<li><button type="button" class="gAct${isNew ? ' new' : ''}${a.type === 'del' ? ' del' : ''}" data-gact="${esc(a.id)}" data-gid="${esc(a.gid)}">` +
@@ -6797,7 +6821,7 @@ gActs.addEventListener('click', e => {
   openGroups = async function () {
     grShownSeen = Object.fromEntries(Object.keys(grNames).map(gid => [gid, state.grSeen[gid]?.at ?? Infinity]));
     renderGrActs();
-    grMarkSeen();
+    setGrTab(grNewCount() ? 'acts' : 'groups'); // 新着があれば「最近の変更」から
     return og.apply(this, arguments);
   };
   grBtn.onclick = () => openGroups();
@@ -6816,7 +6840,10 @@ gActs.addEventListener('click', e => {
   const rd = grRedraw;
   grRedraw = function () {
     rd.apply(this, arguments);
-    if (groupDlg.open) { renderGrActs(); grMarkSeen(); } else grBadge();
+    if (!groupDlg.open) return grBadge();
+    renderGrActs();
+    if (groupDlg.dataset.tab === 'acts') grMarkSeen(); else grBadge();
+    drawGrTabN();
   };
 }
 setTimeout(grBadge, 0); // state を読み込んだあと（この section は state の読み込みより前に動く）
@@ -7706,11 +7733,17 @@ const PT_DAY = 1;
 const PT_BONUS = [[7, 5], [30, 30]]; // [何日連続ごと, もらえるポイント]
 // 交換できるもの（あとで足す）例：{ id: 'icon-mint', name: 'ミントのアイコン', desc: '…', cost: 50 }
 // 交換できるもの：ウィジェットのデザイン [id, 名前, 説明, ポイント]
+// 新しく足すときは、iOS（widget.swift の wgTheme）と Android（GakuWidget.java の theme と drawable/wg_bg_*.xml）、下の WG_LOOK にも足す
 var WG_THEMES = [
+  ['wg-plain', 'プレーン', '飾りなし。白（ダークモードは黒）に文字だけ', 10],
   ['wg-mint', 'ミント', '🌿 さわやかな緑', 10],
   ['wg-sakura', 'さくら', '🌸 やわらかいピンク', 20],
+  ['wg-peach', 'もも', '🍑 あわいピーチ', 30],
   ['wg-sky', 'そらいろ', '☁️ 晴れた日の青', 30],
+  ['wg-mono', 'モノクロ', '黒に白だけ。すっきり', 40],
   ['wg-sunset', 'ゆうやけ', '🌇 オレンジから紫', 50],
+  ['wg-graphite', 'グラファイト', 'こいグレーにライムの差し色', 60],
+  ['wg-candy', 'キャンディ', '🍬 ピンクと水色のパステル', 70],
   ['wg-night', 'よぞら', '🌙 深い紺に黄色', 80],
   ['wg-gold', 'こがね', '👑 ちょっと特別な金', 150],
 ];
@@ -7770,8 +7803,22 @@ ptDlg.id = 'ptDlg';
 ptDlg.innerHTML =
   '<div class="dlg">' +
   '<div class="dlgHead"><h2>ポイント</h2><button type="button" class="x big" data-ptclose aria-label="閉じる">×</button></div>' +
-  '<div id="ptBody"></div></div>';
+  '<div id="ptBody"></div>' +
+  // ★ お試し用：コードを入れるとポイントがもらえる（ウィジェットなどの交換を試すため。試し終わったら、この欄と下の ptCodeGo を消す）
+  '<details class="ptCode"><summary>コードを入れる</summary><div class="row">' +
+  '<input id="ptCodeIn" autocomplete="off" autocapitalize="characters" placeholder="コード" aria-label="コード">' +
+  '<button type="button" id="ptCodeGo">使う</button></div></details></div>';
 document.body.append(ptDlg);
+const PT_CODES = { GAKUTEST: 3000 }; // ★ お試し用（何回でも使える）
+$('#ptCodeGo').onclick = () => {
+  const n = PT_CODES[$('#ptCodeIn').value.trim().toUpperCase()];
+  if (!n) return toast('そのコードは使えないみたい');
+  ptState().pt += n;
+  save();
+  $('#ptCodeIn').value = '';
+  renderPoints(); renderPtBtn();
+  toast(`${n}pもらったよ`);
+};
 
 // 交換所をグループに分けてたたむ
 const SHOP_GROUPS = [
@@ -9035,7 +9082,12 @@ var WG_LOOK = {
   'wg-sky':    { bg: ['#E0F2FE', '#BAE6FD'], fg: '#0C4A6E', ac: '#0284C7', icon: '☁️' },
   'wg-sunset': { bg: ['#FDBA74', '#C084FC'], fg: '#3B0764', ac: '#C2410C', icon: '🌇' },
   'wg-night':  { bg: ['#312E81', '#0F172A'], fg: '#F1F5F9', ac: '#FACC15', icon: '🌙' },
-  'wg-gold':   { bg: ['#FEF3C7', '#FCD34D'], fg: '#78350F', ac: '#B45309', icon: '👑' }
+  'wg-gold':   { bg: ['#FEF3C7', '#FCD34D'], fg: '#78350F', ac: '#B45309', icon: '👑' },
+  'wg-plain':  { bg: ['#FFFFFF', '#FFFFFF'], fg: '#111111', ac: '#111111', icon: '', on: '#FFFFFF' },
+  'wg-peach':  { bg: ['#FFE5D9', '#FFC8B4'], fg: '#7C2D12', ac: '#C2410C', icon: '🍑' },
+  'wg-mono':   { bg: ['#18181B', '#27272A'], fg: '#FAFAFA', ac: '#FFFFFF', icon: '', on: '#18181B' },
+  'wg-graphite': { bg: ['#334155', '#1E293B'], fg: '#E2E8F0', ac: '#A3E635', icon: '', on: '#1E293B' },
+  'wg-candy':  { bg: ['#FBCFE8', '#BAE6FD'], fg: '#581C87', ac: '#BE185D', icon: '🍬' }
 };
 {
   const dlg = document.createElement('dialog');
@@ -9062,7 +9114,7 @@ var WG_LOOK = {
     const L = WG_LOOK[id] || WG_LOOK[''], c = prevContent(), max = size === 's' ? 2 : 3;
     const head = `<div class="wpH" style="color:${L.ac}">${esc(c.title)}</div>`;
     const nx = c.next
-      ? `<div class="wpN"><span class="wpP" style="background:${L.ac}">${c.next.period}限</span><b>${esc(c.next.name)}</b></div>` +
+      ? `<div class="wpN"><span class="wpP" style="background:${L.ac};color:${L.on || '#fff'}">${c.next.period}限</span><b>${esc(c.next.name)}</b></div>` +
         `<small>${esc([c.next.start, c.next.room].filter(Boolean).join('・'))}</small>`
       : `<div>${esc(c.msg)}</div>`;
     const list = `<div class="wpH" style="color:${L.ac}">今日の予定</div>` +

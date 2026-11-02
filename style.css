@@ -1869,3 +1869,15 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .tourE { color: var(--accent); }
 .alHead::before { margin-right: 0; width: 1.3em; height: 1.3em; }
 .alHead small { margin-left: 2px; }
+
+/* 共有グループ：「グループ」と「最近の変更」のタブ */
+.gTabs { display: flex; gap: 6px; margin: 10px 0 8px; }
+.gTabs[hidden] { display: none; }
+.gTabs button { flex: 1; margin: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.gTabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: bold; }
+#groupDlg[data-tab="groups"] #gActs,
+#groupDlg[data-tab="acts"] #gPush, #groupDlg[data-tab="acts"] #gList,
+#groupDlg[data-tab="acts"] .dlg > h3, #groupDlg[data-tab="acts"] .dlg > .row, #groupDlg[data-tab="acts"] .dlg > label { display: none; }
+/* ポイント：お試しのコード */
+.ptCode { margin-top: 14px; }
+.ptCode summary { color: var(--muted); font-size: 13px; }
