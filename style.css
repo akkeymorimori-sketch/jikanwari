@@ -1879,3 +1879,8 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 #groupDlg[data-tab="acts"] #gPush, #groupDlg[data-tab="acts"] #gList,
 #groupDlg[data-tab="acts"] .dlg > h3, #groupDlg[data-tab="acts"] .dlg > .row, #groupDlg[data-tab="acts"] .dlg > label { display: none; }
 .ptShop [data-buy], .ptShop .ptGot { flex: none; white-space: nowrap; }
+/* 交換所・アイコンの一覧：アイコンの見本 */
+.shopImg { flex: none; width: 44px; height: 44px; border-radius: 10px; margin-right: 8px; }
+.icLock small { color: var(--muted); }
+.icLock img { opacity: .55; }
+.ptShop li > .shopName { flex: 1; min-width: 0; }

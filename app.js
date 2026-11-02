@@ -7809,6 +7809,7 @@ document.body.append(ptDlg);
 // 交換所をグループに分けてたたむ
 const SHOP_GROUPS = [
   ['wg-', 'ウィジェット'],
+  ['ic-', 'アプリのアイコン'],
   ['tb-', 'タブバー'],
 　['bg-', '背景'],
 ];
@@ -7819,8 +7820,9 @@ function shopOpenList() {
 function shopItem(s, p, short) {
   const got = p.owned.includes(s.id);
   const nm = short ? s.name.replace(/^.+?「(.+)」$/, '$1') : s.name;
-  return `<li><div><b>${esc(nm)}</b>${s.desc ? `<small>${esc(s.desc)}</small>` : ''}</div>` +
-    `<button type="button" class="wgPrevBtn" data-wgprev="${s.id}">見る</button>` +
+  // アイコンは見本の画像を名前の左に出す（ほかは「見る」で見本を開く）
+  return `<li>${s.img ? `<img class="shopImg" src="${s.img}" alt="">` : ''}<div class="shopName"><b>${esc(nm)}</b>${s.desc ? `<small>${esc(s.desc)}</small>` : ''}</div>` +
+    (s.img ? '' : `<button type="button" class="wgPrevBtn" data-wgprev="${s.id}">見る</button>`) +
     (got ? '<span class="ptGot">交換済み</span>'
       : `<button type="button" data-buy="${s.id}"${p.pt < s.cost ? ' disabled' : ''}>${s.cost}p</button>`) + '</li>';
 }
@@ -10079,20 +10081,51 @@ document.addEventListener('click', e => {
     ['red', 'あか', 'icon-red.png'],
     ['yellow', 'きいろ', 'icon-yellow.png']
   ];
+  // ポイントで交換するアイコン [Xcodeで付けた名前, 名前, ポイント, 説明]（画像は tools/app-icons.py で作る）
+  const IC_SHOP = [
+    ['orange', 'オレンジ', 20, '黒にオレンジの光'],
+    ['mint', 'ミント', 20, '黒に水色の光'],
+    ['cherry', 'チェリー', 30, '赤からピンクの光'],
+    ['ocean', 'オーシャン', 30, '青から緑の光'],
+    ['white', 'しろ', 30, '白に青むらさきの線'],
+    ['mono', 'モノクロ', 30, '白に黒だけ。飾らない'],
+    ['sunset', 'ゆうやけ', 40, 'オレンジからむらさき'],
+    ['cream', 'クリーム', 40, '生成り色に茶色の線'],
+    ['silver', 'シルバー', 50, '黒に白銀の光'],
+    ['pastel', 'パステル', 50, 'うすいピンクと水色'],
+    ['mintmilk', 'ミントミルク', 50, 'うすい緑に深い緑'],
+    ['night', 'よぞら', 60, '紺に黄色の光'],
+    ['rainbow', 'にじ', 80, '虹色のグラデーション'],
+    ['gold', 'こがね', 120, '黒に金色の光'],
+  ];
   if (AI) {
+    // 最初から「見た目 → アイコン」の枠（#iconBox）の中に作る（あとから文字で探して移すと、確認が遅いと空になってた）
     const box = document.createElement('div');
     box.id = 'appIconBox'; // HTML の #iconBox（Web版のアイコンの色）と id がかぶらないように
-    box.innerHTML = '<h4>アプリのアイコン</h4><div class="icList" id="icList"></div>' +
-      '<p class="hint">変えるとiPhoneから確認が出るよ</p>';
-    $('#aiBox').before(box);
+    box.className = 'appIconIn';
+    box.innerHTML = '<div class="icList" id="icList"></div>' +
+      '<p class="hint" id="icHint">変えるとiPhoneから確認が出るよ</p>';
+    $('#iconBox').append(box);
     const render = async () => {
       let now = null;
       try { now = (await AI.getCurrentIcon()).icon; } catch {}
+      // 交換したアイコンも並べる。まだのものは 🔒 とポイント（押すとポイントの画面へ）
       $('#icList').innerHTML = ICONS.map(([id, name, img]) =>
         `<button type="button" data-icon="${id}" class="${(now || '') === id ? 'on' : ''}">` +
-        `<img src="${img}" alt="">${name}</button>`).join('');
+        `<img src="${img}" alt="">${name}</button>`).join('') +
+        IC_SHOP.map(([id, name, cost]) => ptOwned('ic-' + id)
+          ? `<button type="button" data-icon="${id}" class="${now === id ? 'on' : ''}"><img src="icon-${id}.png" alt="">${name}</button>`
+          : `<button type="button" class="icLock" data-iclock="${id}"><img src="icon-${id}.png" alt=""><small>🔒 ${cost}p</small></button>`).join('');
     };
+    // 開くたびに描き直す（ほかの画面で交換したアイコンも出るように）
+    new MutationObserver(() => { if (wallDlg.open) render(); }).observe(wallDlg, { attributes: true, attributeFilter: ['open'] });
+    // 交換所に並べる（交換したらすぐそのアイコンにする）
+    for (const [id, name, cost, desc] of IC_SHOP) SHOP.push({
+      id: 'ic-' + id, name: `アイコン「${name}」`, desc, cost, img: `icon-${id}.png`,
+      onGet: () => AI.setIcon({ icon: id }).then(() => render()).catch(() => {}),
+    });
     $('#icList').onclick = async e => {
+      if (e.target.closest('[data-iclock]')) { wallDlg.close?.(); return openPoints(); }
       const b = e.target.closest('[data-icon]');
       if (!b) return;
       try {
@@ -10102,7 +10135,11 @@ document.addEventListener('click', e => {
       }
       render();
     };
-    AI.isAvailable().then(r => r.available ? render() : box.remove()).catch(() => box.remove());
+    // 変えられないときも空にしないで、理由を出す
+    const no = msg => { $('#icList').innerHTML = ''; $('#icHint').textContent = msg; };
+    // 確認に失敗したときも一覧は出す（押して変えられなければ、そのときに理由が出る）
+    AI.isAvailable().then(r => r.available === false ? no('このiPhoneではアイコンを変えられないみたい') : render())
+      .catch(() => render());
   }
 }
 
@@ -10110,42 +10147,12 @@ document.addEventListener('click', e => {
 if (window.Capacitor?.isNativePlatform?.()) {
   const box = document.querySelector('#iconBox');
   if (box) {
-    // Web版の説明とリンクは隠す
+    // Web版の説明とリンクは隠す（アプリ版の選ぶ欄 #appIconBox は残す）
     [...box.children].forEach(el => {
-      if (el.tagName !== 'SUMMARY') el.style.display = 'none';
+      if (el.tagName !== 'SUMMARY' && el.id !== 'appIconBox') el.style.display = 'none';
     });
     box.querySelector('summary').textContent = 'アプリのアイコン';
     box.removeAttribute('open');
-
-    // 下にあるアプリ版の選択欄を、この枠の中へ移す
-    const tidy = () => {
-      const h = [...document.querySelectorAll('body *')].find(el =>
-        el.children.length === 0 && el.textContent.trim() === 'アプリのアイコン' &&
-        !el.closest('summary'));
-      if (!h) return false;
-      let top = h;
-      while (!top.nextElementSibling && top.parentElement) top = top.parentElement;
-      const parts = [];
-      let n = top.nextElementSibling;
-      while (n && parts.length < 4) {
-        parts.push(n);
-        if (n.textContent.includes('確認が出る')) break;
-        n = n.nextElementSibling;
-      }
-      if (!parts.length || !parts.at(-1).textContent.includes('確認が出る')) return false;
-      const wrap = document.createElement('div');
-      wrap.className = 'appIconIn';
-      parts.forEach(p => wrap.append(p));
-      box.append(wrap);
-      const host = top.parentElement;
-      top.remove();
-      // 中身を移して空になった入れ物は消す（残ると設定の「カレンダー連携」と「AI」の間に空白ができる）
-      if (host && host !== box && !host.children.length && !host.textContent.trim()) host.remove();
-      return true;
-    };
-    let tries = 0;
-    const run = () => { if (tidy() || ++tries > 25) return; setTimeout(run, 200); };
-    setTimeout(run, 0);
   }
 }
 
