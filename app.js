@@ -7918,6 +7918,7 @@ ptDlg.addEventListener('toggle', e => {
 function renderPtBtn() {
   const p = ptState();
   $('#ptBtn').innerHTML = `<b>${p.pt}p</b><small>連続${p.streak}日・総ログイン${p.days}日</small>`;
+  window.tileIco?.();
 }
 
 function ptRun() {
@@ -14066,6 +14067,19 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     // 空になった古いカードを片づける（JS から使うボタンが入った隠しカードは残す）
     for (const c of [...view.querySelectorAll(':scope > .card')]) if (!c.querySelector('button')) c.remove();
     view.prepend(tiles, main, help);
+    tileIco();
+  };
+  // iPhone（WebKit）は CSS のマスクのアイコンをごくまれに描き忘れるので、ここは同じ絵を本物の SVG にして入れる（ポイントのボタンは書き直されるたびに呼ぶ）
+  const tileIco = window.tileIco = () => {
+    for (const b of view.querySelectorAll('#moreTiles > button > b, .moreMain > button > b, .moreHelp > button > b')) {
+      const m = getComputedStyle(b.parentNode).getPropertyValue('--ico').match(/<svg[\s\S]*<\/svg>/);
+      if (!m || b.querySelector('.tIco')) continue;
+      const s = document.createElement('span');
+      s.className = 'tIco';
+      s.innerHTML = decodeURIComponent(m[0].replace(/%(?![0-9a-f]{2})/gi, '%25')).replace(/'black'/g, "'currentColor'");
+      b.prepend(s);
+      b.classList.add('hasIco');
+    }
   };
   setTimeout(arrange, 0); // ほかの section が足すボタン（機能の紹介など）を待ってから
 }
