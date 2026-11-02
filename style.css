@@ -1889,3 +1889,35 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .icLock small { color: var(--muted); }
 .icLock img { opacity: .55; }
 .ptShop li > .shopName { flex: 1; min-width: 0; }
+
+/* ===== ひとことで追加 ===== */
+#qaCard .qaH { font-size: 13px; color: var(--sub); font-weight: normal; margin: 0 0 6px; }
+.qaRow { display: flex; gap: 6px; align-items: flex-end; }
+#qaIn { flex: 1; min-width: 0; resize: none; min-height: 40px; margin: 0; line-height: 1.4; font: inherit; box-sizing: border-box; }
+#qaGo { flex: none; margin: 0; white-space: nowrap; }
+.qaPrev { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.qaPrev:empty { display: none; }
+.qaItem { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; }
+.qaItem.qaBad { border: 1px dashed #d33; }
+.qaItem select, .qaItem input { width: auto; min-height: 30px; min-width: 0; padding: 2px 6px; margin: 0; font-size: 13px; }
+.qaItem .qaTitle { flex: 1 1 8em; min-width: 6em; }
+.qaDate { display: inline-flex; align-items: center; gap: 3px; }
+.qaDate small, .qaTil { color: var(--muted); font-size: 12px; }
+.qaChip { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; line-height: 1.6; color: inherit; background: none; min-height: 0; white-space: nowrap; }
+button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
+.qaWarn { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+.qaTools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 6px 0 0; }
+.qaTools .linkBtn, .qaTools button { background: none; border: none; padding: 0; min-height: 0; color: var(--accent); font-size: 13px; text-decoration: underline; }
+.qaTools .hint { margin: 0; }
+.qaEx { margin-top: 6px; }
+.qaEx .hint { margin: 4px 0; }
+.qaMoreH { font-size: 13px; color: var(--sub); font-weight: normal; margin: 14px 0 6px; }
+#qaMore #fabMenu { flex-direction: row; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+#qaMore #fabMenu button { box-shadow: none; display: inline-flex; align-items: center; }
+#qaDlg { width: min(560px, calc(100vw - 24px)); }
+/* 今日の授業（ウィジェットの「欠席」「ノート」から） */
+.clsList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.clsList li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.clsList li > span { display: flex; gap: 6px; }
+.clsList button { margin: 0; min-height: 34px; padding: 4px 10px; }
+.clsList .qaFocus { outline: 2px solid var(--accent); outline-offset: 1px; }

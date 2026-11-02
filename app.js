@@ -623,6 +623,8 @@ function normalize(s) {
     if (typeof e.memo !== 'string' || !e.memo.trim()) delete e.memo; else e.memo = e.memo.slice(0, 2000);
     // 試験と授業の結びつけ（授業のID、または 'none'＝つながない）。なければ名前から当てる
     if (e.kind !== 'exam' || typeof e.cid !== 'string' || !e.cid) delete e.cid;
+    // 予定ごとの「○分前に通知」（ひとことで追加の「30分前」）
+    if (!(Number.isInteger(e.remind) && e.remind > 0 && e.remind <= 1440)) delete e.remind;
   }
   // 予定の入力候補（名前・種類・時刻を覚える）
   const hadPresets = Array.isArray(s.evPresets);
@@ -698,6 +700,7 @@ function normalize(s) {
         i.type ??= 'next';
         i.added ??= Date.now();
         i.until ??= null;
+        if (!isYmd(i.from)) delete i.from;
       }
       for (const k of c.tasks) k.id = fixId(k.id);
       for (const m of c.memos) m.id = fixId(m.id);
@@ -986,8 +989,9 @@ function scheduleChanged() {
 }
 
 // ある回に持っていく物
+// from（ひとことで追加の「11/10 統計 教科書」）：その日より前の回には出さない
 const itemsFor = (c, occStart) =>
-  c.items.filter(i => i.type === 'always' || i.until == null || i.until > occStart.getTime());
+  c.items.filter(i => (i.type === 'always' || i.until == null || i.until > occStart.getTime()) && !(i.from && ymd(occStart) < i.from));
 
 function fmtLeft(ms) {
   const m = Math.max(1, Math.ceil(ms / 60000));
@@ -1713,6 +1717,7 @@ $('#itemList').addEventListener('click', e => {
     } else {
       i.type = 'always'; i.until = null;
     }
+    delete i.from;
     save(); renderDetail(); renderAll();
     return;
   }
@@ -2527,7 +2532,7 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
         model, max_tokens: 16000,
         ...(fb && { fallbacks: 'default' }),
         messages: [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+          ...(b64 ? [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }] : []), // b64 なし＝文字だけ（ひとことで追加の「AIで読み直す」）
           { type: 'text', text: prompt },
         ] }]
       })
@@ -2542,7 +2547,7 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
         model,
         messages: [{ role: 'user', content: [
           { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }
+          ...(b64 ? [{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } }] : [])
         ] }]
       })
     });
@@ -5321,6 +5326,13 @@ function notifyPlan() {
       if (s == null) continue;
       const at2 = new Date(day); at2.setHours(0, s - n.job, 0, 0);
       if (at2 > now) out.push({ at: at2, title: `${e.title || 'バイト'} ${e.start}から`, body: `あと${n.job}分で始まるよ` });
+    }
+    // 予定ごとの「○分前に通知」
+    for (const e of eventsOn(ymd(day))) {
+      const s = toMin(e.start);
+      if (!e.remind || s == null) continue;
+      const at3 = new Date(day); at3.setHours(0, s - e.remind, 0, 0);
+      if (at3 > now) out.push({ at: at3, title: `${e.title || EV_LABEL[e.kind] || '予定'} ${e.start}から`, body: e.remind < 60 ? `あと${e.remind}分で始まるよ` : `あと${fmtLeft(e.remind * 60000)}で始まるよ` });
     }
   }
 
@@ -14092,4 +14104,559 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     }
   };
   setTimeout(arrange, 0); // ほかの section が足すボタン（機能の紹介など）を待ってから
+}
+
+/* ===== ひとことで追加（「明日19時 飲み会 @渋谷」みたいに1行で書いて入れる） ===== */
+// 読み取りは qaParse（画面なしで動く。tests/quick-add で確かめる）。今日タブのいちばん上の欄と、＋ボタンの画面で使う。
+// ウィジェット・アイコンの長押しからは gakulog://add などで開く（下の「アプリの外から開く」）
+{
+  const WDS = '日月火水木金土'; // getDay() の順
+  const JP = '[日月火水木金土]';
+  const CUT = '\u0001'; // 読み取って抜いたところの印（あとで助詞ごと消す）
+  const KN = { '〇': 0, '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+  const kanjiNum = s => {
+    if (!s.includes('十')) return String(+[...s].map(c => KN[c]).join(''));
+    const [a, b] = s.split('十');
+    return String((a ? KN[a] : 1) * 10 + (b ? KN[b] : 0));
+  };
+  // 全角・漢数字・いろんな「〜」をそろえる
+  const norm = s => String(s || '').normalize('NFKC')
+    .replace(/[〜～]/g, '~').replace(/[‐‑–—―]/g, '-').replace(/(\d)\s*ー\s*(\d)/g, '$1-$2')
+    .replace(/[〇零一二三四五六七八九十]+(?=[時日月分限])/g, m => kanjiNum(m))
+    .replace(/\s+/g, ' ').trim();
+  const pad = n => String(n).padStart(2, '0');
+  const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 月があふれたら次の年へ（13月→1月）。日があふれたら（2/30）なし
+  const mk = (y, m, d) => {
+    const x = new Date(y, m - 1, d), want = new Date(y, m - 1, 1);
+    return x.getMonth() === want.getMonth() && d >= 1 ? x : null;
+  };
+  const KW = {
+    cancel: /休講/,
+    item: /持って(?:い)?く|持参|持ち物|もって(?:い)?く|忘れずに/,
+    task: /提出|締め?切り?|〆切?|しめきり|レポート|課題|宿題/,
+    exam: /(?:小テスト|テスト|試験|中間|期末|追試|再試)(?!勉強|対策|範囲|前)/,
+    job: /バイト|シフト|勤務|出勤/,
+    todo: /^(?:todo|やること)(?:\s|$)/i,
+  };
+  const VAGUE = { 朝: '08:00', 昼: '12:00', 夕方: '17:00', 夜: '19:00' };
+
+  window.qaParse = (line, now = clock()) => {
+    const r = { src: line, kind: '', evKind: 'other', title: '', dates: [], start: '', end: '', place: '', remind: 0, gid: '', cid: '', rep: '', next: false, warn: [] };
+    let s = ' ' + norm(line) + ' ';
+    // re に合うところを抜く。fn が false を返したら抜かない
+    const take = (re, fn = () => {}) => { s = s.replace(re, (...m) => fn(...m) === false ? m[0] : CUT); };
+    const afterOf = m => m[m.length - 1].slice(m[m.length - 2] + m[0].length);
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const t = term();
+    const dates = [], wdList = [];
+
+    // #グループ・@場所・○分前
+    take(/#(\S+)/, (_, n) => {
+      const e = Object.entries(typeof grNames === 'object' && featOn('group') ? grNames : {});
+      const hit = e.find(([, v]) => v === n) || e.find(([, v]) => v.includes(n) || n.includes(v));
+      if (hit) r.gid = hit[0]; else r.warn.push(`グループ「${n}」が見つからない`);
+    });
+    take(/@(\S+)/, (_, p) => { r.place = p.slice(0, 60); });
+    take(/場所\s*[:は]\s*(\S+)/, (_, p) => { r.place = p.slice(0, 60); });
+    take(/(\d+)\s*(分|時間)前(?:に)?(?:通知|お知らせ|知らせて|教えて|リマインド)?/, (_, n, u) => { r.remind = Math.min(1440, +n * (u === '分' ? 1 : 60)) || 0; });
+
+    // くり返し
+    let rep = null;
+    const wdRe = `${JP}(?:曜日|曜)?(?:[・,、と]?${JP}(?:曜日|曜)?)*`;
+    take(new RegExp(`毎週\\s*(${wdRe})`), (_, w) => { rep = { type: 'w', days: [...new Set(w.match(new RegExp(JP, 'g')).map(c => WDS.indexOf(c)))] }; });
+    if (!rep) take(new RegExp(`隔週\\s*(${JP})(?:曜日|曜)?`), (_, w) => { rep = { type: 'w', days: [WDS.indexOf(w)], step: 14 }; });
+    if (!rep) take(/毎月\s*(\d{1,2})日/, (_, d) => { rep = { type: 'm', day: +d }; });
+    if (!rep) take(/(?:毎週)?平日(?:毎日)?/, () => { rep = { type: 'w', days: [1, 2, 3, 4, 5], lim: 27 }; });
+    if (!rep) take(/毎日/, () => { rep = { type: 'w', days: [0, 1, 2, 3, 4, 5, 6], lim: 13 }; });
+
+    // 日付
+    const fixY = (y, m, d) => {
+      if (y) return mk(+y, m, d);
+      let x = mk(today.getFullYear(), m, d);
+      if (x && x < addDays(today, -60)) x = mk(today.getFullYear() + 1, m, d); // 2か月より前なら来年（1/5 を11月に書いたとき）
+      return x;
+    };
+    const D = String.raw`(?<![\d/.])(?:(\d{4})\s*[/.年]\s*)?(\d{1,2})\s*[/.月]\s*(\d{1,2})日?(?:\s*\(${JP}(?:曜日?)?\))?(?![\d/.])`;
+    const notDur = m => !/^\s*(?:時間|分|%|h\b)/.test(afterOf(m)); // 「1.5時間」は日付じゃない
+    // 範囲：11/3~11/5、11/3~5
+    take(new RegExp(`${D}\\s*[~\\-]\\s*(?:(\\d{1,2})\\s*[/.月]\\s*)?(\\d{1,2})日?(?:\\s*\\(${JP}(?:曜日?)?\\))?(?![\\d/.:時限])`), (...m) => {
+      const [, y, mo, d, mo2, d2] = m;
+      const a = fixY(y, +mo, +d);
+      let b = a && mk(a.getFullYear(), +(mo2 || mo), +d2);
+      if (!a || !b) return false;
+      if (b < a) b = mk(b.getFullYear() + 1, b.getMonth() + 1, b.getDate());
+      const n = Math.round((b - a) / 864e5);
+      if (n > 31) return false;
+      for (let i = 0; i <= n; i++) dates.push(addDays(a, i));
+    });
+    // いくつも：11/3,10,17
+    take(new RegExp(`${D}((?:\\s*[,、・と]\\s*\\d{1,2}日?(?![\\d/.月時:限分]))+)`), (...m) => {
+      const [, y, mo, d, rest] = m;
+      const a = fixY(y, +mo, +d);
+      if (!a) return false;
+      dates.push(a);
+      for (const k of rest.match(/\d{1,2}/g)) {
+        let x = mk(a.getFullYear(), a.getMonth() + 1, +k);
+        if (x && x < a) x = mk(a.getFullYear(), a.getMonth() + 2, +k);
+        if (x) dates.push(x);
+      }
+    });
+    take(/(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/g, (_, y, mo, d) => { const x = mk(+y, +mo, +d); if (!x) return false; dates.push(x); });
+    take(new RegExp(D, 'g'), (...m) => {
+      const x = notDur(m) && fixY(m[1], +m[2], +m[3]);
+      if (!x) return false;
+      dates.push(x);
+    });
+    // 「3日」「来月10日」「3日と10日」
+    take(/(来月|再来月|今月)?の?(?<![\d/.])(\d{1,2})日(?!後|間|目|分|中|以内)((?:\s*[,、・と]\s*\d{1,2}日)*)/g, (_, mo, d, rest) => {
+      const add = mo === '来月' ? 1 : mo === '再来月' ? 2 : 0;
+      let ok = false;
+      for (const k of [d, ...(rest.match(/\d{1,2}/g) || [])]) {
+        let x = mk(today.getFullYear(), today.getMonth() + 1 + add, +k);
+        if (x && !mo && x < today) x = mk(today.getFullYear(), today.getMonth() + 2, +k); // 今月もう過ぎてたら来月
+        if (x) { dates.push(x); ok = true; }
+      }
+      if (!ok) return false;
+    });
+    for (const [re, n] of [[/明々後日|明明後日|しあさって/g, 3], [/明後日|あさって/g, 2], [/明日|あした|あす/g, 1], [/今日|本日|きょう/g, 0]])
+      take(re, () => { dates.push(addDays(today, n)); });
+    take(/(\d+)\s*日後/g, (_, n) => { dates.push(addDays(today, +n)); });
+    take(/(\d+)\s*週間後/g, (_, n) => { dates.push(addDays(today, 7 * n)); });
+    take(/(\d+)\s*[かヶカケ]月後/g, (_, n) => { dates.push(new Date(today.getFullYear(), today.getMonth() + +n, Math.min(today.getDate(), 28))); });
+    take(/(再来|来|今)?週末/, (_, w) => {
+      const sat = today.getDay() === 0 ? today : addDays(today, 6 - today.getDay());
+      dates.push(addDays(sat, w === '来' ? 7 : w === '再来' ? 14 : 0));
+    });
+    take(/(来月|今月)?月末/, (_, w) => { dates.push(new Date(today.getFullYear(), today.getMonth() + (w === '来月' ? 2 : 1), 0)); });
+    // 曜日：「来週の火曜」は来週の、「火曜」は次の火曜（今日が火曜なら、時刻がまだ来ていれば今日）
+    const addWd = (w, d) => {
+      const g = WDS.indexOf(d);
+      if (!w) return wdList.push(g);
+      const mon = addDays(today, -dayIndex(today) + (w === '来週' ? 7 : w === '再来週' ? 14 : 0));
+      dates.push(addDays(mon, (g + 6) % 7));
+    };
+    take(new RegExp(`(再来週|来週|今週)?の?(${JP})(?:曜日|曜)`, 'g'), (_, w, d) => { addWd(w, d); });
+    take(new RegExp(`(?<=[\\s${CUT}])(再来週|来週|今週)の?(${JP})(?=[\\s${CUT}]|に|は|の)`, 'g'), (_, w, d) => { addWd(w, d); });
+    take(new RegExp(`(?<=[\\s${CUT}])(${JP})(?=[\\s${CUT}])`, 'g'), (_, d) => { addWd('', d); });
+    take(/(再来週|来週)/, (_, w) => { dates.push(addDays(today, w === '来週' ? 7 : 14)); });
+
+    // 時限：「3限」「3-4限」（時刻は設定の時限から）
+    const setPeriod = (a, b) => {
+      r.period = a;
+      const ta = state.times[a - 1], tb = state.times[b - 1];
+      if (ta?.start) r.start = ta.start;
+      if (tb?.end) r.end = tb.end;
+    };
+    take(/(\d{1,2})\s*(?:[~\-]|から)\s*(\d{1,2})\s*限(?:目)?/, (_, a, b) => { setPeriod(+a, +b); });
+    take(/(\d{1,2})\s*限(?:目)?/, (_, a) => { setPeriod(+a, +a); });
+
+    // 時刻：19、19時、19:00、1900、19時半、午後7時、7pm、19-22、19時から22時まで
+    const toks = [];
+    for (const m of s.matchAll(/(?:(午前|午後|朝|夜|夕方|昼|深夜)\s*)?(\d{1,4})(?:\s*:\s*(\d{2})|\s*時(?:\s*(半)|\s*(\d{1,2})\s*分)?)?(?:\s*(am|pm))?/gi)) {
+      const [all, pre, num, mm, half, mm2, ap] = m;
+      const before = s[m.index - 1] ?? ' ', after = s.slice(m.index + all.length);
+      const hasJi = /時/.test(all);
+      if (hasJi && /^間/.test(after)) continue; // 「1時間」
+      const explicit = mm != null || hasJi || pre || ap;
+      let h, mi;
+      if (num.length >= 3) {
+        if (mm != null || hasJi) continue;
+        h = +num.slice(0, -2); mi = +num.slice(-2);
+      } else {
+        h = +num; mi = mm != null ? +mm : half ? 30 : mm2 != null ? +mm2 : 0;
+      }
+      // 数字だけ（「19」「1900」）は、前後が区切りのときだけ時刻と見る
+      if ((!explicit || num.length >= 3) && (!/[\s~\-\u0001]/.test(before) || !/^(?:\s|~|-|から|まで|に|\u0001|$)/.test(after))) continue;
+      const p = (pre || ap || '').toLowerCase();
+      if ((p === '午後' || p === 'pm' || p === '夜' || p === '夕方') && h < 12) h += 12;
+      if (p === '昼' && h < 6) h += 12;
+      if ((p === '午前' || p === 'am') && h === 12) h = 0;
+      if (h > 29 || mi > 59) continue;
+      if (h >= 24) h -= 24;
+      toks.push({ i: m.index, len: all.length, v: `${pad(h)}:${pad(mi)}` });
+    }
+    if (toks.length) {
+      const a = toks[0], b = toks[1];
+      let endAt = a.i + a.len;
+      r.start = a.v; r.end = '';
+      if (b && /^\s*(?:~|-|から)\s*$/.test(s.slice(endAt, b.i))) { r.end = b.v; endAt = b.i + b.len; }
+      const tail = s.slice(endAt).match(/^\s*(?:~|から|まで|頃|ごろ)?/)[0];
+      s = s.slice(0, a.i) + CUT + s.slice(endAt + tail.length);
+    }
+    if (!r.start) take(new RegExp(`(?<=[\\s${CUT}])(朝|昼|夕方|夜)(?=[\\s${CUT}]|に)`), (_, w) => { r.start = VAGUE[w]; });
+    take(/終日/);
+
+    // 抜いたところのすぐ後ろの助詞（「火曜に」の「に」）も消す
+    s = s.replace(/\u0001(?:までに|から|まで|ごろ|頃|に|は|の|で)?/g, ' ').replace(/\s+/g, ' ').trim();
+    let title = s;
+
+    // 曜日だけのとき・くり返しの日付
+    for (const g of wdList) {
+      let k = (g - today.getDay() + 7) % 7;
+      if (k === 0 && !(r.start && toMin(r.start) > nowMin)) k = 7;
+      dates.push(addDays(today, k));
+    }
+    if (rep) {
+      const first = dates.length ? dates.reduce((a, b) => a < b ? a : b) : today;
+      const tEnd = parseYmd(t?.end || '');
+      const far = addDays(today, 183);
+      let lim = rep.lim != null ? addDays(first, rep.lim) : tEnd && tEnd > first ? tEnd : addDays(first, rep.type === 'm' ? 183 : 83);
+      if (lim > far) lim = far;
+      dates.length = 0;
+      if (rep.type === 'm') {
+        for (let i = 0; i < 12; i++) {
+          const x = mk(first.getFullYear(), first.getMonth() + 1 + i, rep.day);
+          if (!x || x < today) continue;
+          if (x > lim) break;
+          dates.push(x);
+        }
+        r.rep = `毎月${rep.day}日`;
+      } else {
+        for (let d = first; d <= lim && dates.length < 60; d = addDays(d, 1)) {
+          if (!rep.days.includes(d.getDay())) continue;
+          if (+d === +today && r.start && toMin(r.start) <= nowMin) continue;
+          if (rep.step && dates.length && Math.round((d - dates[0]) / 864e5) % rep.step) continue;
+          dates.push(d);
+        }
+        r.rep = rep.lim === 13 ? '毎日' : rep.lim === 27 ? '平日' : (rep.step ? '隔週' : '毎週') + rep.days.map(g => WDS[g]).join('・');
+      }
+    }
+    let ds = [...new Set(dates.filter(Boolean).map(ymd))].sort();
+
+    // 授業：名前（略称）がいちばん長く合うもの。なければ「金曜 3限」から
+    let best = null, bestName = '';
+    for (const c of (t?.courses || [])) for (const n of [c.name, c.short]) {
+      const v = (n || '').trim();
+      if (!v || v.length <= bestName.length) continue;
+      if (v.length < 2 && !title.split(' ').includes(v)) continue;
+      if (title.toLowerCase().includes(v.toLowerCase())) { best = c; bestName = v; }
+    }
+    if (!best && r.period && ds.length === 1) {
+      const d = parseYmd(ds[0]);
+      best = (t?.courses || []).find(c => c.day === effDay(d, t) && c.period === r.period) || null;
+    }
+    const nameRe = bestName ? new RegExp(`(?:次回?の?\\s*)?${escRe(bestName)}(?:の)?`, 'i') : null;
+    if (nameRe && new RegExp(`次回?の?\\s*${escRe(bestName)}`, 'i').test(title)) r.next = true;
+    const noName = () => (nameRe ? title.replace(nameRe, ' ') : title).replace(/\s+/g, ' ').trim();
+    if (best) r.cid = best.id;
+
+    // 種類
+    const preset = (state.evPresets || []).find(p => p.title === title);
+    const custom = (state.evKinds || []).find(k => title.includes(k.name));
+    if (KW.cancel.test(title) && best) r.kind = 'cancel';
+    else if (KW.item.test(title) || (r.next && best && !KW.task.test(title) && !KW.exam.test(title))) {
+      const thing = noName().replace(KW.item, ' ').replace(/(?:^|\s)次回?の?(?=\s|$)/g, ' ').replace(/を(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+      if (best) { r.kind = 'item'; r.title = thing; }
+      else { r.kind = 'todo'; r.title = thing ? `${thing}を持っていく` : title; }
+    } else if (KW.task.test(title)) {
+      r.kind = 'task';
+      r.title = noName().replace(/(?:の)?(?:締め?切り?|〆切?|しめきり)|までに|まで/g, ' ').replace(/\s+/g, ' ').trim() || '課題';
+    } else if (KW.exam.test(title)) {
+      r.kind = 'ev'; r.evKind = 'exam'; r.title = title;
+    } else if (KW.todo.test(title)) {
+      r.kind = 'todo'; r.title = title.replace(KW.todo, '').trim();
+    } else {
+      r.kind = 'ev'; r.title = title;
+      if (KW.job.test(title)) r.evKind = 'job';
+      else if (custom) r.evKind = custom.id;
+      else if (preset) r.evKind = preset.kind;
+      if (preset && !r.start) { r.start = preset.start; r.end = preset.end; }
+      // 日付も時刻もくり返しもない、ただの一言は「今日のToDo」
+      if (!ds.length && !r.start && !r.place && !r.gid && !preset && !KW.job.test(title) && !custom) r.kind = 'todo';
+    }
+    if (r.kind === 'ev' && r.evKind === 'job' && !featOn('job')) r.evKind = 'other';
+    if (r.kind === 'todo' && !featOn('todo')) { r.kind = 'ev'; r.evKind = 'other'; }
+
+    // 日付がないとき
+    const nextClass = c => { const x = occurrencesAhead(c, 1, t, now)[0]; return x ? ymd(x) : ''; };
+    if (!ds.length) {
+      if (r.kind === 'cancel' || (r.kind === 'task' && best)) { const n = nextClass(best); if (n) ds = [n]; }
+      else if (r.kind === 'todo') ds = [ymd(today)];
+      else if (r.kind === 'ev') ds = [ymd(r.start && toMin(r.start) <= nowMin ? addDays(today, 1) : today)]; // 時刻が過ぎてたら明日
+    }
+    if (r.kind === 'cancel') {
+      r.title = '';
+      for (const k of ds) if (!hasClass(best, parseYmd(k), t)) r.warn.push(`${md(parseYmd(k))}は「${nm(best)}」の授業がないみたい`);
+    }
+    if (r.kind === 'ev' && r.evKind === 'exam' && !r.title) r.title = best ? `${nm(best)} 試験` : '試験';
+    if (r.kind === 'item' && !r.title) r.warn.push('持っていくものを書いてね');
+    if (r.kind === 'task' || r.kind === 'item' || r.kind === 'todo' || r.kind === 'cancel') ds = ds.slice(0, r.kind === 'cancel' ? 31 : 1);
+    if (r.kind !== 'ev') { r.gid = ''; r.remind = 0; r.place = ''; }
+    if (r.remind && !window.Capacitor?.isNativePlatform?.()) r.warn.push('「○分前」の通知はアプリ版だけ');
+    else if (r.remind && !state.notify?.on) r.warn.push('通知がオフだから「○分前」は届かないよ（設定 → 通知）');
+    if (r.kind === 'ev' && !r.place && r.title) r.place = evPlaceDefault(r.title);
+    r.dates = ds;
+    return r;
+  };
+
+  // 読み取った（直した）ものを入れる
+  const LABEL = { task: '課題', item: '持ち物', cancel: '休講', todo: 'ToDo' };
+  const labelOf = x => x.kind === 'ev' ? (EV_LABEL[x.evKind] || (state.evKinds || []).find(k => k.id === x.evKind)?.name || '予定') : LABEL[x.kind];
+  window.qaApply = list => {
+    const t = term(), now = Date.now();
+    const grList = list.filter(x => x.kind === 'ev' && x.gid);
+    if (grList.length && !grMe()) { alert('先に「共有グループ」で自分の名前を入れてね'); return false; }
+    if (grList.some(x => typeof ngCheck === 'function' && ngCheck(x.title))) { alert('タイトルに使えない言葉が入ってるみたい。書き直してね'); return false; }
+    const n = list.reduce((a, x) => a + (x.kind === 'ev' || x.kind === 'cancel' ? x.dates.length : 1), 0);
+    const x0 = list[0];
+    const msg = list.length === 1 && n === 1
+      ? `${labelOf(x0)}${x0.title ? `「${x0.title}」` : ''}を${x0.dates[0] ? md(parseYmd(x0.dates[0])) + 'に' : ''}入れたよ`
+      : `${n}件入れたよ`;
+    for (const x of grList) for (const date of x.dates)
+      grAdd(x.gid, { kind: x.evKind, title: x.title, start: x.start, end: x.end, date, lockSet: false }).catch(grFail);
+    withUndo(msg, () => {
+      for (const x of list) {
+        const c = x.cid ? findCourse(x.cid) : null;
+        if (x.kind === 'ev' && !x.gid) {
+          const memo = x.place ? memoWithPlace('', x.place) : '';
+          for (const date of x.dates) {
+            const dup = state.events.some(e => e.date === date && e.kind === x.evKind && e.title === x.title && e.start === x.start && e.end === x.end);
+            if (dup) continue;
+            state.events.push({ id: uid(), date, kind: x.evKind, title: x.title, start: x.start, end: x.end,
+              ...(memo && { memo }), ...(x.remind && { remind: x.remind }), ...(x.evKind === 'exam' && x.cid && { cid: x.cid }) });
+          }
+          rememberPreset({ title: x.title, kind: x.evKind, start: x.start, end: x.end });
+          if (x.place && x.title) setEvPlace(x.title, x.place);
+        } else if (x.kind === 'task') {
+          const k = { id: uid(), title: x.title || '課題', due: x.dates[0] || '', done: false };
+          if (c) c.tasks.push(k); else state.myTasks.push(k);
+        } else if (x.kind === 'item' && c) {
+          const added = x.dates[0] ? parseYmd(x.dates[0]).getTime() : now;
+          c.items.push({ id: uid(), text: x.title, type: 'next', added, until: untilFor(c, t, new Date(added)), ...(x.dates[0] && { from: x.dates[0] }) });
+          state.itemHistory = [x.title, ...state.itemHistory.filter(v => v !== x.title)].slice(0, HISTORY_MAX);
+        } else if (x.kind === 'cancel' && c) {
+          for (const date of x.dates) if (!t.cancels.some(v => v.courseId === c.id && v.date === date)) t.cancels.push({ id: uid(), courseId: c.id, date });
+        } else if (x.kind === 'todo') {
+          if (!Array.isArray(state.todos)) state.todos = [];
+          state.todos.push({ id: uid(), date: x.dates[0] || todayStr(), text: x.title.slice(0, 60), done: false });
+        }
+      }
+    });
+    for (const f of [renderCal, renderDay, window.renderTodo, renderEvSuggest]) try { f?.(); } catch {}
+    return true;
+  };
+
+  // ===== 画面：今日タブのいちばん上の欄（＋ボタンの画面にも同じものを移して使う） =====
+  const EXAMPLES = ['明日19時 飲み会 @渋谷', '11/10 統計 レポート提出', '次の英語 辞書', '金曜 3限 統計 小テスト',
+    '毎週火曜 18-22 バイト', '11/12 統計 休講', '土曜 13時 ゼミ 30分前', '印鑑を持ってく 明日', '11/3~11/5 合宿'];
+  const box = document.createElement('div');
+  box.id = 'qaBox';
+  box.innerHTML =
+    '<div class="qaRow"><textarea id="qaIn" rows="1" placeholder="例：明日19時 飲み会 @渋谷" aria-label="ひとことで追加" autocomplete="off" enterkeyhint="done"></textarea>' +
+    '<button type="button" class="primary" id="qaGo" disabled>追加</button></div>' +
+    '<ul class="qaPrev" id="qaPrev"></ul>' +
+    '<p class="qaTools"><button type="button" class="linkBtn" id="qaHow">書き方の例</button>' +
+    '<button type="button" class="linkBtn" id="qaAi" hidden>AIで読み直す</button><span class="hint" id="qaSt"></span></p>' +
+    `<div class="qaEx" id="qaEx" hidden><p class="hint">押すと入るよ。何行もまとめて貼り付けてもいい（1行1件）</p>${EXAMPLES.map(e => `<button type="button" class="qaChip" data-qex="${esc(e)}">${esc(e)}</button>`).join('')}` +
+    '<p class="hint">日付：11/3・3日・明日・火曜・来週の金曜・3日後・月末／時刻：19・19時半・19-22・3限・夜<br>' +
+    '「提出」「締切」→課題、「持ってく」「次の○○」→持ち物、「休講」→休講、「テスト」→試験、「バイト」→バイト<br>' +
+    '毎週火曜・毎月25日・平日 → くり返し、@場所、30分前 → 通知、#グループ名 → 共有</p></div>';
+  const card = document.createElement('section');
+  card.id = 'qaCard';
+  card.className = 'card';
+  card.innerHTML = '<h2 class="qaH">ひとことで追加</h2>';
+  card.append(box);
+  $('#view-today').prepend(card);
+
+  const dlg = document.createElement('dialog');
+  dlg.id = 'qaDlg';
+  dlg.innerHTML = '<div class="dlgHead"><h2>ひとことで追加</h2><button type="button" class="x big" id="qaX" aria-label="閉じる">×</button></div>' +
+    '<div id="qaSlot"></div><h3 class="qaMoreH">ほかの入れ方</h3><div class="qaMore" id="qaMore"></div>';
+  document.body.append(dlg);
+  $('#qaX').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => card.append(box));
+
+  const inp = $('#qaIn');
+  let ovr = {}; // 行の文 → 手で直したところ
+  const lines = () => inp.value.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 30);
+  const fix = x => {
+    if (['item', 'cancel'].includes(x.kind) && !x.cid) x.cid = courses().find(c => c.name)?.id || '';
+    if (!x.dates.length) {
+      if (x.kind === 'cancel' && x.cid) { const c = findCourse(x.cid), d = c && occurrencesAhead(c, 1)[0]; if (d) x.dates = [ymd(d)]; }
+      else if (x.kind === 'ev' || x.kind === 'todo') x.dates = [todayStr()];
+    }
+    return x;
+  };
+  const plan = () => lines().map(l => fix({ ...qaParse(l), ...(ovr[l] || {}) }));
+  const KINDS = () => [['ev:other', '予定'], ...(featOn('job') ? [['ev:job', 'バイト']] : []), ['ev:exam', '試験'],
+    ...(state.evKinds || []).map(k => ['ev:' + k.id, k.name]), ['task', '課題'],
+    ...(state.useGrid ? [['item', '持ち物'], ['cancel', '休講']] : []), ...(featOn('todo') ? [['todo', 'ToDo']] : [])];
+  const bad = x => (['item', 'cancel'].includes(x.kind) && !x.cid) || (x.kind === 'item' && !x.title) || (x.kind === 'cancel' && !x.dates.length);
+  const row = (x, i) => {
+    const k = x.kind === 'ev' ? 'ev:' + x.evKind : x.kind;
+    const d0 = x.dates[0] || '';
+    const cs = courses().filter(c => c.name);
+    return `<li class="qaItem${bad(x) ? ' qaBad' : ''}" data-qi="${i}">` +
+      `<select data-qf="kind" aria-label="種類">${KINDS().map(([v, n]) => `<option value="${v}"${v === k ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>` +
+      (['task', 'item', 'cancel'].includes(x.kind)
+        ? `<select data-qf="cid" aria-label="授業">${x.kind === 'task' ? '<option value="">じぶん</option>' : ''}` +
+          cs.map(c => `<option value="${c.id}"${c.id === x.cid ? ' selected' : ''}>${esc(nm(c))}</option>`).join('') + '</select>' : '') +
+      (x.kind === 'item' && !d0 ? '<span class="qaChip">次の授業</span>'
+        : `<span class="qaDate"><input type="date" data-qf="date" value="${d0}" aria-label="${x.kind === 'task' ? '締切' : '日付'}">` +
+          `<small>${d0 ? WEEK[parseYmd(d0).getDay()] : '締切なし'}</small></span>`) +
+      (x.dates.length > 1 ? `<span class="qaChip">ほか${x.dates.length - 1}日${x.rep ? `（${esc(x.rep)}）` : ''}</span>` : '') +
+      (x.kind === 'ev' ? `<input type="time" data-qf="start" value="${x.start}" aria-label="開始"><span class="qaTil">〜</span><input type="time" data-qf="end" value="${x.end}" aria-label="終了">` : '') +
+      (x.kind !== 'cancel' ? `<input class="qaTitle" data-qf="title" value="${esc(x.title)}" placeholder="${x.kind === 'item' ? '持っていくもの' : 'タイトル'}" aria-label="タイトル" autocomplete="off" maxlength="60">` : '') +
+      (x.place ? `<span class="qaChip">📍${esc(x.place)}</span>` : '') +
+      (x.remind ? `<span class="qaChip">${x.remind < 60 ? x.remind + '分' : fmtLeft(x.remind * 60000)}前に通知</span>` : '') +
+      (x.gid ? `<span class="qaChip">${esc(grNames[x.gid] || 'グループ')}に共有</span>` : '') +
+      (x.warn.length ? `<small class="qaWarn">⚠ ${x.warn.map(esc).join('／')}</small>` : '') + '</li>';
+  };
+  const draw = () => {
+    const p = plan();
+    $('#qaPrev').innerHTML = p.map(row).join('');
+    $('#qaGo').disabled = !p.length || p.some(bad);
+    $('#qaGo').textContent = p.length > 1 ? `${p.length}件追加` : '追加';
+    $('#qaAi').hidden = !p.length || !state.keys?.[state.provider] || !featOn('ai');
+    for (const k of Object.keys(ovr)) if (!lines().includes(k)) delete ovr[k];
+  };
+  const grow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 160) + 'px'; };
+  let tm = 0;
+  inp.addEventListener('input', () => { grow(); clearTimeout(tm); tm = setTimeout(draw, 120); });
+  inp.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    clearTimeout(tm); draw();
+    if (!$('#qaGo').disabled) $('#qaGo').click();
+  });
+  // プレビューを直す
+  const edit = (e, redraw) => {
+    const f = e.target.dataset.qf, li = e.target.closest('[data-qi]');
+    if (!f || !li) return;
+    const x = plan()[+li.dataset.qi], o = (ovr[x.src] ||= {}), v = e.target.value;
+    if (f === 'kind') {
+      const [kind, evKind] = v.split(':');
+      Object.assign(o, { kind, ...(evKind && { evKind }), warn: [] });
+      if (kind === 'todo' || kind === 'task' || kind === 'item') o.dates = x.dates.slice(0, 1);
+    } else if (f === 'date') {
+      if (!v) o.dates = [];
+      else if (x.dates[0]) { const k = Math.round((parseYmd(v) - parseYmd(x.dates[0])) / 864e5); o.dates = x.dates.map(d => ymd(addDays(parseYmd(d), k))); }
+      else o.dates = [v];
+      o.warn = [];
+    } else o[f] = v;
+    if (redraw) draw();
+  };
+  $('#qaPrev').addEventListener('change', e => edit(e, true));
+  $('#qaPrev').addEventListener('input', e => { if (e.target.dataset.qf === 'title') edit(e, false); });
+  $('#qaGo').onclick = () => {
+    const p = plan();
+    if (!p.length || p.some(bad)) return;
+    if (qaApply(p) === false) return;
+    inp.value = ''; ovr = {}; grow(); draw();
+    if (dlg.open) dlg.close();
+  };
+  $('#qaHow').onclick = () => { $('#qaEx').hidden = !$('#qaEx').hidden; };
+  $('#qaEx').addEventListener('click', e => {
+    const b = e.target.closest('[data-qex]');
+    if (!b) return;
+    inp.value = (inp.value.trim() ? inp.value.trim() + '\n' : '') + b.dataset.qex;
+    grow(); draw(); inp.focus();
+  });
+  // 長い文（LINEの文・お知らせのメール）は AI に1件1行へ書き直してもらって、同じ読み取りに通す
+  $('#qaAi').onclick = async () => {
+    const st = $('#qaSt'), today = clock();
+    const names = courses().map(c => c.name).filter(Boolean).join('、') || 'なし';
+    const prompt = `今日は${ymd(today)}(${WEEK[today.getDay()]})。次の文から、予定・締切・持ち物を全部取り出して、1件1行で書き直して。\n` +
+      '形式：予定は「YYYY-MM-DD HH:MM-HH:MM タイトル @場所」（時刻・場所が分からなければ省く）、締切は「YYYY-MM-DD 授業名 タイトル 提出」、持ち物は「YYYY-MM-DD 授業名 もの 持ってく」、休講は「YYYY-MM-DD 授業名 休講」。\n' +
+      `授業名はこの中から選ぶ（当てはまらなければ書かない）：${names}\n説明・番号・記号は付けず、行だけを返して。\n\n文：\n${inp.value}`;
+    $('#qaAi').disabled = true;
+    st.textContent = '読み直し中…';
+    try {
+      const txt = await callVision(null, prompt, st);
+      const out = txt.replace(/```\w*/g, '').split('\n').map(l => l.replace(/^[-・*\d.)\s]+(?=\d{4}-)/, '').trim()).filter(Boolean).join('\n');
+      if (out) { inp.value = out; ovr = {}; grow(); draw(); }
+      st.textContent = out ? '読み直したよ。合ってるか見てから追加してね' : '読み取れなかった';
+    } catch (err) {
+      st.textContent = friendlyError(err);
+    }
+    $('#qaAi').disabled = false;
+  };
+
+  // ＋ボタン：押すと「ひとことで追加」（前のメニューは「ほかの入れ方」として下に並べる）。その他タブ以外で出す
+  window.openQa = () => {
+    if (!dlg.open) { $('#qaSlot').append(box); dlg.showModal(); }
+    inp.focus();
+    draw();
+  };
+  const menu = $('#fabMenu');
+  $('#qaMore').append(menu);
+  menu.hidden = false;
+  closeFab = () => { $('#fabBtn').classList.remove('open'); };
+  $('#fabBtn').onclick = () => openQa();
+  menu.addEventListener('click', e => { if (e.target.closest('[data-fab]')) dlg.close(); }, true);
+  const st0 = showTab;
+  const fabSync = () => { $('#fab').hidden = curTab === 'more'; };
+  showTab = function () { const r = st0.apply(this, arguments); fabSync(); return r; };
+  fabSync();
+
+  if (typeof FEATURES !== 'undefined') FEATURES.push({
+    id: 'quickAdd', name: 'ひとことで追加', where: '今日 → いちばん上（＋ボタンからも）',
+    desc: '「明日19時 飲み会」「11/10 統計 レポート提出」「次の英語 辞書」みたいに書くと、予定・課題・持ち物・休講に入れる',
+    kw: '追加 予定 入力 かんたん 一言 ひとこと 自然 文章 クイック', go: () => openQa()
+  });
+}
+
+/* ===== アプリの外から開く（ウィジェットのボタン・アイコンの長押し：gakulog://add など） ===== */
+{
+  const dlg = document.createElement('dialog');
+  dlg.id = 'clsDlg';
+  document.body.append(dlg);
+  // 今日の授業：欠席・板書・ノートをここから
+  const openClasses = focus => {
+    const d = parseYmd(todayStr()), cs = coursesOn(d).filter(c => c.day >= 0);
+    const k = todayStr();
+    dlg.innerHTML = '<div class="dlgHead"><h2>今日の授業</h2><button type="button" class="x big" data-clsx aria-label="閉じる">×</button></div>' +
+      (cs.length ? '<ul class="clsList">' + cs.map(c => {
+        const on = c.absences.includes(k);
+        return `<li><b>${c.period}限 ${esc(nm(c))}</b><span>` +
+          `<button type="button" class="flowAbs${on ? ' on' : ''}${focus === 'absent' ? ' qaFocus' : ''}" data-clsabs="${c.id}">${on ? '欠席済' : '欠席'}</button>` +
+          `<button type="button" data-ico="camera" data-cam="${c.id}"${focus === 'photo' ? ' class="qaFocus"' : ''}>板書</button>` +
+          `<button type="button" data-ico="note" data-clsnote="${c.id}"${focus === 'note' ? ' class="qaFocus"' : ''}>ノート</button></span></li>`;
+      }).join('') + '</ul>' : '<p class="muted">今日は授業がないよ</p>');
+    if (!dlg.open) dlg.showModal();
+  };
+  dlg.addEventListener('click', e => {
+    if (e.target.closest('[data-clsx]')) return dlg.close();
+    if (e.target.closest('[data-cam]')) return dlg.close(); // カメラは document の方で開く
+    const n = e.target.closest('[data-clsnote]');
+    if (n) { dlg.close(); return window.mnOpen?.(null, findCourse(n.dataset.clsnote)); }
+    const a = e.target.closest('[data-clsabs]');
+    if (a) {
+      const c = findCourse(a.dataset.clsabs), d = todayStr();
+      if (!c) return;
+      const on = c.absences.includes(d);
+      withUndo(on ? `「${nm(c)}」の欠席を取り消したよ` : `「${nm(c)}」を欠席にしたよ`, () => {
+        c.absences = on ? c.absences.filter(x => x !== d) : c.absences.concat(d);
+      });
+      openClasses('absent');
+    }
+  });
+  // 今の授業（なければ今日の次の授業）
+  const nowClass = () => {
+    const now = new Date(), d = parseYmd(todayStr());
+    const cs = coursesOn(d).filter(c => c.day >= 0).map(c => ({ c, o: occurrence(c, d) })).filter(x => x.o);
+    return (cs.find(x => x.o.start - 10 * 60000 <= now && now <= x.o.end) || cs.find(x => x.o.start > now))?.c || null;
+  };
+  const go = route => {
+    document.querySelectorAll('dialog[open]').forEach(x => { if (x.id !== 'qaDlg') x.close(); });
+    if (route === 'add') return openQa();
+    if (route === 'grid') return showTab(state.useGrid ? 'grid' : 'today');
+    if (route === 'cal') return showTab('cal');
+    if (route === 'today') return showTab('today');
+    if (route === 'todo') { showTab('today'); return setTimeout(() => { $('#todoCard')?.scrollIntoView({ block: 'center' }); $('#todoIn')?.focus(); }, 60); }
+    if (route === 'pack') { showTab('today'); return setTimeout(() => $('#packCard')?.scrollIntoView({ block: 'center' }), 60); }
+    if (route === 'task') return $('#fabMenu [data-fab="task"]')?.click();
+    if (route === 'absent' || route === 'photo') return openClasses(route);
+    if (route === 'note') { const c = nowClass(); return c ? window.mnOpen?.(null, c) : openClasses('note'); }
+  };
+  window.openRoute = go;
+  const fromUrl = u => {
+    const m = /^gakulog:\/\/(\w+)/.exec(u || '');
+    if (m && m[1] !== 'alarm') setTimeout(() => go(m[1]), 300); // 目覚ましは目覚ましの section で開く
+  };
+  const APP = window.Capacitor?.Plugins?.App;
+  APP?.addListener?.('appUrlOpen', e => fromUrl(e?.url));
+  APP?.getLaunchUrl?.().then(r => fromUrl(r?.url)).catch(() => {});
 }
