@@ -1106,7 +1106,7 @@ dialog {
 #fmClose { margin-top: 10px; width: 100%; }
 
 /* ウィジェットのプレビュー */
-.wgPrevBtn { margin-right: 6px; }
+.wgPrevBtn { margin-right: 6px; flex: none; white-space: nowrap; } /* 説明が長くても縦書きにならないように */
 .wpWrap { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 8px 0; }
 .wp { position: relative; box-sizing: border-box; overflow: hidden; padding: 14px; border-radius: 22px; font-size: 12px; line-height: 1.35; }
 .wp-s { width: 158px; height: 158px; }
@@ -1878,6 +1878,4 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 #groupDlg[data-tab="groups"] #gActs,
 #groupDlg[data-tab="acts"] #gPush, #groupDlg[data-tab="acts"] #gList,
 #groupDlg[data-tab="acts"] .dlg > h3, #groupDlg[data-tab="acts"] .dlg > .row, #groupDlg[data-tab="acts"] .dlg > label { display: none; }
-/* ポイント：お試しのコード */
-.ptCode { margin-top: 14px; }
-.ptCode summary { color: var(--muted); font-size: 13px; }
+.ptShop [data-buy], .ptShop .ptGot { flex: none; white-space: nowrap; }

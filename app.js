@@ -7735,7 +7735,7 @@ const PT_BONUS = [[7, 5], [30, 30]]; // [何日連続ごと, もらえるポイ�
 // 交換できるもの：ウィジェットのデザイン [id, 名前, 説明, ポイント]
 // 新しく足すときは、iOS（widget.swift の wgTheme）と Android（GakuWidget.java の theme と drawable/wg_bg_*.xml）、下の WG_LOOK にも足す
 var WG_THEMES = [
-  ['wg-plain', 'プレーン', '飾りなし。白（ダークモードは黒）に文字だけ', 10],
+  ['wg-plain', 'プレーン', '飾りなし。文字だけ', 10],
   ['wg-mint', 'ミント', '🌿 さわやかな緑', 10],
   ['wg-sakura', 'さくら', '🌸 やわらかいピンク', 20],
   ['wg-peach', 'もも', '🍑 あわいピーチ', 30],
@@ -7803,22 +7803,8 @@ ptDlg.id = 'ptDlg';
 ptDlg.innerHTML =
   '<div class="dlg">' +
   '<div class="dlgHead"><h2>ポイント</h2><button type="button" class="x big" data-ptclose aria-label="閉じる">×</button></div>' +
-  '<div id="ptBody"></div>' +
-  // ★ お試し用：コードを入れるとポイントがもらえる（ウィジェットなどの交換を試すため。試し終わったら、この欄と下の ptCodeGo を消す）
-  '<details class="ptCode"><summary>コードを入れる</summary><div class="row">' +
-  '<input id="ptCodeIn" autocomplete="off" autocapitalize="characters" placeholder="コード" aria-label="コード">' +
-  '<button type="button" id="ptCodeGo">使う</button></div></details></div>';
+  '<div id="ptBody"></div></div>';
 document.body.append(ptDlg);
-const PT_CODES = { GAKUTEST: 3000 }; // ★ お試し用（何回でも使える）
-$('#ptCodeGo').onclick = () => {
-  const n = PT_CODES[$('#ptCodeIn').value.trim().toUpperCase()];
-  if (!n) return toast('そのコードは使えないみたい');
-  ptState().pt += n;
-  save();
-  $('#ptCodeIn').value = '';
-  renderPoints(); renderPtBtn();
-  toast(`${n}pもらったよ`);
-};
 
 // 交換所をグループに分けてたたむ
 const SHOP_GROUPS = [
