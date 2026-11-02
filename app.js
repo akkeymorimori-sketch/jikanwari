@@ -10107,16 +10107,26 @@ document.addEventListener('click', e => {
     box.innerHTML = '<div class="icList" id="icList"></div>' +
       '<p class="hint" id="icHint">変えるとiPhoneから確認が出るよ</p>';
     $('#iconBox').append(box);
+    // 一覧はすぐ出す（今のアイコンを聞く返事を待たない。まれに返事が来なくて、一覧が空のままになってた）。
+    // 中身が変わらないときは作り直さない（開くたびに画像を作り直すと、まれに画像が出ないことがある）
+    let now = null, html = '';
+    const mark = () => $('#icList').querySelectorAll('[data-icon]').forEach(b => b.classList.toggle('on', (now || '') === b.dataset.icon));
     const render = async () => {
-      let now = null;
-      try { now = (await AI.getCurrentIcon()).icon; } catch {}
+      let owned = () => false;
+      try { ptOwned('ic-x'); owned = ptOwned; } catch {}
       // 交換したアイコンも並べる。まだのものは 🔒 とポイント（押すとポイントの画面へ）
-      $('#icList').innerHTML = ICONS.map(([id, name, img]) =>
-        `<button type="button" data-icon="${id}" class="${(now || '') === id ? 'on' : ''}">` +
-        `<img src="${img}" alt="">${name}</button>`).join('') +
-        IC_SHOP.map(([id, name, cost]) => ptOwned('ic-' + id)
-          ? `<button type="button" data-icon="${id}" class="${now === id ? 'on' : ''}"><img src="icon-${id}.png" alt="">${name}</button>`
+      const h = ICONS.map(([id, name, img]) =>
+        `<button type="button" data-icon="${id}"><img src="${img}" alt="">${name}</button>`).join('') +
+        IC_SHOP.map(([id, name, cost]) => owned('ic-' + id)
+          ? `<button type="button" data-icon="${id}"><img src="icon-${id}.png" alt="">${name}</button>`
           : `<button type="button" class="icLock" data-iclock="${id}"><img src="icon-${id}.png" alt=""><small>🔒 ${cost}p</small></button>`).join('');
+      if (h !== html || !$('#icList').children.length) { $('#icList').innerHTML = h; html = h; }
+      mark();
+      try {
+        const r = await Promise.race([AI.getCurrentIcon(), new Promise((_, ng) => setTimeout(ng, 3000))]);
+        now = r?.icon || null;
+      } catch {}
+      mark();
     };
     // 開くたびに描き直す（ほかの画面で交換したアイコンも出るように）
     new MutationObserver(() => { if (wallDlg.open) render(); }).observe(wallDlg, { attributes: true, attributeFilter: ['open'] });
@@ -10137,7 +10147,7 @@ document.addEventListener('click', e => {
       render();
     };
     // 変えられないときも空にしないで、理由を出す
-    const no = msg => { $('#icList').innerHTML = ''; $('#icHint').textContent = msg; };
+    const no = msg => { $('#icList').innerHTML = ''; html = ''; $('#icHint').textContent = msg; };
     // 確認に失敗したときも一覧は出す（押して変えられなければ、そのときに理由が出る）
     AI.isAvailable().then(r => r.available === false ? no('このiPhoneではアイコンを変えられないみたい') : render())
       .catch(() => render());
