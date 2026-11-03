@@ -14122,7 +14122,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // 全角・漢数字・いろんな「〜」をそろえる
   const norm = s => String(s || '').normalize('NFKC')
     .replace(/[〜～]/g, '~').replace(/[‐‑–—―]/g, '-').replace(/(\d)\s*ー\s*(\d)/g, '$1-$2')
-    .replace(/[〇零一二三四五六七八九十]+(?=[時日月分限])/g, m => kanjiNum(m))
+    .replace(/[〇零一二三四五六七八九十]+(?=[時日月分限])/g, (m, i, all) => m === '一' && all[i + 1] === '日' && all[i - 1] !== '月' ? m : kanjiNum(m)) // 「一日」（いちにち）はそのまま
     .replace(/\s+/g, ' ').trim();
   const pad = n => String(n).padStart(2, '0');
   const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -14138,6 +14138,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     exam: /(?:小テスト|テスト|試験|中間|期末|追試|再試)(?!勉強|対策|範囲|前)/,
     job: /バイト|シフト|勤務|出勤/,
     todo: /^(?:todo|やること)(?:\s|$)/i,
+    // 「帰りに牛乳」「レポート印刷しなきゃ」：時刻がなければToDo（日付があればその日のToDo）
+    todoish: /帰りに|帰りがけ|行きに|あとで|後で|買う|買って|買い物|しなきゃ|しないと|しておく|しとく|やっとく|やらなきゃ|返す|返却|予約する|申し込む|振り?込む|払う/,
+    // 「日記：〜」「今日は〜があった」「〜楽しかった」：過去のことは一言日記
+    diary: /^(?:日記|にっき)\s*[:：]?\s*/,
+    past: /(?:った|た|だった|かった|でした|ました|ちゃった|じゃった)(?:[!！?？。…〜~ｗw笑]|な|なぁ|なー|よ|ね|わ)*$/,
   };
   const VAGUE = { 朝: '08:00', 昼: '12:00', 夕方: '17:00', 夜: '19:00' };
 
@@ -14357,6 +14362,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       r.kind = 'ev'; r.evKind = 'exam'; r.title = title;
     } else if (KW.todo.test(title)) {
       r.kind = 'todo'; r.title = title.replace(KW.todo, '').trim();
+    } else if (featOn('diary') && (KW.diary.test(title) || (KW.past.test(title) && !r.start && !rep && !r.place && !r.gid))
+      && !(ds[0] > ymd(today))) {
+      // 日記は今日か前の日だけ（先の日付なら予定として読む）
+      r.kind = 'diary'; r.title = title.replace(KW.diary, '').trim();
+    } else if (featOn('todo') && KW.todoish.test(title) && !r.start && !rep && !r.gid) {
+      r.kind = 'todo'; r.title = title;
     } else {
       r.kind = 'ev'; r.title = title;
       if (KW.job.test(title)) r.evKind = 'job';
@@ -14373,7 +14384,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const nextClass = c => { const x = occurrencesAhead(c, 1, t, now)[0]; return x ? ymd(x) : ''; };
     if (!ds.length) {
       if (r.kind === 'cancel' || (r.kind === 'task' && best)) { const n = nextClass(best); if (n) ds = [n]; }
-      else if (r.kind === 'todo') ds = [ymd(today)];
+      else if (r.kind === 'todo' || r.kind === 'diary') ds = [ymd(today)];
       else if (r.kind === 'ev') ds = [ymd(r.start && toMin(r.start) <= nowMin ? addDays(today, 1) : today)]; // 時刻が過ぎてたら明日
     }
     if (r.kind === 'cancel') {
@@ -14382,7 +14393,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     }
     if (r.kind === 'ev' && r.evKind === 'exam' && !r.title) r.title = best ? `${nm(best)} 試験` : '試験';
     if (r.kind === 'item' && !r.title) r.warn.push('持っていくものを書いてね');
-    if (r.kind === 'task' || r.kind === 'item' || r.kind === 'todo' || r.kind === 'cancel') ds = ds.slice(0, r.kind === 'cancel' ? 31 : 1);
+    if (r.kind === 'task' || r.kind === 'item' || r.kind === 'todo' || r.kind === 'diary' || r.kind === 'cancel') ds = ds.slice(0, r.kind === 'cancel' ? 31 : 1);
+    if (r.kind === 'diary' && !r.title) r.warn.push('日記に書くことを入れてね');
     if (r.kind !== 'ev') { r.gid = ''; r.remind = 0; r.place = ''; }
     if (r.remind && !window.Capacitor?.isNativePlatform?.()) r.warn.push('「○分前」の通知はアプリ版だけ');
     else if (r.remind && !state.notify?.on) r.warn.push('通知がオフだから「○分前」は届かないよ（設定 → 通知）');
@@ -14392,7 +14404,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   };
 
   // 読み取った（直した）ものを入れる
-  const LABEL = { task: '課題', item: '持ち物', cancel: '休講', todo: 'ToDo' };
+  const LABEL = { task: '課題', item: '持ち物', cancel: '休講', todo: 'ToDo', diary: '日記' };
   const labelOf = x => x.kind === 'ev' ? (EV_LABEL[x.evKind] || (state.evKinds || []).find(k => k.id === x.evKind)?.name || '予定') : LABEL[x.kind];
   window.qaApply = list => {
     const t = term(), now = Date.now();
@@ -14428,6 +14440,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
           state.itemHistory = [x.title, ...state.itemHistory.filter(v => v !== x.title)].slice(0, HISTORY_MAX);
         } else if (x.kind === 'cancel' && c) {
           for (const date of x.dates) if (!t.cancels.some(v => v.courseId === c.id && v.date === date)) t.cancels.push({ id: uid(), courseId: c.id, date });
+        } else if (x.kind === 'diary' && x.title) {
+          // その日の一言日記に足す（もう書いてあれば後ろにつなげる）
+          const k = x.dates[0] || todayStr(), old = state.diary[k] || '';
+          state.diary[k] = (old && !old.includes(x.title) ? old + ' ' + x.title : old || x.title).slice(0, 200);
         } else if (x.kind === 'todo') {
           if (!Array.isArray(state.todos)) state.todos = [];
           state.todos.push({ id: uid(), date: x.dates[0] || todayStr(), text: x.title.slice(0, 60), done: false });
@@ -14440,7 +14456,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 
   // ===== 画面：今日タブのいちばん上の欄（＋ボタンの画面にも同じものを移して使う） =====
   const EXAMPLES = ['明日19時 飲み会 @渋谷', '11/10 統計 レポート提出', '次の英語 辞書', '金曜 3限 統計 小テスト',
-    '毎週火曜 18-22 バイト', '11/12 統計 休講', '土曜 13時 ゼミ 30分前', '印鑑を持ってく 明日', '11/3~11/5 合宿'];
+    '毎週火曜 18-22 バイト', '11/12 統計 休講', '土曜 13時 ゼミ 30分前', '印鑑を持ってく 明日', '11/3~11/5 合宿',
+    '帰りに牛乳', '今日はゼミの発表うまくいった'];
   const box = document.createElement('div');
   box.id = 'qaBox';
   box.innerHTML =
@@ -14452,6 +14469,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     `<div class="qaEx" id="qaEx" hidden><p class="hint">押すと入るよ。何行もまとめて貼り付けてもいい（1行1件）</p>${EXAMPLES.map(e => `<button type="button" class="qaChip" data-qex="${esc(e)}">${esc(e)}</button>`).join('')}` +
     '<p class="hint">日付：11/3・3日・明日・火曜・来週の金曜・3日後・月末／時刻：19・19時半・19-22・3限・夜<br>' +
     '「提出」「締切」→課題、「持ってく」「次の○○」→持ち物、「休講」→休講、「テスト」→試験、「バイト」→バイト<br>' +
+    '「帰りに」「買う」「〜しなきゃ」→ToDo、「〜だった」「〜した」「日記：」→一言日記<br>' +
     '毎週火曜・毎月25日・平日 → くり返し、@場所、30分前 → 通知、#グループ名 → 共有</p></div>';
   const card = document.createElement('section');
   card.id = 'qaCard';
@@ -14475,15 +14493,15 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (['item', 'cancel'].includes(x.kind) && !x.cid) x.cid = courses().find(c => c.name)?.id || '';
     if (!x.dates.length) {
       if (x.kind === 'cancel' && x.cid) { const c = findCourse(x.cid), d = c && occurrencesAhead(c, 1)[0]; if (d) x.dates = [ymd(d)]; }
-      else if (x.kind === 'ev' || x.kind === 'todo') x.dates = [todayStr()];
+      else if (x.kind === 'ev' || x.kind === 'todo' || x.kind === 'diary') x.dates = [todayStr()];
     }
     return x;
   };
   const plan = () => lines().map(l => fix({ ...qaParse(l), ...(ovr[l] || {}) }));
   const KINDS = () => [['ev:other', '予定'], ...(featOn('job') ? [['ev:job', 'バイト']] : []), ['ev:exam', '試験'],
     ...(state.evKinds || []).map(k => ['ev:' + k.id, k.name]), ['task', '課題'],
-    ...(state.useGrid ? [['item', '持ち物'], ['cancel', '休講']] : []), ...(featOn('todo') ? [['todo', 'ToDo']] : [])];
-  const bad = x => (['item', 'cancel'].includes(x.kind) && !x.cid) || (x.kind === 'item' && !x.title) || (x.kind === 'cancel' && !x.dates.length);
+    ...(state.useGrid ? [['item', '持ち物'], ['cancel', '休講']] : []), ...(featOn('todo') ? [['todo', 'ToDo']] : []), ...(featOn('diary') ? [['diary', '日記']] : [])];
+  const bad = x => (['item', 'cancel'].includes(x.kind) && !x.cid) || ((x.kind === 'item' || x.kind === 'diary') && !x.title) || (x.kind === 'cancel' && !x.dates.length);
   const row = (x, i) => {
     const k = x.kind === 'ev' ? 'ev:' + x.evKind : x.kind;
     const d0 = x.dates[0] || '';
@@ -14529,7 +14547,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (f === 'kind') {
       const [kind, evKind] = v.split(':');
       Object.assign(o, { kind, ...(evKind && { evKind }), warn: [] });
-      if (kind === 'todo' || kind === 'task' || kind === 'item') o.dates = x.dates.slice(0, 1);
+      if (kind === 'todo' || kind === 'task' || kind === 'item' || kind === 'diary') o.dates = x.dates.slice(0, 1);
     } else if (f === 'date') {
       if (!v) o.dates = [];
       else if (x.dates[0]) { const k = Math.round((parseYmd(v) - parseYmd(x.dates[0])) / 864e5); o.dates = x.dates.map(d => ymd(addDays(parseYmd(d), k))); }
