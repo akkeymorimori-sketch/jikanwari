@@ -14591,7 +14591,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         : `<span class="qaDate"><input type="date" data-qf="date" value="${d0}" aria-label="${x.kind === 'task' ? '締切' : '日付'}">` +
           `<small>${d0 ? WEEK[parseYmd(d0).getDay()] : '締切なし'}</small></span>`) +
       (x.dates.length > 1 ? `<span class="qaChip">ほか${x.dates.length - 1}日${x.rep ? `（${esc(x.rep)}）` : ''}</span>` : '') +
-      (x.kind === 'ev' ? `<input type="time" data-qf="start" value="${x.start}" aria-label="開始"><span class="qaTil">〜</span><input type="time" data-qf="end" value="${x.end}" aria-label="終了">` : '') +
+      (x.kind === 'ev' ? `<span class="qaTime"><input type="time" data-qf="start" value="${x.start}" aria-label="開始"><span class="qaTil">〜</span><input type="time" data-qf="end" value="${x.end}" aria-label="終了"></span>` : '') +
       (x.kind !== 'cancel' ? `<input class="qaTitle" data-qf="title" value="${esc(x.title)}" placeholder="${x.kind === 'item' ? '持っていくもの' : 'タイトル'}" aria-label="タイトル" autocomplete="off" maxlength="60">` : '') +
       (x.place ? `<span class="qaChip">📍${esc(x.place)}</span>` : '') +
       (x.remind ? `<span class="qaChip">${x.remind < 60 ? x.remind + '分' : fmtLeft(x.remind * 60000)}前に通知</span>` : '') +

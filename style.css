@@ -1933,3 +1933,27 @@ button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
 #shareSend { grid-column: 1 / -1; order: -1; }
 #shareCopy, #shareQrBtn { min-width: 0; white-space: nowrap; margin-top: 0; }
 :has(> #shareSend) > #shareQr { grid-column: 1 / -1; margin-top: 2px; }
+
+/* ===== 画面の見回りで直したところ（2026-11-04） ===== */
+/* ＋ボタンはカレンダーにも出るので、いちばん下の「＋ 予定」などが隠れないように空けておく */
+#view-cal { padding-bottom: calc(var(--tabbar-h) + 84px + env(safe-area-inset-bottom)); }
+/* あとから JS で作ったダイアログの×も、ほかと同じ大きさに */
+.dlgHead .x { font-size: 22px; line-height: 1; min-width: 44px; min-height: 44px; margin-right: -8px;
+  display: inline-flex; align-items: center; justify-content: center; }
+/* 機能の紹介：ふちにくっついてた */
+#tourDlg { padding: 14px 16px 16px; }
+.tourTop { opacity: 1; color: var(--muted); }
+/* ひとことで追加：開始〜終了は1つのかたまりで折り返す（「〜」だけ行の終わりに残らないように） */
+.qaTime { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+/* Googleで同期：説明とボタンがくっついてた */
+#syncOn { margin-top: 10px; }
+/* 収入：年と月の切り替えボタンを同じ大きさに・「目標額」を「上限」と同じ文字に */
+#inPrev, #inNext, .fcHead button { min-width: 44px; min-height: 36px; font-size: 18px; }
+.inGoalRow { font-size: 13px; color: var(--muted); }
+/* 目覚まし「この先1週間」：止めるボタンをいつも右にそろえる */
+#alNext li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+#alNext li > small { flex: 1 1 0; min-width: 4em; }
+#alNext li > button { flex: none; }
+/* 共有グループ：「自分の名前」の見出しを「グループを作る」と同じ大きさに */
+#groupDlg .dlg > label:has(#gMe) { font-size: 14px; font-weight: bold; }
+#gMe { font-weight: normal; }
