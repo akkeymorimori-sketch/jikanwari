@@ -6147,7 +6147,7 @@ async function loadGroups() {
   const { db, uid, F } = await fbInit();
   const q = F.query(F.collection(db, 'groups'), F.where('members', 'array-contains', uid));
   const snap = await F.getDocs(q);
-  grGroups = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  grGroups = snap.docs.filter(d => okFbId(d.id)).map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja')); grListen();
 }
 function renderGroups() {
@@ -6380,6 +6380,16 @@ $('#gJoin').onclick = async () => {
 
 /* ===== 共有した予定（v61） ===== */
 const GREV_KEY = 'gakulog-grev-v1';
+// ほかの人が書いたドキュメントの ID は HTML の属性にそのまま入るので、アプリが作る形（自動の ID）だけ受け取る
+// （"や< の入った ID を作られると、画面に変なものを埋め込まれる）
+const okFbId = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+// 時刻・日付も形を確かめる（ルールでも弾いてるけど、画面に入れる前にもう一回）
+const cleanGrEv = e => ({
+  ...e, id: `g_${e.gid}_${e.doc}`,
+  date: isYmd(e.date) ? e.date : '',
+  start: /^\d{2}:\d{2}$/.test(e.start) ? e.start : '', end: /^\d{2}:\d{2}$/.test(e.end) ? e.end : '',
+  title: String(e.title || ''), byName: String(e.byName || ''), own: String(e.own || ''), by: String(e.by || '')
+});
 const grEv = new Map();   // id → 共有した予定
 let grNames = {};         // グループID → 名前
 let grMyUid = '';
@@ -6392,7 +6402,8 @@ try {
     grNames = c.names || {};
     grMyUid = c.uid || '';
     grSync = c.sync || {}; grFull = c.full || {}; grActs = c.acts || {};
-    for (const e of c.events || []) grEv.set(e.id, e);
+    for (const e of c.events || []) if (okFbId(e.gid) && okFbId(e.doc)) grEv.set(e.id, cleanGrEv(e));
+    for (const g in grActs) grActs[g] = okFbId(g) && Array.isArray(grActs[g]) ? grActs[g].filter(a => okFbId(a?.id)) : [];
   }
 } catch {}
 window.grShared = [...grEv.values()];
@@ -6415,8 +6426,9 @@ const grFail = err => alert(fbErr(err));
 // サーバーの予定 → アプリの形
 const tsMs = v => typeof v?.toMillis === 'function' ? v.toMillis() : 0;
 function toGrEv(gid, d) {
+  if (!okFbId(gid) || !okFbId(d.id)) return null;
   const x = d.data({ serverTimestamps: 'estimate' });
-  return {
+  return cleanGrEv({
     id: `g_${gid}_${d.id}`, doc: d.id, gid,
     date: String(x.date || ''),
     kind: ['job', 'exam', 'other'].includes(x.kind) ? x.kind : 'other',
@@ -6424,7 +6436,7 @@ function toGrEv(gid, d) {
     start: String(x.start || ''), end: String(x.end || ''),
     own: String(x.own || ''), by: String(x.by || ''), byName: String(x.byName || ''),
     lock: x.lock === true, at: tsMs(x.at)
-  };
+  });
 }
 
 // グループごとに見張る（変わったらすぐ届く）
@@ -6466,6 +6478,7 @@ function grWatch(gid) {
       // どちらの問い合わせでも「外れた」＝消えた（at は書くたびに新しくなるので、ほかの理由では外れない）
       if (ch.type === 'removed') { grEv.delete(id); continue; }
       const e = toGrEv(gid, ch.doc);
+      if (!e) continue;
       if (e.date >= from) grEv.set(id, e); else grEv.delete(id);
       if (!ch.doc.metadata?.hasPendingWrites) grSync[gid] = Math.max(grSync[gid] || 0, e.at);
     }
@@ -6481,6 +6494,7 @@ function grWatch(gid) {
     for (const ch of snap.docChanges()) {
       if (ch.type === 'removed') continue; // 50件を超えて押し出されただけ
       const a = toGrAct(gid, ch.doc);
+      if (!a) continue;
       const i = l.findIndex(x => x.id === a.id);
       if (i >= 0) l[i] = a; else l.push(a);
       if (a.type === 'del') grEv.delete(`g_${gid}_${a.eid}`);
@@ -6498,6 +6512,7 @@ async function grRecheck(gid, from, today) {
   const have = new Set();
   for (const d of snap.docs) {
     const e = toGrEv(gid, d);
+    if (!e) continue;
     have.add(e.id); grEv.set(e.id, e);
     grSync[gid] = Math.max(grSync[gid] || 0, e.at);
   }
@@ -6506,6 +6521,7 @@ async function grRecheck(gid, from, today) {
   grSaveCache(); grRedraw();
 }
 function toGrAct(gid, d) {
+  if (!okFbId(d.id)) return null;
   const x = d.data({ serverTimestamps: 'estimate' });
   return {
     id: d.id, gid, type: ['add', 'edit', 'del'].includes(x.type) ? x.type : 'edit', eid: String(x.eid || ''),
@@ -10972,7 +10988,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       const { db, F } = await fbInit();
       if (cur !== e) return;
       unsub = F.onSnapshot(F.query(col(F, db, e), F.orderBy('at'), F.limit(100)), snap => {
-        items = snap.docs.map(d => {
+        items = snap.docs.filter(d => okFbId(d.id)).map(d => {
           const x = d.data(), t = x.at?.toDate?.();
           return { id: d.id, by: String(x.by || ''), name: String(x.name || ''), text: String(x.text || ''),
             when: t ? `${md(t)} ${hhmm(t)}` : '' };
