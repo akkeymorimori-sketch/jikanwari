@@ -1927,3 +1927,9 @@ button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
 #ctDueBox > .leadRow { flex-basis: 100%; white-space: nowrap; }
 #ctDueBox > .leadRow > select { flex: 1; min-width: 0; }
 #ctDueBox > .leadRow > .leadN { flex: none; }
+
+/* 送るのボタン：「送る」を上の段に大きく、コピーとQRを下の段に半分ずつ（3つ横に並べるとはみ出した） */
+:has(> #shareSend) { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#shareSend { grid-column: 1 / -1; order: -1; }
+#shareCopy, #shareQrBtn { min-width: 0; white-space: nowrap; margin-top: 0; }
+:has(> #shareSend) > #shareQr { grid-column: 1 / -1; margin-top: 2px; }

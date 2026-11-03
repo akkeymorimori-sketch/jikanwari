@@ -3270,22 +3270,88 @@ function shareJSON() {
   return JSON.stringify(d);
 }
 
+// 短いコード（GK-ABCD2345）：中身を Firebase に30日だけ置いて、8文字で受け取れるようにする。
+// 置けなかったら（オフライン・ルールがまだ…）今までの長いコードのまま送る
+const SHARE_DAYS = 30;
+const SHORT_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 見間違えやすい I・O・0・1 は使わない
+const SHORT_RE = /(?:^|[^A-Za-z0-9])GK-?([A-HJ-NP-Z2-9]{8})(?![A-Za-z0-9])/i;
+const SHORT_KEY = 'gakulog-share-v1'; // 同じ中身ならコードを使い回す { 中身のハッシュ: { code, exp } }
+let shareShort = null; // { code, exp }
+const isShareText = t => t.includes(SHARE_TAG) || SHORT_RE.test(t.replace(/\s+/g, ''));
+const strHash = t => {
+  let h = 5381, g = 52711;
+  for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i); h = Math.imul(h, 33) ^ c; g = Math.imul(g, 31) ^ c; }
+  return (h >>> 0).toString(36) + (g >>> 0).toString(36) + t.length;
+};
+async function shortShare(z) {
+  let memo = {};
+  try { memo = JSON.parse(localStorage.getItem(SHORT_KEY)) || {}; } catch {}
+  const now = Date.now(), h = strHash(z);
+  for (const k in memo) if (!(memo[k]?.exp > now)) delete memo[k];
+  if (memo[h]?.exp > now + 7 * 864e5) return memo[h]; // 残り1週間を切ったら作り直す
+  const { db, uid, F } = await fbInit();
+  const exp = now + SHARE_DAYS * 864e5;
+  // 同じコードがもうあると弾かれる（40ビットなのでまず起きない）ので1回だけ作り直す
+  for (let i = 0; ; i++) {
+    const code = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => SHORT_CH[b % 32]).join('');
+    try {
+      await F.setDoc(F.doc(db, 'shares', code), { z, by: uid, exp: F.Timestamp.fromMillis(exp) });
+      memo[h] = { code, exp };
+      const keys = Object.keys(memo);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete memo[k];
+      try { localStorage.setItem(SHORT_KEY, JSON.stringify(memo)); } catch {}
+      return memo[h];
+    } catch (err) { if (i || !String(err?.code).includes('permission-denied')) throw err; }
+  }
+}
+// 受け取る：長いコードはそのまま、短いコードは Firebase から取ってくる
+async function shareFrom(text) {
+  const raw = text.replace(/\s+/g, '');
+  const m = raw.match(new RegExp(`${SHARE_TAG}\\.([zp])\\.([A-Za-z0-9_-]+)`));
+  if (m) return parseShare(JSON.parse(await unpackText(m[1], m[2])));
+  const s = raw.match(SHORT_RE) || raw.match(/^()([A-HJ-NP-Z2-9]{8})$/i)?.slice(1);
+  if (!s) throw new Error('none');
+  const { db, F } = await fbInit();
+  let snap;
+  try { snap = await F.getDoc(F.doc(db, 'shares', s[1].toUpperCase())); }
+  catch (err) { if (String(err?.code).includes('permission-denied')) throw new Error('gone'); throw err; }
+  const z = snap.exists() && String(snap.data().z || '').match(/^([zp])\.([A-Za-z0-9_-]+)$/);
+  if (!z) throw new Error('gone');
+  return parseShare(JSON.parse(await unpackText(z[1], z[2])));
+}
+function shareErr(e) {
+  if (e.message === 'none') return '共有コードが見つからなかった。もらったメッセージを丸ごと貼り付けるか、GK- から始まるコードを入れてね';
+  if (e.message === 'gone') return 'コードが見つからないか、期限（30日）が切れてるよ。もう一回送ってもらってね';
+  if (e.message === 'old') return 'このブラウザだと読めなかった。iOSを新しくしてみて';
+  if (e.code || e instanceof TypeError) return '読めなかった：' + fbErr(e);
+  return 'コードが途中で切れてるか、壊れてるみたい。もう一回送ってもらってね';
+}
+
 // iPhoneは押した瞬間に共有シートを出さないと止められるので、コードは先に作っておく
 async function renderShareCode() {
   const n = courses().filter(c => c.name.trim()).length;
   const seq = ++shareSeq;
   $('#shareSend').disabled = $('#shareCopy').disabled = true;
-  shareCode = '';
-  $('#shareInfo').textContent = n ? `「${term().name}」の授業${n}件を送るよ` : '送れる授業がまだないよ';
+  shareCode = ''; shareShort = null;
+  const msg = `「${term().name}」の授業${n}件を送るよ`;
+  $('#shareInfo').textContent = n ? msg : '送れる授業がまだないよ';
   if (!n) return;
   const code = await packText(shareJSON());
   if (seq !== shareSeq) return;
-  shareCode = code;
+  $('#shareInfo').textContent = '共有コードを作ってるよ…';
+  const short = await Promise.race([shortShare(code), new Promise(ok => setTimeout(ok, 8000))])
+    .catch(err => { console.warn('短い共有コード', err); });
+  if (seq !== shareSeq) return;
+  shareCode = code; shareShort = short || null;
+  const until = shareShort && new Date(shareShort.exp);
+  $('#shareInfo').textContent = until ? `${msg}。コードは${until.getMonth() + 1}/${until.getDate()}まで使えるよ` : msg;
   $('#shareSend').disabled = $('#shareCopy').disabled = false;
 }
 
 function shareText() {
   const url = APP_URL;
+  if (shareShort) return `がくログの時間割（${term().name}）\n共有コード：GK-${shareShort.code}\n` +
+    `アプリの「その他」→「時間割を共有」に、このメッセージを貼り付けてね\n${url}`;
   return `がくログの共有コード（${term().name}）\n` +
     `アプリの「その他」→「時間割を共有」に、このメッセージを丸ごと貼り付けてね\n${url}\n\n` +
     `${SHARE_TAG}.${shareCode}`;
@@ -3330,6 +3396,7 @@ function parseShare(d) {
       name: str(name).trim(), short: str(short), teacher: str(teacher), room: str(room),
       syllabus: isHttp(syllabus) ? str(syllabus) : '',
       from: isYmd(from) ? from : '', to: isYmd(to) ? to : '',
+      items: Array.isArray(items) ? items.map(str).map(x => x.trim()).filter(Boolean).slice(0, 30) : [],
       tag: Array.isArray(tag) && str(tag[0]).trim()
         ? { name: str(tag[0]).trim().slice(0, 10), color: TAG_COLORS.includes(tag[1]) ? tag[1] : TAG_COLORS[0] } : null
     })).filter(c => c.name);
@@ -3355,16 +3422,11 @@ function parseShare(d) {
 }
 
 $('#shareRead').onclick = async () => {
-  const raw = $('#shareIn').value.replace(/\s+/g, '');
-  const m = raw.match(new RegExp(`${SHARE_TAG}\\.([zp])\\.([A-Za-z0-9_-]+)`));
-  if (!m) return alert('共有コードが見つからなかった。もらったメッセージを丸ごと貼り付けてね');
   try {
-    shareData = parseShare(JSON.parse(await unpackText(m[1], m[2])));
+    shareData = await shareFrom($('#shareIn').value);
   } catch (e) {
     shareData = null;
-    alert(e.message === 'old'
-      ? 'このブラウザだと読めなかった。iOSを新しくしてみて'
-      : 'コードが途中で切れてるか、壊れてるみたい。もう一回送ってもらってね');
+    alert(shareErr(e));
   }
   renderSharePreview();
 };
@@ -8882,9 +8944,9 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     if (!qBox.hidden) return closeQr();
     if (!shareCode) return alert('共有コードを作ってる途中だよ。少し待ってもう一回押してね');
     if (typeof qrcode !== 'function') return alert('QRコードの部品が読み込めてないみたい');
-    const text = `${SHARE_TAG}.${shareCode}`;
+    const text = shareShort ? `GK-${shareShort.code}` : `${SHARE_TAG}.${shareCode}`;
     try {
-      const qr = qrcode(0, 'L');
+      const qr = qrcode(0, shareShort ? 'M' : 'L');
       qr.addData(text);
       qr.make();
       qBox.innerHTML = qr.createSvgTag(4, 4) +
@@ -8924,7 +8986,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
       const cx = cv.getContext('2d', { willReadFrequently: true });
       cx.drawImage(img, 0, 0, cv.width, cv.height);
       const r = jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height);
-      if (!r || !r.data.includes(SHARE_TAG))
+      if (!r || !isShareText(r.data))
         return alert('共有のQRコードが見つからなかった。QRを大きめに、ピントを合わせて撮り直してね');
       $('#shareIn').value = r.data;
       $('#shareRead').click();
@@ -8978,12 +9040,10 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
   };
 
   $('#fmAdd').onclick = async () => {
-    const raw = $('#shareIn').value.replace(/\s+/g, '');
-    const m = raw.match(new RegExp(`${SHARE_TAG}\\.([zp])\\.([A-Za-z0-9_-]+)`));
-    if (!m) return alert('先に友だちの共有コードを貼るか、QRコードを読んでね');
+    if (!$('#shareIn').value.trim()) return alert('先に友だちの共有コードを貼るか、QRコードを読んでね');
     let d;
-    try { d = parseShare(JSON.parse(await unpackText(m[1], m[2]))); }
-    catch { return alert('コードが途中で切れてるか、壊れてるみたい'); }
+    try { d = await shareFrom($('#shareIn').value); }
+    catch (e) { return alert(shareErr(e)); }
     const name = (prompt('誰の時間割？', `友だち${fmList.length + 1}`) || '').trim().slice(0, 10);
     if (!name) return;
     fmList.push({ name, busy: busyOf(d.courses) });
@@ -11219,7 +11279,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       const r = jsQR(cx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height,
         { inversionAttempts: 'dontInvert' });
       if (!r) return;
-      if (!r.data.includes(SHARE_TAG)) {
+      if (!isShareText(r.data)) {
         $('#qrCamMsg').textContent = 'がくログの共有QRじゃないみたい';
         return;
       }
