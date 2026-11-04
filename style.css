@@ -477,8 +477,12 @@ details.sec > a, #aiBox > a { display: block; }
 /* 時間割タブの画像読み込み */
 .gridBar { display: flex; gap: 6px; margin: 0 0 8px; }
 .gridBar button { flex: 1 1 0; min-width: 0; padding: 6px 4px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 今日の「📷 板書を撮る」と同じ、テーマの色のボタン */
-.gridBar button { font-weight: bold; border-color: transparent; border-radius: 10px; background: var(--accent-strong); color: var(--on-accent); }
+/* カードと同じ素材（半透明＋ぼかし）に、文字とアイコンだけテーマの色。べったり塗らないので、壁紙・カードの色・ダークのどれでも浮かない */
+.gridBar button, #homeEdit { font-weight: bold; border-radius: 12px; color: var(--accent);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.gridBar button:active, #homeEdit:active { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .gridBar button[hidden] { display: none; }
 .calShowList { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 14px; }
 .calShowList label { justify-content: flex-start; font-size: 15px; }
@@ -903,7 +907,7 @@ html[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .t
 #wallCHint:empty { display: none; }
 
 /* ===== カードの中のマスや帯も、カードの色に合わせる ===== */
-html.cardC #grid { --surface: var(--cardC); }
+html.cardC :is(#grid, .gridBar button, #homeEdit) { --surface: var(--cardC); }
 html.cardC :is(.card, #grid) {
   --bg: color-mix(in srgb, var(--cardC) 90%, var(--cardT));
   --head: color-mix(in srgb, var(--cardC) 82%, var(--cardT));
@@ -922,14 +926,14 @@ html.cardT #grid {
 }
 
 /* 明るいカードには濃い色、暗いカードには明るい色の文字 */
-html[data-card-scheme="light"] :is(.card, #grid),
+html[data-card-scheme="light"] :is(.card, #grid, .gridBar button, #homeEdit),
 html.cardC[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 75%, #000);
   --tag-fg: var(--accent);
   --danger: #b02a2a; --ok: #2a7d3a; --over: #b02a2a; --soon: #a8320a; --od: #6d28d9;
   --tagn-bg: #fff4e6; --tagn-fg: #c2410c; --item-fg: #8a3b00;
 }
-html[data-card-scheme="dark"] :is(.card, #grid),
+html[data-card-scheme="dark"] :is(.card, #grid, .gridBar button, #homeEdit),
 html.cardC[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 65%, #fff);
   --tag-fg: var(--accent);
@@ -1281,9 +1285,8 @@ dialog {
 .todoAdd { display: flex; gap: 8px; margin-top: 8px; }
 .todoAdd input { flex: 1; min-width: 0; }
 .todoAdd button { flex: none; }
-/* 今日の画面の一番下：「表示するものを選ぶ」はテーマの色のボタン（背景の色やダークモードに左右されない） */
-#homeEdit { display: block; width: 100%; margin: 12px auto 24px; padding: 10px; border-radius: 10px; border: 0; font-weight: bold;
-  background: var(--accent-strong); color: var(--on-accent); }
+/* 今日の画面の一番下：「表示するものを選ぶ」。色は時間割・カレンダーの上のボタンと同じ（.gridBar button のところ） */
+#homeEdit { display: block; width: 100%; margin: 12px auto 24px; padding: 10px; }
 .homePick { list-style: none; padding: 0; }
 .homePick label { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
 #nowCard[hidden], #nowCard ~ [hidden] { display: none !important; }
