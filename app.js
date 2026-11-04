@@ -402,6 +402,27 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const vp = document.querySelector('meta[name=viewport]');
   if (vp && !/user-scalable/.test(vp.content)) vp.content += ',user-scalable=no';
 }
+// キーボードが出たら、書いてる欄がキーボードに隠れないところまで送る
+// （ボタンで欄を開いてすぐ入力にすると、キーボードが出る前に位置を決めちゃって、欄がキーボードの裏に入ってた）
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  let tm = 0;
+  const fit = () => {
+    const el = document.activeElement;
+    if (!el?.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea, select')) return;
+    const r = el.getBoundingClientRect();
+    const top = vv.offsetTop + 8, bottom = vv.offsetTop + vv.height - 12;
+    const d = r.bottom > bottom ? r.bottom - bottom : r.top < top ? r.top - top : 0;
+    if (Math.abs(d) < 2) return;
+    // 中でスクロールする箱（ダイアログなど）があればそっち、なければ画面ごと
+    let box = el.parentElement;
+    while (box && !(/auto|scroll/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight)) box = box.parentElement;
+    if (box) box.scrollBy({ top: d, behavior: 'smooth' }); else window.scrollBy({ top: d, behavior: 'smooth' });
+  };
+  const later = () => { clearTimeout(tm); tm = setTimeout(fit, 120); };
+  vv.addEventListener('resize', later);
+  document.addEventListener('focusin', () => { later(); setTimeout(fit, 500); });
+}
 // アプリ版では、別のタブで開くリンク（APIキーを取るページなど）も同じように
 if (window.Capacitor?.isNativePlatform?.()) document.addEventListener('click', e => {
   const a = e.target.closest?.('a[target="_blank"][href^="http"]');
