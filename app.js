@@ -396,6 +396,12 @@ function openUrl(url) {
   if (B) return B.open({ url }).catch(() => window.open(url, '_blank'));
   window.open(url, '_blank', 'noopener');
 }
+// 画面が拡大されたまま戻らなくなるのを止める。iOS は小さい文字の入力欄を押すと勝手に拡大して、アプリだと戻らないことがある
+// （maximum-scale=1 は index.html。アプリは指で広げるのも止める。Web の Safari はどのみち指で広げられる）
+if (window.Capacitor?.isNativePlatform?.()) {
+  const vp = document.querySelector('meta[name=viewport]');
+  if (vp && !/user-scalable/.test(vp.content)) vp.content += ',user-scalable=no';
+}
 // アプリ版では、別のタブで開くリンク（APIキーを取るページなど）も同じように
 if (window.Capacitor?.isNativePlatform?.()) document.addEventListener('click', e => {
   const a = e.target.closest?.('a[target="_blank"][href^="http"]');

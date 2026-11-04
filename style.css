@@ -1965,3 +1965,6 @@ button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
 /* 共有グループ：「自分の名前」の見出しを「グループを作る」と同じ大きさに */
 #groupDlg .dlg > label:has(#gMe) { font-size: 14px; font-weight: bold; }
 #gMe { font-weight: normal; }
+
+/* 2回すばやく押したときに画面が拡大されないように（ボタンの連打で拡大されて戻らなくなってた） */
+html { touch-action: manipulation; }
