@@ -1968,3 +1968,19 @@ button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
 
 /* 2回すばやく押したときに画面が拡大されないように（ボタンの連打で拡大されて戻らなくなってた） */
 html { touch-action: manipulation; }
+
+/* 今日の気分（顔のアイコン） */
+.mFace { width: 26px; height: 26px; display: block; fill: color-mix(in srgb, var(--mc) 22%, transparent); stroke: var(--mc); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.mFace path { fill: none; }
+.moodRow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin: 2px -4px 6px; }
+.mChip { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; white-space: nowrap; min-height: 0; padding: 6px 2px 4px; border: 1px solid transparent; border-radius: 12px; background: none; color: var(--sub); font-size: 11px; font-weight: normal; }
+.mChip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: bold; }
+.mChip[aria-pressed="true"] .mFace { fill: color-mix(in srgb, var(--mc) 45%, transparent); transform: scale(1.12); }
+.moodRow:has([aria-pressed="true"]) .mChip:not([aria-pressed="true"]) .mFace { filter: saturate(.35); }
+.moodLi { display: block; }
+.moodLi .moodRow { margin: 4px 0 0; }
+.moodLi .mFace { width: 22px; height: 22px; }
+.moodMark { font-style: normal; display: inline-block; vertical-align: -2px; margin-left: 2px; }
+.moodMark .mFace { width: 12px; height: 12px; stroke-width: 2.2; }
+.dyTbl .moodMark { margin: 0 4px 0 0; }
+.dyTbl .moodMark .mFace { width: 16px; height: 16px; }

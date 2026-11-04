@@ -382,6 +382,23 @@ const OLD_KEY = 'jikanwari-v1';
 // 設定でオン/オフできる機能（時間割は前からある state.useGrid）。オフでもデータは消さない
 const FEAT_KEYS = ['job', 'group', 'share', 'diary', 'todo', 'memo', 'habit', 'points', 'alarm', 'ai', 'exam'];
 const featOn = k => k === 'grid' ? state.useGrid !== false : state?.features?.[k] !== false;
+// 今日の気分（一言日記といっしょに state.mood[日付] = id）。顔は線の絵（f）を丸の中に描く
+const EYES = 'M8.5 9.6v.8M15.5 9.6v.8';
+const MOODS = [
+  { id: 'great', label: '最高', c: '#f59e0b', f: 'M7 10.5q1.5-2 3 0M14 10.5q1.5-2 3 0M7.5 13.5h9a4.5 4.5 0 0 1-9 0z' },
+  { id: 'good', label: 'いい', c: '#22c55e', f: EYES + 'M8 14q4 3.6 8 0' },
+  { id: 'calm', label: 'おだやか', c: '#06b6d4', f: 'M7 9.5q1.5 1.6 3 0M14 9.5q1.5 1.6 3 0M9.5 14.5q2.5 1.6 5 0' },
+  { id: 'normal', label: 'ふつう', c: '#94a3b8', f: EYES + 'M9 15h6' },
+  { id: 'tired', label: 'つかれた', c: '#a78bfa', f: 'M7 10.5h3M14 10.5h3M9.5 15.6q2.5-1.4 5 0' },
+  { id: 'sleepy', label: 'ねむい', c: '#6366f1', f: 'M7 10q1.5 1.2 3 0M14 10q1.5 1.2 3 0M12 14.2a1.3 1.3 0 1 0 0 2.6a1.3 1.3 0 1 0 0-2.6' },
+  { id: 'meh', label: 'もやもや', c: '#64748b', f: EYES + 'M7.5 15q1.1-1.2 2.25 0t2.25 0t2.25 0t2.25 0' },
+  { id: 'sad', label: 'かなしい', c: '#3b82f6', f: EYES + 'M8.5 16.5q3.5-3 7 0' },
+  { id: 'angry', label: 'イライラ', c: '#ef4444', f: 'M7 7.6l3 1.6M17 7.6l-3 1.6M8.5 11v.8M15.5 11v.8M9 16.4q3-2 6 0' }
+];
+const moodOf = k => MOODS.find(m => m.id === state.mood?.[k]);
+const moodFace = m => `<svg class="mFace" viewBox="0 0 24 24" aria-hidden="true" style="--mc:${m.c}"><circle cx="12" cy="12" r="10"/><path d="${m.f}"/></svg>`;
+// 気分を選ぶボタンの列（k = 日付）
+const moodChips = k => MOODS.map(m => `<button type="button" class="mChip" data-mood="${m.id}" data-mk="${k}" aria-pressed="${state.mood?.[k] === m.id}">${moodFace(m)}<span>${m.label}</span></button>`).join('');
 const SEARCH_DAYS = 120; // 長期休みをまたいで次の授業を探す日数
 const HISTORY_MAX = 60;  // 持ち物の入力候補として覚えておく数
 
@@ -745,6 +762,9 @@ function normalize(s) {
   s.diary = s.diary && typeof s.diary === 'object' && !Array.isArray(s.diary) ? s.diary : {};
   for (const k of Object.keys(s.diary))
     if (!isYmd(k) || typeof s.diary[k] !== 'string' || !s.diary[k].trim()) delete s.diary[k];
+  s.mood = s.mood && typeof s.mood === 'object' && !Array.isArray(s.mood) ? s.mood : {};
+  for (const k of Object.keys(s.mood))
+    if (!isYmd(k) || !MOODS.some(m => m.id === s.mood[k])) delete s.mood[k];
   s.jobHidden = Array.isArray(s.jobHidden) ? s.jobHidden.filter(v => typeof v === 'string') : [];
   // 授業なしの課題
   s.myTasks = Array.isArray(s.myTasks) ? s.myTasks.filter(k => k && typeof k.title === 'string') : [];
@@ -2006,7 +2026,8 @@ function renderCal() {
       date.getDay() === 6 && 'sat', date.getDay() === 0 && 'sun'].filter(Boolean).join(' ');
     h += `<div class="${cls}" data-date="${k}"><span class="dn">${date.getDate()}` +
       (pending.length ? `<i class="dueMark">${pending.length}</i>` : '') +
-      ((featOn('diary') && state.diary[k]) || (featOn('memo') && state.notes.some(x => !x.pin && x.date === k)) ? '<i class="noteMark">✎</i>' : '') + '</span>' +
+      ((featOn('diary') && state.diary[k]) || (featOn('memo') && state.notes.some(x => !x.pin && x.date === k)) ? '<i class="noteMark">✎</i>' : '') +
+      (featOn('diary') && moodOf(k) ? `<i class="moodMark" title="${moodOf(k).label}">${moodFace(moodOf(k))}</i>` : '') + '</span>' +
       labels.slice(0, 3).join('') +
       (labels.length > 3 ? `<span class="more">+${labels.length - 3}</span>` : '') + '</div>';
   }
@@ -2037,6 +2058,8 @@ function renderDay() {
   if (featOn('memo')) for (const n of state.notes) if (!n.pin && n.date === k) rows.push(
     `<li><span><span class="tag next">メモ</span><button type="button" class="noteText" data-nedit="${n.id}">${esc(n.text)}</button></span>` +
     `<button class="x" data-ndel="${n.id}" aria-label="削除">×</button></li>`);
+  if (featOn('diary') && (state.mood[k] || k <= todayStr())) rows.push(
+    `<li class="moodLi"><span class="tag">気分</span><span class="moodRow">${moodChips(k)}</span></li>`);
   if (featOn('diary') && (state.diary[k] || k <= todayStr())) rows.push(
     `<li><button type="button" class="evText" data-diary="${k}"><span class="tag">日記</span>` +
     (state.diary[k] ? esc(state.diary[k]) : '<span class="muted">一言日記を書く</span>') + '</button></li>');
@@ -3654,6 +3677,8 @@ function renderNotes() {
     || '<li class="muted">なし</li>';
   const d = $('#diaryInput');
   if (document.activeElement !== d) d.value = state.diary[today] || ''; // 書いてる途中は上書きしない
+  const mr = $('#moodRow'), mh = moodChips(today);
+  if (mr && mr.dataset.h !== mh) { mr.innerHTML = mh; mr.dataset.h = mh; }
 }
 
 function addNote() {
@@ -3699,6 +3724,18 @@ $('#noteList').addEventListener('click', e => {
   }
   const dl = e.target.closest('[data-ndel]');
   if (dl) delNote(dl.dataset.ndel);
+});
+
+// 気分を押したら選ぶ（同じのをもう一回押すと外す）
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-mood]');
+  if (!b) return;
+  const k = b.dataset.mk, id = b.dataset.mood;
+  if (!isYmd(k)) return;
+  if (state.mood[k] === id) delete state.mood[k]; else state.mood[k] = id;
+  save(); renderNotes();
+  if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
+  window.dyRefresh?.();
 });
 
 $('#diaryInput').addEventListener('input', e => {
@@ -8389,14 +8426,15 @@ if ($('#nSign')) {
     const last = new Date(2024, dyM, 0).getDate(); // うるう年で数えて 2/29 も出す
     for (let d = 1; d <= last; d++) {
       const ks = ys.map(y => `${y}-${mm}-${pad(d)}`);
-      if (!ks.some(k => state.diary[k])) continue;
+      if (!ks.some(k => state.diary[k] || moodOf(k))) continue;
       rows++;
       h += `<tr><th>${d}日</th>` + ks.map(k =>
-        `<td${state.diary[k] ? ` data-dyk="${k}"` : ''}>${esc(state.diary[k] || '')}</td>`).join('') + '</tr>';
+        `<td${state.diary[k] || moodOf(k) ? ` data-dyk="${k}"` : ''}>${moodOf(k) ? `<i class="moodMark" title="${moodOf(k).label}">${moodFace(moodOf(k))}</i>` : ''}${esc(state.diary[k] || '')}</td>`).join('') + '</tr>';
     }
     $('#dyTbl').innerHTML = rows ? h : '<tr><td class="muted">この月の日記はまだないよ</td></tr>';
   };
 
+  window.dyRefresh = () => dyDlg.open && renderDiaryList();
   $('#diaryListBtn').onclick = () => {
     dyM = new Date().getMonth() + 1;
     renderDiaryList();
