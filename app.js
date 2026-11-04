@@ -397,8 +397,16 @@ const MOODS = [
 ];
 const moodOf = k => MOODS.find(m => m.id === state.mood?.[k]);
 const moodFace = m => `<svg class="mFace" viewBox="0 0 24 24" aria-hidden="true" style="--mc:${m.c}"><circle cx="12" cy="12" r="10"/><path d="${m.f}"/></svg>`;
-// 気分を選ぶボタンの列（k = 日付）
-const moodChips = k => MOODS.map(m => `<button type="button" class="mChip" data-mood="${m.id}" data-mk="${k}" aria-pressed="${state.mood?.[k] === m.id}">${moodFace(m)}<span>${m.label}</span></button>`).join('');
+// 気分を選ぶボタンの列（k = 日付）。選んだら選んだ顔だけ出して、押すと全部出して選び直せる
+const moodOpen = new Set(); // 選び直し中の日付
+const moodChips = k => {
+  const cur = moodOf(k);
+  if (cur && !moodOpen.has(k))
+    return `<button type="button" class="mChip" data-mopen="${k}" aria-pressed="true" aria-label="気分：${cur.label}（押すと選び直せる）">${moodFace(cur)}<span>${cur.label}</span></button>` +
+      '<span class="mHint">押すと選び直せるよ</span>';
+  return MOODS.map(m => `<button type="button" class="mChip" data-mood="${m.id}" data-mk="${k}" aria-pressed="${cur === m}">${moodFace(m)}<span>${m.label}</span></button>`).join('') +
+    (cur ? `<button type="button" class="mChip mOff" data-moff="${k}">外す</button>` : '');
+};
 const SEARCH_DAYS = 120; // 長期休みをまたいで次の授業を探す日数
 const HISTORY_MAX = 60;  // 持ち物の入力候補として覚えておく数
 
@@ -3726,14 +3734,19 @@ $('#noteList').addEventListener('click', e => {
   if (dl) delNote(dl.dataset.ndel);
 });
 
-// 気分を押したら選ぶ（同じのをもう一回押すと外す）
+// 気分：押したら選んで閉じる・選んだ顔を押すと選び直し・「外す」で消す
 document.addEventListener('click', e => {
-  const b = e.target.closest('[data-mood]');
+  const b = e.target.closest('[data-mood], [data-mopen], [data-moff]');
   if (!b) return;
-  const k = b.dataset.mk, id = b.dataset.mood;
+  const k = b.dataset.mk || b.dataset.mopen || b.dataset.moff;
   if (!isYmd(k)) return;
-  if (state.mood[k] === id) delete state.mood[k]; else state.mood[k] = id;
-  save(); renderNotes();
+  if (b.dataset.mopen) moodOpen.add(k);
+  else {
+    moodOpen.delete(k);
+    if (b.dataset.moff) delete state.mood[k]; else state.mood[k] = b.dataset.mood;
+    save();
+  }
+  renderNotes();
   if (curTab === 'cal' && calMonth) { renderCal(); renderDay(); }
   window.dyRefresh?.();
 });
