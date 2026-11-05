@@ -14705,7 +14705,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     ios: { banner: 'ca-app-pub-9369660298902208/4694393553', reward: 'ca-app-pub-9369660298902208/2337316818' }
   };
   // 開発中は Google のテスト用の広告を出す（自分で本物の広告を押すと AdMob の規約違反になる）。公開するときに false
-  const AD_TEST = true;
+  const AD_TEST = false;
   const ids = window.Capacitor?.isNativePlatform?.() && AD ? IDS[plat] : null;
   const OFF_KEY = 'gakulog-adoff'; // 動画を見た日（この端末だけ）
   const offToday = () => { try { return localStorage.getItem(OFF_KEY) === ymd(new Date()); } catch { return false; } };
