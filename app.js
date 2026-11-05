@@ -10649,6 +10649,8 @@ if (window.Capacitor?.isNativePlatform?.()) {
   window.mnDelPic = pDel;
 
   const notes = c => (c.notes = Array.isArray(c.notes) ? c.notes : []);
+  // その授業の今日のノート（いちばん後ろの続き・同じなら後で書いた方）
+  const todayNote = c => notes(c).filter(n => n.date === todayStr()).reduce((a, n) => !a || (n.cont || 1) >= (a.cont || 1) ? n : a, null);
   const nextDate = c => {
     if (!courses().includes(c)) return null; // ほかの学期・ほかの端末の授業
     const k = todayStr();
@@ -10676,6 +10678,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       (n.pics.length ? ` <small data-ico="camera">${n.pics.length}</small>` : '') +
       `<div class="mnText">${esc(n.text) || '（写真だけ）'}</div></li>`).join('')
       || '<li class="muted">なし</li>';
+    $('#mnNew').textContent = todayNote(c) ? '今日のノートを開く' : '＋ ノートを書く';
   };
   const rd0 = renderDetail;
   renderDetail = function () { rd0.apply(this, arguments); renderMn(); };
@@ -10685,6 +10688,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
   dlg.id = 'mnDlg';
   dlg.innerHTML = '<div class="dlgHead"><h2>ミニノート</h2>' +
     '<button type="button" class="x big" id="mnX" aria-label="閉じる">×</button></div>' +
+    '<p class="mnToday" id="mnToday" hidden><span>今日のノートの続きだよ</span><button type="button" class="more" id="mnFresh">別のノートにする</button></p>' +
     '<textarea id="mnText" maxlength="2000" rows="8" placeholder="次回の自分へ。範囲、先生が言ってたこと、気づいたこと…"></textarea>' +
     '<div class="mnPics" id="mnPics"></div>' +
     '<div class="mnAdds"><label class="mnAddPic" data-ico="camera">写真を足す<input type="file" id="mnFile" accept="image/*" multiple hidden></label>' +
@@ -10705,7 +10709,10 @@ if (window.Capacitor?.isNativePlatform?.()) {
       (ed.pics.length ? '<p class="hint mnPicHint">写真の ✎ で、切り取り・回転・スキャン・くっきりができるよ</p>' : '');
   };
   // c：どの授業のノートか（ミニノート一覧から開くときは、ほかの学期・ほかの端末の授業のこともある）
-  const open = async (note, c = cur()) => {
+  // ノートなしで開いたら、今日のノートがあればそれを開く（授業中に閉じても増えない）。fresh：必ず新しく
+  const open = async (note, c = cur(), fresh = false) => {
+    const again = !note && !fresh && c ? todayNote(c) : null;
+    if (again) note = again;
     const isNew = !note;
     note ||= { id: uid(), date: todayStr(), text: '', pics: [], until: nextDate(c) };
     ed = { note, isNew, c, pics: [], added: [], removed: [] };
@@ -10720,6 +10727,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     $('#mnNext').checked = !!note.until;
     $('#mnNext').disabled = !note.until && !nextDate(c);
     $('#mnDel').hidden = isNew;
+    $('#mnToday').hidden = !again;
     drawPics();
     dlg.showModal();
   };
@@ -10743,6 +10751,12 @@ if (window.Capacitor?.isNativePlatform?.()) {
     if (n) open(n);
   };
   $('#mnX').onclick = () => close(false);
+  $('#mnFresh').onclick = async () => {
+    const c = ed.c;
+    const n = ed.note, changed = $('#mnText').value.trim() !== n.text || ed.added.length || ed.removed.length;
+    if (changed) await $('#mnSave').onclick(); else await close(false);
+    if (!ed) open(null, c, true); // 空にして保存できなかったときは、そのまま
+  };
   dlg.addEventListener('cancel', e => { e.preventDefault(); close(false); });
 
   // 撮った・選んだ写真を入れる（すぐ編集する設定なら1枚ずつ編集の画面。スキャンは四隅を合わせる画面）
@@ -12953,6 +12967,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   // 画面に出す（くっきり・白黒は CSS の filter で見せる。保存するときは画素を直接いじる）
   let view = 1; // 画面の大きさ ÷ 写真の大きさ
   function draw() {
+    if (!base) return; // すぐ閉じたあとに、開いたときの描き直しが来ることがある
     const S = src();
     const box = dlg.querySelector('.peWrap');
     const maxW = Math.max(200, box.clientWidth || 320), maxH = Math.max(200, Math.round(window.innerHeight * 0.55));

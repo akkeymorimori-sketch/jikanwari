@@ -1312,6 +1312,8 @@ dialog {
 .mnPic img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; outline: 1px solid var(--line); outline-offset: -1px; }
 .mnPic .x { position: absolute; top: 2px; right: 2px; }
 .mnAddPic, .mnChk { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.mnToday { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; font-size: 13px; color: var(--sub); }
+.mnToday[hidden] { display: none; }
 .mnAdds { display: flex; gap: 18px; flex-wrap: wrap; }
 .mnAdds .mnAddPic { margin-bottom: 0; }
 .mnAddHint { margin-top: 2px; }
