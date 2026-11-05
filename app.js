@@ -5569,7 +5569,7 @@ if (LN) {
     '<label><input type="checkbox" id="nItems"> 持ち物</label>' +
     '<label><input type="checkbox" id="nTasks"> 課題の締切</label><label><input type="checkbox" id="nEvents"> 予定</label></div>' +
     '<div class="row nRow">課題の締切は <select id="nTDays"><option value="1">明日だけ</option><option value="3">3日以内</option><option value="7">1週間以内</option></select> を知らせる</div>' +
-    '<div class="row nRow">朝の <input type="time" id="nMTime"> に知らせる</div>' +
+    '<div class="row nRow nSep">朝の <input type="time" id="nMTime"> に知らせる</div>' +
     '<div class="row nRow nKinds">' +
     '<label><input type="checkbox" id="nHabit"> 今日の日課</label>' +
     '<label><input type="checkbox" id="nFortune"> 今日の運勢</label><label><input type="checkbox" id="nFun"> 今日は何の日</label></div>' +
@@ -5585,7 +5585,7 @@ if (LN) {
     '<option value="3">3日前も</option><option value="7">1週間前も</option></select>' +
     '<button type="button" id="annAddBtn">追加</button></div>' +
     '<p class="hint">年は関係なく、毎年その日の朝に知らせるよ</p>' +
-    '<div class="row nRow">バイトの <select id="nJob">' +
+    '<div class="row nRow nSep">バイトの <select id="nJob">' +
     '<option value="0">通知しない</option><option value="30">30分前</option>' +
     '<option value="60">1時間前</option><option value="90">1時間半前</option>' +
     '<option value="120">2時間前</option></select></div>' +
