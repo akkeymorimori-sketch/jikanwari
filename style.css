@@ -2009,3 +2009,9 @@ html { touch-action: manipulation; }
 #aiBox:not(.gaku) #sGakuLeft,
 #aiBox.gaku :is(#sKeyLink, .aiKeyH, #sKey, #sKeyPaste, #sModelPick, #sModel) { display: none; }
 .aiLeft { margin: 8px 0 0; font-weight: bold; }
+
+/* AIの準備：キーなしの「がくログのAI」を先に出す・読み取るボタンの下の「今日あと◯回」 */
+.awGaku { padding: 12px; margin: 0 0 14px; border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft); }
+.awGaku .awMain { margin-top: 8px; }
+.gakuTag { margin: 4px 0 0; text-align: center; }
+.gakuTag[hidden] { display: none; }

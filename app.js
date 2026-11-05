@@ -3921,7 +3921,8 @@ function resetScan() {
   $('#scanNote').textContent = hasKey
     ? '名前・会社名・口座は、範囲の外に出すか塗りつぶしてから送るのがおすすめ。' +
       (state.provider === 'gemini' ? 'Geminiの無料枠だと、送った画像がGoogleの製品改善に使われるよ' : '')
-    : '設定の「画像読み取り（AI）の設定」でAPIキーを入れると使えるよ。キーがなくても下の欄から手入力できる';
+    : (PROVIDERS.gaku ? '設定 → AI で「がくログのAI」（キーなし・1日5回）を選ぶか、APIキーを入れると使えるよ。' : '設定の「画像読み取り（AI）の設定」でAPIキーを入れると使えるよ。') +
+      'キーがなくても下の欄から手入力できる';
   setScanMode('crop');
 }
 
@@ -5977,7 +5978,7 @@ const FEATURES = [
   { id: 'sat', name: '土曜日を表示', where: '設定 → 表示', desc: '時間割に土曜の列を出す', kw: '土曜', grid: 1, go: () => goSet('#sSat') },
   { id: 'features', name: '機能のオン/オフ', where: '設定 → 使う機能', desc: 'バイト・共有・日記・ToDoなど、使わない機能を隠す。データは消えない', kw: '機能 オフ 隠す 非表示 いらない シンプル バイト 共有 日記 ToDo メモ 日課 ポイント', go: () => goSet('#setFeat') },
   { id: 'useGrid', name: '時間割を使う・使わない', where: '設定 → 機能', desc: '時間割まわりを隠して、予定管理だけで使う', kw: '時間割 いらない 隠す 社会人 予定管理', go: () => goSet('#sUseGrid') },
-  { id: 'ai', name: 'AIの準備（APIキー）', where: '設定 → AI', desc: '写真の読み取りに使うキーを入れる。Geminiなら無料枠あり', kw: 'AI APIキー キー Gemini', go: () => openPhoto('guide') },
+  { id: 'ai', name: 'AIの準備（APIキー）', where: '設定 → AI', desc: (PROVIDERS.gaku ? 'キーなしで使える「がくログのAI」（1日5回）を選ぶか、' : '') + '写真の読み取りに使うキーを入れる。Geminiなら無料枠あり', kw: 'AI APIキー キー Gemini がくログのAI 回数', go: () => openPhoto('guide') },
   { id: 'feedback', name: '目安箱', where: '目安箱のボタン', desc: '匿名で意見や不具合を送れる', kw: '意見 要望 バグ 不具合 目安箱', go: () => openUrl(FEEDBACK_URL) }
 ];
 // 機能をさがす：項目ごとに、出すのに必要な機能（全部オンのときだけ出す）
@@ -6312,8 +6313,37 @@ async function gakuAsk(prompt, b64 = null) {
   if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
   return String(r.data?.text || '');
 }
+// 読み取りの画面（読み取るボタンの下）にも「がくログのAI：今日あと◯回」
+const GAKU_RUNS = ['#runOcr', '#shRun', '#mmRun', '#scanRun'];
+function gakuTags() {
+  const on = state.provider === 'gaku' && !!PROVIDERS.gaku, n = gakuLeft();
+  const txt = n == null ? 'がくログのAI：1日5回まで' : n > 0 ? `がくログのAI：今日あと${n}回`
+    : 'がくログのAI：今日の分は使い切ったよ' + (gakuCanMore() ? '（動画を見るとあと5回）' : '');
+  for (const id of GAKU_RUNS) {
+    const b = $(id);
+    if (!b) continue;
+    const at = b.parentElement.matches('.row') ? b.parentElement : b;
+    let t = at.nextElementSibling;
+    if (!t?.matches('.gakuTag')) {
+      if (!on) continue;
+      t = document.createElement('p');
+      t.className = 'gakuTag hint';
+      at.after(t);
+    }
+    t.hidden = !on;
+    t.textContent = txt;
+  }
+}
+// 読み取りの画面を開いたら出す（回数がわからなければサーバーに聞く）
+new MutationObserver(ms => {
+  if (state.provider !== 'gaku' || !ms.some(m => m.target.open && GAKU_RUNS.some(id => m.target.querySelector(id)))) return;
+  gakuTags();
+  window.gakuLeftShow();
+}).observe(document.body, { attributes: true, attributeFilter: ['open'], subtree: true });
+
 // 設定 → AI に「今日はあと◯回」（ask：わからなければサーバーに聞く）
 window.gakuLeftShow = async (ask = true) => {
+  gakuTags();
   const el = $('#sGakuLeft');
   if (!el) return;
   const n = gakuLeft();
@@ -11098,19 +11128,23 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const tryGo = fn => () => { try { fn(); } catch (e) { console.warn('tour', e); } };
   const CARDS = [
     { e: 'smile', t: 'がくログへようこそ', d: 'できることをざっくり紹介するね。1分くらい。気になるものは「やってみる」で、その場所へ飛べるよ。閉じたら続きから再開するよ' },
-    { e: 'calendar', t: '時間割と授業', grid: 1, d: '授業を押すと、欠席の記録、オンデマの回、先生の一言、ミニノート（写真つきメモ）が使えるよ' },
-    { e: 'camera', t: '写真で読み取る', feat: ['ai'], d: 'シフト表、時間割、給与明細、シラバス、手帳やLINE・メールのスクショの予定を、撮るだけで登録できる。AIのキーを入れると使えるよ', go: () => openPhoto('guide') },
+    { e: 'calendar', t: '時間割と授業', grid: 1, d: '授業を押すと、欠席の記録、オンデマの回、先生の一言、ミニノート（写真つきメモ）が使えるよ。ミニノートでは、プリントや板書を「紙をスキャン」でまっすぐ白くして残せる' },
+    { e: 'task', t: 'ひとことで追加', d: '「明日19時 飲み会」「11/10 統計 書類提出」「毎週火曜 18-22 バイト」みたいに1行書くだけで、予定・課題・ToDoに振り分けて入れるよ。今日の画面のいちばん上と＋ボタンから', go: () => window.openQa?.() },
+    { e: 'camera', t: '写真で読み取る', feat: ['ai'], d: 'シフト表、時間割、給与明細、シラバス、手帳やLINE・メールのスクショの予定を、撮るだけで登録できる。' +
+      (PROVIDERS.gaku ? 'キーなしの「がくログのAI」ですぐ使えるよ（1日5回）' : 'AIのキーを入れると使えるよ'), go: () => openPhoto(PROVIDERS.gaku && hasKey() ? 'pick' : 'guide') },
+    { e: 'diary', t: '一言日記と今日の気分', feat: ['diary'], d: '今日の画面で、一言日記と今日の気分（顔のアイコン）を残せる。カレンダーにも顔が出て、月ごとに見返せるよ', go: () => { showTab('today'); setTimeout(() => $('#moodRow')?.scrollIntoView({ block: 'center' }), 80); } },
     { e: 'sun', t: '今日の画面', d: '次の授業、ToDo、持ち物、課題がまとまってる。いらないものは一番下のボタンで隠せるよ', go: () => openHomePick() },
     { e: 'wallet', t: 'バイトと収入', feat: ['job'], d: 'バイトの予定を入れると、月ごとの収入を円グラフで見られる。シフトはカレンダーからも取り込めるよ' },
     { e: 'alarm', t: 'アラーム', app: 1, feat: ['alarm'], d: '「1限の日は7時」「このバイトが朝からある日は6時」みたいに、予定に合わせて鳴らせるよ。上の目覚ましのボタンから', go: () => $('#alHead').click() },
     { e: 'bell', t: '通知とウィジェット', app: 1, d: `前の日に持ち物や締め切りを知らせてくれる。ホーム画面${window.Capacitor?.getPlatform?.() === 'ios' ? 'とロック画面' : ''}にはウィジェットも置けるよ`, go: () => goSet('#nOn') },
     { e: 'group', t: '友達と共有', feat: ['share', 'group'], d: '時間割はQRコードで交換できて、空きコマが合う時間もわかる。共有グループで予定も一緒に見られるよ', go: () => openTermDlg('shareSec') },
     { e: 'palette', t: '見た目', d: '壁紙、テーマの色、フォント、アイコンの色を変えられるよ', go: () => openLook('bg') },
-    { e: 'save', t: 'バックアップ', d: '機種変更の前は「書き出し」しておいてね。新しいほうで「復元」すれば元どおり', go: () => goSet('#exportBtn') },
+    { e: 'link', t: 'Googleで同期', when: () => !$('#setSync')?.hidden, d: 'Googleでログインすると、スマホとPC（ブラウザ版）で同じデータを使える。データはあなたのGoogleドライブにだけ置かれるよ。設定 → Googleで同期 から', go: () => goSet('#syncBody') },
+    { e: 'save', t: 'バックアップ', d: '機種変更の前は「書き出し」しておいてね。新しいほうで「復元」すれば元どおり。Googleで同期してれば、新しいほうでログインするだけでもOK', go: () => goSet('#exportBtn') },
     { e: 'search', t: '困ったら', d: '「その他」の「機能をさがす」で、やりたいことから場所を探せる。この紹介も「その他」の「機能の紹介」からまた見られるよ', go: () => $('#helpBtn').click() }
   ];
   // feat：その中のどれかがオンなら出す
-  const list = () => CARDS.filter(c => (!c.app || native) && (!c.grid || state.useGrid) && (!c.feat || c.feat.some(featOn)));
+  const list = () => CARDS.filter(c => (!c.app || native) && (!c.grid || state.useGrid) && (!c.feat || c.feat.some(featOn)) && (!c.when || c.when()));
 
   const dlg = document.createElement('dialog');
   dlg.id = 'tourDlg';
@@ -12422,8 +12456,15 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
       w.innerHTML = [
         dots(1) +
         '<p class="awLead">写真やPDFを撮るだけで、時間割・シフト・給与明細をAIが読み取って入れてくれるよ</p>' +
-        '<p class="hint">キーがなくても、ほかの機能は全部使える。準備は数分で終わるよ</p>' +
-        '<button type="button" class="primary awMain" data-aw="1">はじめる</button>',
+        (PROVIDERS.gaku
+          ? '<div class="awGaku"><p class="awLead">キーなしですぐ使える「がくログのAI」</p>' +
+            '<p class="hint">準備はいらないよ。1日5回まで（使い切っても、動画の広告を見るとあと5回）。画像はAIの学習には使われない</p>' +
+            '<button type="button" class="primary awMain" id="awGaku">がくログのAIを使う</button></div>' +
+            '<p class="awLead">回数を気にせず使いたいなら、自分のキー</p>' +
+            '<p class="hint">GoogleのAI Studioで無料のキーを取って入れる。準備は数分で終わるよ</p>' +
+            '<button type="button" class="awMain" data-aw="1">自分のキーを入れる</button>'
+          : '<p class="hint">キーがなくても、ほかの機能は全部使える。準備は数分で終わるよ</p>' +
+            '<button type="button" class="primary awMain" data-aw="1">はじめる</button>'),
 
         dots(2) +
         '<p class="awLead">Googleのページでキーを作ってコピーする</p>' +
@@ -12445,7 +12486,9 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
         '<button type="button" data-aw="1">戻る</button>',
 
         '<p class="awDone">準備OK！</p>' +
-        '<p class="hint">キーはこのスマホの中にだけ保存されて、書き出しにも入らないよ</p>' +
+        (state.provider === 'gaku'
+          ? '<p class="hint">がくログのAIで読み取るよ。今日あと何回使えるかは、読み取りの画面と 設定 → AI に出るよ</p>'
+          : '<p class="hint">キーはこのスマホの中にだけ保存されて、書き出しにも入らないよ</p>') +
         '<button type="button" class="primary awMain" id="awGo">写真から追加へ</button>',
       ][step] +
       (step < 3 ? '<button type="button" class="awOther" id="awOther">OpenRouterやClaudeを使う人はこちら（設定を開く）</button>' : '');
@@ -12496,6 +12539,15 @@ FEATURES.push({ id: 'widget', name: 'ウィジェット', where: 'その他 → 
       }
 
       if (e.target.closest('#awGo')) return openPhoto('pick');
+
+      if (e.target.closest('#awGaku')) {
+        state.provider = 'gaku';
+        save();
+        step = 3;
+        draw();
+        window.gakuLeftShow?.();
+        return;
+      }
 
       if (e.target.closest('#awOther')) {
         photoDlg.close();
