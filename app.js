@@ -6284,8 +6284,16 @@ async function gakuMore(call) {
     return false;
   }
 }
+// 「本物か確かめられなかった」ときは、原因をさがす手がかりも出す（サーバーの返事・端末の証明が取れたか）
+async function gakuWhy(err) {
+  const c = String(err?.code || '').replace(/^functions\//, '');
+  if (!(c === 'unauthenticated' || c === 'permission-denied' || /app.?check|attest|integrity/i.test(String(err?.message)))) return '';
+  const N = window.Capacitor?.Plugins?.FirebaseAppCheck;
+  const dev = !N ? 'なし' : await N.getToken().then(r => r?.token ? 'OK' : '空', e => String(e?.message || e).slice(0, 160));
+  return `（くわしく：${c || '-'} ${String(err?.message || '').slice(0, 80)} / 端末の証明：${dev}）`;
+}
 async function gakuAsk(prompt, b64 = null) {
-  const call = await gakuInit().catch(err => { throw new Error(gakuErr(err)); });
+  const call = await gakuInit().catch(async err => { throw new Error(gakuErr(err) + await gakuWhy(err)); });
   aiCheck();
   let r;
   const ask = () => call({ prompt, ...(b64 && { image: b64 }) });
@@ -6293,12 +6301,12 @@ async function gakuAsk(prompt, b64 = null) {
   catch (err) {
     // 使い切った → 動画を見るならあと5回にして、そのまま続ける
     const out = String(err?.code || '').endsWith('resource-exhausted');
-    if (!out || !gakuCanMore()) throw new Error(gakuErr(err));
+    if (!out || !gakuCanMore()) throw new Error(gakuErr(err) + await gakuWhy(err));
     gakuSetLeft(0);
     if (!confirm('今日の分を使い切ったよ。\n動画の広告（30秒くらい）を最後まで見ると、今日あと5回使えるよ。見る？') || !await gakuMore(call))
       throw new Error(gakuErr(err));
     try { r = await ask(); }
-    catch (err2) { throw new Error(gakuErr(err2)); }
+    catch (err2) { throw new Error(gakuErr(err2) + await gakuWhy(err2)); }
   }
   aiCheck();
   if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
