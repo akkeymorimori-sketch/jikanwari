@@ -614,6 +614,7 @@ function normalize(s) {
     : {};
   s.evTapSeen = s.evTapSeen === true;
   // おせっかい機能（最初は全部オフ）と、その記録
+  if (typeof s.snapEdit !== 'boolean') delete s.snapEdit; // 写真を撮ったら・選んだらすぐ編集（ない = する）
   const fn = s.fun && typeof s.fun === 'object' ? s.fun : {};
   const okHM = v => /^([01]\d|2[0-3]):[0-5]\d$/.test(v || '');
   s.fun = { saba: fn.saba === true, est: fn.est === true, mood: fn.mood === true, sleep: fn.sleep === true, survive: fn.survive === true, line: fn.line === true,
@@ -10686,7 +10687,9 @@ if (window.Capacitor?.isNativePlatform?.()) {
     '<button type="button" class="x big" id="mnX" aria-label="閉じる">×</button></div>' +
     '<textarea id="mnText" maxlength="2000" rows="8" placeholder="次回の自分へ。範囲、先生が言ってたこと、気づいたこと…"></textarea>' +
     '<div class="mnPics" id="mnPics"></div>' +
-    '<label class="mnAddPic" data-ico="camera">写真を足す（4枚まで）<input type="file" id="mnFile" accept="image/*" multiple hidden></label>' +
+    '<div class="mnAdds"><label class="mnAddPic" data-ico="camera">写真を足す<input type="file" id="mnFile" accept="image/*" multiple hidden></label>' +
+    '<label class="mnAddPic" data-ico="doc">紙をスキャン<input type="file" id="mnScan" accept="image/*" capture="environment" hidden></label></div>' +
+    '<p class="hint mnAddHint">写真は4枚まで。スキャンは、紙やプリントをまっすぐにして白くするよ</p>' +
     '<label class="mnChk"><input type="checkbox" id="mnNext"> 次の授業で見せる</label>' +
     '<div class="mnBtns"><button type="button" id="mnDel">削除</button>' +
     '<button type="button" id="mnSave" class="primary">保存</button></div>';
@@ -10699,7 +10702,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       `<div class="mnPic"><img src="${p.url}" alt="" data-mnview="${i}">` +
       `<button type="button" class="x" data-mnrm="${i}" aria-label="外す">×</button>` +
       `<button type="button" class="mnEdit" data-mned="${i}" aria-label="編集">✎</button></div>`).join('') +
-      (ed.pics.length ? '<p class="hint mnPicHint">写真の ✎ で、切り取り・回転・くっきりができるよ</p>' : '');
+      (ed.pics.length ? '<p class="hint mnPicHint">写真の ✎ で、切り取り・回転・スキャン・くっきりができるよ</p>' : '');
   };
   // c：どの授業のノートか（ミニノート一覧から開くときは、ほかの学期・ほかの端末の授業のこともある）
   const open = async (note, c = cur()) => {
@@ -10742,12 +10745,14 @@ if (window.Capacitor?.isNativePlatform?.()) {
   $('#mnX').onclick = () => close(false);
   dlg.addEventListener('cancel', e => { e.preventDefault(); close(false); });
 
-  $('#mnFile').onchange = async e => {
+  // 撮った・選んだ写真を入れる（すぐ編集する設定なら1枚ずつ編集の画面。スキャンは四隅を合わせる画面）
+  const addFiles = async (e, scan) => {
     const fs = [...e.target.files].slice(0, 4 - ed.pics.length);
     e.target.value = '';
     for (const f of fs) {
       try {
-        const b = await wallShrink(f, 1280);
+        const b = await window.snapPhoto(f, scan);
+        if (!ed) return;
         const key = 'n-' + uid();
         await pPut(key, b);
         const url = URL.createObjectURL(b);
@@ -10759,9 +10764,11 @@ if (window.Capacitor?.isNativePlatform?.()) {
         alert('写真を読み込めなかった');
       }
     }
-    if ([...e.target.files].length > fs.length) toast?.('写真は4枚までだよ');
+    if (fs.length < e.target.files.length || (e.target.files.length && !fs.length)) toast?.('写真は4枚までだよ');
     drawPics();
   };
+  $('#mnFile').onchange = e => addFiles(e, false);
+  $('#mnScan').onchange = e => addFiles(e, true);
   $('#mnPics').onclick = async e => {
     // 写真を編集：新しい写真として入れて、前の写真はノートを保存したら消す（保存しなければ元のまま）
     const edt = e.target.closest('[data-mned]');
@@ -10851,7 +10858,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     const k = todayStr();
     let n = null;
     for (const f of files) {
-      const b = await wallShrink(f, 1280);
+      const b = await window.snapPhoto(f);
       const key = 'n-' + uid();
       await pPut(key, b);
       const day = notes(c).filter(x => x.date === k).sort((x, y) => (x.cont || 1) - (y.cont || 1));
@@ -12752,28 +12759,40 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   }
 }
 
-/* ===== 写真の編集（切り取り・回転・くっきり・白黒） ===== */
-// window.editPhoto(blob) → 編集した写真（JPEG）。やめたら・何も変えてなければ null
+/* ===== 写真の編集（切り取り・回転・スキャン・くっきり・白黒） ===== */
+// window.editPhoto(blob, { fresh, scan }) → 編集した写真（JPEG）。やめたら・何も変えてなければ null
+//   fresh：撮った・選んだばかりの写真（やめるボタンが「そのまま使う」になる）
+//   scan：紙の四隅を合わせる画面から始める
+// スキャン：四隅を合わせて「まっすぐにする」と、台形をまっすぐに直して、影をとって紙を白くする
 {
   const dlg = document.createElement('dialog');
   dlg.id = 'peDlg';
   dlg.innerHTML = '<div class="dlg">' +
     '<div class="dlgHead"><h2>写真を編集</h2>' +
     '<button type="button" class="x big" data-pe="cancel" aria-label="閉じる">×</button></div>' +
-    '<p class="hint">残したいところを指でなぞると切り取れるよ</p>' +
+    '<p class="hint" id="peHint"></p>' +
     '<div class="peWrap"><canvas id="peCv"></canvas></div>' +
-    '<div class="peTools">' +
+    '<div class="peTools" id="peTools">' +
     '<button type="button" data-pe="rot">↻ 回転</button>' +
+    '<button type="button" data-pe="scan">スキャン</button>' +
     '<button type="button" data-pe="enh" aria-pressed="false">くっきり</button>' +
     '<button type="button" data-pe="gray" aria-pressed="false">◐ 白黒</button>' +
     '<button type="button" data-pe="reset">元に戻す</button></div>' +
-    '<div class="peBtns"><button type="button" data-pe="cancel">やめる</button>' +
+    '<div class="peTools peQuad" id="peQuad" hidden>' +
+    '<button type="button" data-pe="qall">全体にする</button>' +
+    '<button type="button" data-pe="qauto">自動で合わせる</button>' +
+    '<button type="button" class="primary" data-pe="flat">まっすぐにする</button></div>' +
+    '<label class="peAsk"><input type="checkbox" id="peAuto"> 写真を撮ったら・選んだら、すぐこの画面を出す</label>' +
+    '<div class="peBtns"><button type="button" data-pe="cancel" id="peCancel">やめる</button>' +
     '<button type="button" class="primary" data-pe="ok">決定</button></div></div>';
   document.body.append(dlg);
   const cv = dlg.querySelector('#peCv');
 
-  let img = null, rot = 0, crop = null, enh = false, gray = false, drag = null, done = null;
+  let img = null, rot = 0, crop = null, enh = false, gray = false, drag = null, done = null, fresh = false;
   let base = null; // 回したあとの写真（長い辺 2000px まで）
+  let quad = null; // スキャンで合わせてる四隅 [左上, 右上, 右下, 左下]（0〜1）。null なら切り取りの画面
+  let flat = null; // まっすぐにしたあとの写真（あれば base の代わり）
+  const src = () => flat || base;
 
   function makeBase() {
     const s = Math.min(1, 2000 / Math.max(img.width, img.height));
@@ -12784,59 +12803,251 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     ctx.translate(base.width / 2, base.height / 2);
     ctx.rotate(rot * Math.PI / 2);
     ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    flat = null;
   }
   const rectOf = (a, b) => ({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) });
+  const QALL = () => [{ x: .04, y: .04 }, { x: .96, y: .04 }, { x: .96, y: .96 }, { x: .04, y: .96 }];
+
+  // ----- 紙の四隅をさがす（小さくして、真ん中と同じ明るさのかたまりの角） -----
+  function findQuad(c) {
+    const s = Math.min(1, 220 / Math.max(c.width, c.height));
+    const w = Math.max(8, Math.round(c.width * s)), h = Math.max(8, Math.round(c.height * s));
+    const sm = document.createElement('canvas'); sm.width = w; sm.height = h;
+    const x2 = sm.getContext('2d', { willReadFrequently: true });
+    x2.drawImage(c, 0, 0, w, h);
+    const p = x2.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) g[i] = 0.299 * p[i * 4] + 0.587 * p[i * 4 + 1] + 0.114 * p[i * 4 + 2];
+    // 明るさの山を2つに分ける（大津の方法）
+    const hist = new Array(256).fill(0);
+    for (const v of g) hist[v | 0]++;
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sB = 0, wB = 0, best = 0, th = 128;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t]; if (!wB) continue;
+      const wF = w * h - wB; if (!wF) break;
+      sB += t * hist[t];
+      const d = sB / wB - (sum - sB) / wF, v = wB * wF * d * d;
+      if (v > best) { best = v; th = t; }
+    }
+    // 真ん中あたりが明るい側か暗い側か（白い紙・黒板どっちでも）
+    let cb = 0, cn = 0;
+    for (let y = Math.round(h * .4); y < h * .6; y++) for (let x = Math.round(w * .4); x < w * .6; x++) { cb += g[y * w + x] > th; cn++; }
+    const want = cb * 2 >= cn;
+    const on = i => (g[i] > th) === want;
+    // 真ん中から、つながってる同じ側の画素を集める
+    const seen = new Uint8Array(w * h), st = [];
+    const c0 = Math.round(h / 2) * w + Math.round(w / 2);
+    let start = -1;
+    for (let r = 0; r < Math.min(w, h) / 4 && start < 0; r++)
+      for (const i of [c0 + r, c0 - r, c0 + r * w, c0 - r * w]) if (i >= 0 && i < w * h && on(i)) { start = i; break; }
+    if (start < 0) return null;
+    st.push(start); seen[start] = 1;
+    let n = 0, tl = null, tr = null, br = null, bl = null, edge = 0;
+    while (st.length) {
+      const i = st.pop(), x = i % w, y = (i / w) | 0;
+      n++;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge++;
+      if (!tl || x + y < tl.x + tl.y) tl = { x, y };
+      if (!br || x + y > br.x + br.y) br = { x, y };
+      if (!tr || x - y > tr.x - tr.y) tr = { x, y };
+      if (!bl || x - y < bl.x - bl.y) bl = { x, y };
+      for (const j of [x > 0 && i - 1, x < w - 1 && i + 1, y > 0 && i - w, y < h - 1 && i + w])
+        if (j !== false && !seen[j] && on(j)) { seen[j] = 1; st.push(j); }
+    }
+    // 小さすぎる・画面いっぱい（ふちにべったり）なら見つからなかったことにする
+    if (n < w * h * 0.12 || edge > (w + h) * 1.2) return null;
+    return [tl, tr, br, bl].map(q => ({ x: (q.x + .5) / w, y: (q.y + .5) / h }));
+  }
+
+  // ----- 台形をまっすぐに（射影変換）＋影をとって紙を白く -----
+  // 四角 (0,0)-(1,1) から四隅 q への変換の係数
+  function homo(q) {
+    const [p0, p1, p2, p3] = q;
+    const dx1 = p1.x - p2.x, dx2 = p3.x - p2.x, dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
+    const sx = p0.x - p1.x + p2.x - p3.x, sy = p0.y - p1.y + p2.y - p3.y;
+    const den = dx1 * dy2 - dx2 * dy1 || 1e-9;
+    const g = (sx * dy2 - dx2 * sy) / den, hh = (dx1 * sy - sx * dy1) / den;
+    return [p1.x - p0.x + g * p1.x, p3.x - p0.x + hh * p3.x, p0.x, p1.y - p0.y + g * p1.y, p3.y - p0.y + hh * p3.y, p0.y, g, hh];
+  }
+  function flatten(c, q) {
+    const W0 = c.width, H0 = c.height;
+    const P = q.map(p => ({ x: p.x * W0, y: p.y * H0 }));
+    const len = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    let W = (len(P[0], P[1]) + len(P[3], P[2])) / 2, H = (len(P[0], P[3]) + len(P[1], P[2])) / 2;
+    const s = Math.min(1, 1800 / Math.max(W, H));
+    W = Math.max(8, Math.round(W * s)); H = Math.max(8, Math.round(H * s));
+    const [a, b, cc, d, e, f, g, h] = homo(P);
+    const sp = c.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W0, H0).data;
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const ox = out.getContext('2d', { willReadFrequently: true }), od = ox.createImageData(W, H), op = od.data;
+    for (let y = 0; y < H; y++) {
+      const v = (y + .5) / H;
+      for (let x = 0; x < W; x++) {
+        const u = (x + .5) / W, z = g * u + h * v + 1;
+        let X = (a * u + b * v + cc) / z - .5, Y = (d * u + e * v + f) / z - .5;
+        X = Math.max(0, Math.min(W0 - 1.001, X)); Y = Math.max(0, Math.min(H0 - 1.001, Y));
+        const x0 = X | 0, y0 = Y | 0, fx = X - x0, fy = Y - y0, i0 = (y0 * W0 + x0) * 4, i1 = i0 + W0 * 4, o = (y * W + x) * 4;
+        for (let k = 0; k < 3; k++)
+          op[o + k] = (sp[i0 + k] * (1 - fx) + sp[i0 + 4 + k] * fx) * (1 - fy) + (sp[i1 + k] * (1 - fx) + sp[i1 + 4 + k] * fx) * fy;
+        op[o + 3] = 255;
+      }
+    }
+    paper(op, W, H, out);
+    ox.putImageData(od, 0, 0);
+    return out;
+  }
+  // 影・明るさのむらをとる：ぼかした「紙の色」で割って、紙を白に。黒板（暗い紙）なら明るさを広げるだけ
+  function paper(p, W, H) {
+    const bw = Math.max(4, Math.round(W / 24)), bh = Math.max(4, Math.round(H / 24));
+    const sm = document.createElement('canvas'); sm.width = bw; sm.height = bh;
+    const full = document.createElement('canvas'); full.width = W; full.height = H;
+    full.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(p), W, H), 0, 0);
+    // 少しずつ小さくして、字を消した「紙の色」を作る（明るい方を拾うように、小さくしたあと膨らませる）
+    let cur = full;
+    while (cur.width / 2 > bw * 2) {
+      const n = document.createElement('canvas'); n.width = Math.round(cur.width / 2); n.height = Math.round(cur.height / 2);
+      n.getContext('2d').drawImage(cur, 0, 0, n.width, n.height); cur = n;
+    }
+    const sx = sm.getContext('2d', { willReadFrequently: true });
+    sx.drawImage(cur, 0, 0, bw, bh);
+    const sd = sx.getImageData(0, 0, bw, bh), s = sd.data, m = new Uint8ClampedArray(s);
+    let lum = 0;
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      const o = (y * bw + x) * 4;
+      for (let k = 0; k < 3; k++) {
+        let v = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const yy = Math.max(0, Math.min(bh - 1, y + dy)), xx = Math.max(0, Math.min(bw - 1, x + dx));
+          v = Math.max(v, s[(yy * bw + xx) * 4 + k]);
+        }
+        m[o + k] = v;
+      }
+      lum += 0.299 * m[o] + 0.587 * m[o + 1] + 0.114 * m[o + 2];
+    }
+    lum /= bw * bh;
+    const dark = lum < 110; // 黒板・暗い紙
+    if (!dark) {
+      sd.data.set(m); sx.putImageData(sd, 0, 0);
+      const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+      const bx = bg.getContext('2d', { willReadFrequently: true });
+      bx.imageSmoothingQuality = 'high';
+      bx.drawImage(sm, 0, 0, W, H);
+      const b = bx.getImageData(0, 0, W, H).data;
+      for (let i = 0; i < p.length; i += 4) for (let k = 0; k < 3; k++) {
+        const v = p[i + k] / Math.max(40, b[i + k]); // 1 = 紙の色
+        p[i + k] = v >= .9 ? 255 : 255 * Math.pow(Math.max(0, v / .9), 1.6); // 紙は真っ白、字は濃く
+      }
+    } else {
+      // 黒板：明るさを広げる（下と上の 2% を捨てて伸ばす）
+      const h = new Array(256).fill(0);
+      for (let i = 0; i < p.length; i += 4) h[(0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]) | 0]++;
+      const nPx = p.length / 4; let lo = 0, hi = 255, acc = 0;
+      for (let i = 0; i < 256; i++) { acc += h[i]; if (acc > nPx * .02) { lo = i; break; } }
+      acc = 0;
+      for (let i = 255; i >= 0; i--) { acc += h[i]; if (acc > nPx * .02) { hi = i; break; } }
+      const k2 = 255 / Math.max(20, hi - lo);
+      for (let i = 0; i < p.length; i += 4) for (let k = 0; k < 3; k++) p[i + k] = (p[i + k] - lo) * k2;
+    }
+  }
 
   // 画面に出す（くっきり・白黒は CSS の filter で見せる。保存するときは画素を直接いじる）
+  let view = 1; // 画面の大きさ ÷ 写真の大きさ
   function draw() {
+    const S = src();
     const box = dlg.querySelector('.peWrap');
     const maxW = Math.max(200, box.clientWidth || 320), maxH = Math.max(200, Math.round(window.innerHeight * 0.55));
-    const s = Math.min(maxW / base.width, maxH / base.height, 1);
-    cv.width = Math.round(base.width * s);
-    cv.height = Math.round(base.height * s);
+    const s = Math.min(maxW / S.width, maxH / S.height, 1);
+    view = s;
+    cv.width = Math.round(S.width * s);
+    cv.height = Math.round(S.height * s);
     const ctx = cv.getContext('2d');
-    ctx.drawImage(base, 0, 0, cv.width, cv.height);
-    cv.style.filter = [enh ? 'contrast(1.35) brightness(1.08)' : '', gray ? 'grayscale(1)' : ''].join(' ').trim() || 'none';
-    const r = drag ? rectOf(drag.a, drag.b) : crop;
-    if (r) {
-      const x = r.x * cv.width, y = r.y * cv.height, w = r.w * cv.width, h = r.h * cv.height;
-      ctx.fillStyle = 'rgba(0,0,0,.5)'; // 切り取る外側を暗く
-      ctx.fillRect(0, 0, cv.width, y);
-      ctx.fillRect(0, y + h, cv.width, cv.height - y - h);
-      ctx.fillRect(0, y, x, h);
-      ctx.fillRect(x + w, y, cv.width - x - w, h);
-      ctx.strokeStyle = '#ffd43b';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
+    ctx.drawImage(S, 0, 0, cv.width, cv.height);
+    cv.style.filter = quad ? 'none' : [enh ? 'contrast(1.35) brightness(1.08)' : '', gray ? 'grayscale(1)' : ''].join(' ').trim() || 'none';
+    const W = cv.width, H = cv.height;
+    if (quad) {
+      // 四隅の外を暗く、枠と丸い持ち手
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, H);
+      ctx.moveTo(quad[0].x * W, quad[0].y * H);
+      for (const q of [quad[3], quad[2], quad[1]]) ctx.lineTo(q.x * W, q.y * H);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill('evenodd');
+      ctx.beginPath(); quad.forEach((q, i) => ctx[i ? 'lineTo' : 'moveTo'](q.x * W, q.y * H)); ctx.closePath();
+      ctx.strokeStyle = '#ffd43b'; ctx.lineWidth = 2; ctx.stroke();
+      for (const [i, q] of quad.entries()) {
+        ctx.beginPath(); ctx.arc(q.x * W, q.y * H, drag?.i === i ? 13 : 10, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,212,59,.35)'; ctx.fill(); ctx.lineWidth = 2.5; ctx.stroke();
+      }
+      ctx.restore();
+    } else {
+      const r = drag ? rectOf(drag.a, drag.b) : crop;
+      if (r) {
+        const x = r.x * W, y = r.y * H, w = r.w * W, h = r.h * H;
+        ctx.fillStyle = 'rgba(0,0,0,.5)'; // 切り取る外側を暗く
+        ctx.fillRect(0, 0, W, y);
+        ctx.fillRect(0, y + h, W, H - y - h);
+        ctx.fillRect(0, y, x, h);
+        ctx.fillRect(x + w, y, W - x - w, h);
+        ctx.strokeStyle = '#ffd43b';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+      }
     }
+    dlg.querySelector('#peTools').hidden = !!quad;
+    dlg.querySelector('#peQuad').hidden = !quad;
+    dlg.querySelector('#peHint').textContent = quad
+      ? '黄色の丸を紙の四隅に合わせて「まっすぐにする」を押してね'
+      : flat ? 'まっすぐにしたよ。さらに指でなぞると切り取れるよ' : '残したいところを指でなぞると切り取れるよ。紙やプリントは「スキャン」';
     dlg.querySelector('[data-pe="enh"]').setAttribute('aria-pressed', String(enh));
     dlg.querySelector('[data-pe="gray"]').setAttribute('aria-pressed', String(gray));
+    dlg.querySelector('[data-pe="scan"]').setAttribute('aria-pressed', String(!!flat));
   }
   const pt = e => {
     const r = cv.getBoundingClientRect();
     return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) };
   };
-  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); const p = pt(e); drag = { a: p, b: p }; });
-  cv.addEventListener('pointermove', e => { if (drag) { drag.b = pt(e); draw(); } });
+  cv.addEventListener('pointerdown', e => {
+    e.preventDefault(); cv.setPointerCapture(e.pointerId);
+    const p = pt(e);
+    if (quad) {
+      // いちばん近い角をつかむ（指の分だけずらして動かす）
+      const r = cv.getBoundingClientRect();
+      const dist = q => Math.hypot((q.x - p.x) * r.width, (q.y - p.y) * r.height);
+      const i = quad.reduce((bi, q, k) => dist(q) < dist(quad[bi]) ? k : bi, 0);
+      drag = { i, off: { x: quad[i].x - p.x, y: quad[i].y - p.y } };
+      return draw();
+    }
+    drag = { a: p, b: p };
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const p = pt(e);
+    if (quad) quad[drag.i] = { x: Math.max(0, Math.min(1, p.x + drag.off.x)), y: Math.max(0, Math.min(1, p.y + drag.off.y)) };
+    else drag.b = p;
+    draw();
+  });
   cv.addEventListener('pointerup', () => {
     if (!drag) return;
-    const r = rectOf(drag.a, drag.b);
+    if (!quad) {
+      const r = rectOf(drag.a, drag.b);
+      if (r.w > 0.04 && r.h > 0.04) crop = r; // 小さすぎるのはタップの誤爆
+    }
     drag = null;
-    if (r.w > 0.04 && r.h > 0.04) crop = r; // 小さすぎるのはタップの誤爆
     draw();
   });
   cv.addEventListener('pointercancel', () => { drag = null; draw(); });
 
-  // 保存する写真を作る（長い辺 1280px。くっきり・白黒は画素を直接）
+  // 保存する写真を作る（長い辺 1280px、スキャンした紙は字が読めるように 1600px。くっきり・白黒は画素を直接）
   function output() {
+    const S = src();
     const r = crop || { x: 0, y: 0, w: 1, h: 1 };
-    const sx = r.x * base.width, sy = r.y * base.height, sw = r.w * base.width, sh = r.h * base.height;
-    const s = Math.min(1, 1280 / Math.max(sw, sh));
+    const sx = r.x * S.width, sy = r.y * S.height, sw = r.w * S.width, sh = r.h * S.height;
+    const s = Math.min(1, (flat ? 1600 : 1280) / Math.max(sw, sh));
     const out = document.createElement('canvas');
     out.width = Math.max(1, Math.round(sw * s));
     out.height = Math.max(1, Math.round(sh * s));
     const ctx = out.getContext('2d');
-    ctx.drawImage(base, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    ctx.drawImage(S, sx, sy, sw, sh, 0, 0, out.width, out.height);
     if (enh || gray) {
       const d = ctx.getImageData(0, 0, out.width, out.height), p = d.data;
       for (let i = 0; i < p.length; i += 4) {
@@ -12853,35 +13064,63 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   function finish(b) {
     if (dlg.open) dlg.close();
     if (img?.src) URL.revokeObjectURL(img.src);
-    img = base = null;
+    img = base = flat = quad = null;
     const f = done;
     done = null;
     f?.(b);
   }
+  const startQuad = () => { crop = null; flat = null; quad = findQuad(base) || QALL(); };
   dlg.addEventListener('click', async e => {
     const k = e.target.closest('[data-pe]')?.dataset.pe;
     if (!k) return;
     if (k === 'cancel') return finish(null);
-    if (k === 'ok') return finish(rot || crop || enh || gray ? await output() : null);
+    if (k === 'ok') {
+      if (quad) { flat = flatten(base, quad); quad = null; } // 四隅を合わせたまま決定したら、まっすぐにしてから
+      return finish(rot || crop || flat || enh || gray ? await output() : null);
+    }
     if (k === 'rot') { rot = (rot + 1) % 4; crop = null; makeBase(); }
+    if (k === 'scan') startQuad();
+    if (k === 'qall') quad = QALL();
+    if (k === 'qauto') quad = findQuad(base) || (toast?.('紙のふちが見つからなかった。丸を動かして合わせてね'), quad);
+    if (k === 'flat') {
+      dlg.querySelector('[data-pe="flat"]').disabled = true;
+      await new Promise(r => setTimeout(r, 30)); // 「まっすぐにする」が押された見た目を先に出す
+      try { flat = flatten(base, quad); } finally { dlg.querySelector('[data-pe="flat"]').disabled = false; }
+      quad = null; crop = null; enh = false;
+    }
     if (k === 'enh') enh = !enh;
     if (k === 'gray') gray = !gray;
-    if (k === 'reset') { rot = 0; crop = null; enh = gray = false; makeBase(); }
+    if (k === 'reset') { rot = 0; crop = null; quad = null; enh = gray = false; makeBase(); }
     draw();
   });
   dlg.addEventListener('cancel', e => { e.preventDefault(); finish(null); });
+  dlg.querySelector('#peAuto').onchange = e => { state.snapEdit = e.target.checked; save(); };
 
-  window.editPhoto = blob => new Promise((ok, ng) => {
+  window.editPhoto = (blob, opt = {}) => new Promise((ok, ng) => {
     const im = new Image();
     im.onload = () => {
-      img = im; rot = 0; crop = null; enh = gray = false; drag = null; done = ok;
+      img = im; rot = 0; crop = null; quad = null; enh = gray = false; drag = null; done = ok;
+      fresh = !!opt.fresh;
       makeBase();
+      if (opt.scan) startQuad();
+      dlg.querySelector('#peCancel').textContent = fresh ? 'そのまま使う' : 'やめる';
+      dlg.querySelector('#peAuto').checked = state.snapEdit !== false;
+      dlg.querySelector('.peAsk').hidden = !fresh;
       dlg.showModal();
       requestAnimationFrame(draw); // 開いてから大きさを測る
     };
     im.onerror = () => ng(new Error('写真が読めなかった'));
     im.src = URL.createObjectURL(blob);
   });
+  // 撮った・選んだ写真を、ミニノートに入れる形にする（すぐ編集する設定なら編集の画面を出す）
+  // scan：スキャンとして撮ったときは、設定に関係なく四隅を合わせる画面
+  window.snapPhoto = async (file, scan = false) => {
+    if (scan || state.snapEdit !== false) {
+      const out = await window.editPhoto(file, { fresh: true, scan }).catch(() => null);
+      if (out) return out;
+    }
+    return wallShrink(file, 1280);
+  };
 }
 
 /* ===== おせっかい機能（締切サバ読み・自己申告補正・やる気天気予報・睡眠の先取り・1限生存率） ===== */
