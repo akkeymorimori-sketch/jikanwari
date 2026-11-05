@@ -5984,13 +5984,14 @@ const FEATURES = [
 // 機能をさがす：項目ごとに、出すのに必要な機能（全部オンのときだけ出す）
 const FEAT_NEED = {
   job: ['job'], income: ['job'], calSync: ['job'], photoPay: ['job', 'ai'], photoShift: ['job', 'ai'],
-  photoGrid: ['grid', 'ai'], photoMemo: ['ai'], ai: ['ai'], group: ['group'],
+  photoGrid: ['grid', 'ai'], photoMemo: ['ai'], ai: ['ai'], aiMore: ['ai'], group: ['group'], grNews: ['group'], calShow: ['group'],
+  todo: ['todo'], habit: ['habit'], alarm: ['alarm'], alarmEar: ['alarm'], exam: ['exam'], mood: ['diary'],
   share: ['grid', 'share'], friendGrid: ['grid', 'share'], points: ['points'], miniNote: ['grid']
 };
 const featShown = id => id === 'notes' ? featOn('memo') || featOn('diary') : (FEAT_NEED[id] || []).every(featOn);
 function helpFeatures() {
   return FEATURES.filter(f =>
-    (!f.app || isApp) && (!f.grid || state.useGrid) && featShown(f.id) && (f.id !== 'feedback' || FEEDBACK_URL));
+    (!f.app || isApp) && (!f.grid || state.useGrid) && featShown(f.id) && (f.id !== 'feedback' || FEEDBACK_URL) && (!f.when || f.when()));
 }
 // キーなし・AI失敗時のキーワード検索
 function helpLocal(q) {
@@ -15474,4 +15475,29 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const APP = window.Capacitor?.Plugins?.App;
   APP?.addListener?.('appUrlOpen', e => fromUrl(e?.url));
   APP?.getLaunchUrl?.().then(r => fromUrl(r?.url)).catch(() => {});
+}
+
+/* ===== 機能をさがす：あとから入れた機能も探せるように ===== */
+{
+  const scrollTo = sel => () => { showTab('today'); setTimeout(() => $(sel)?.scrollIntoView({ block: 'center' }), 80); };
+  FEATURES.push(
+    { id: 'todo', name: 'ToDo', where: '今日の画面の「ToDo」', desc: '今日やることを書いて、終わったらチェック。ひとことで「帰りに牛乳買う」みたいに入れてもいい', kw: 'ToDo やること タスク リスト 買い物 やり忘れ', go: scrollTo('#todoCard') },
+    { id: 'habit', name: '日課', where: '今日の画面の「日課」→「編集」', desc: '毎日やりたいこと（英単語10個、筋トレ…）を決めて、やった日にチェック', kw: '日課 習慣 毎日 継続 ルーティン 筋トレ 勉強', go: scrollTo('#habitCard') },
+    { id: 'mood', name: '今日の気分', where: '今日の画面の一言日記の上', desc: '9種類の顔から今日の気分を選んで残す。カレンダーや「月ごとに見る」にも顔が出る', kw: '気分 きもち 機嫌 顔 体調 日記 記録', go: scrollTo('#moodRow') },
+    { id: 'alarm', name: '目覚ましアラーム', where: '今日の画面のいちばん上の目覚ましのボタン', desc: 'ふつうのアラームのほかに、「1限の日は7時」「朝からバイトの日は6時半」みたいに予定に合わせて自動で鳴らせる。音・音量・スヌーズも選べる', kw: 'アラーム 目覚まし 起きる 朝 寝坊 スヌーズ 音 音量 1限', app: 1, go: () => $('#alHead')?.click() },
+    { id: 'alarmEar', name: 'イヤホンで鳴らす', where: 'アラームの画面のいちばん下の「イヤホンで鳴らす」', desc: '同じ部屋の人を起こさないように、つないだイヤホンでアラームを鳴らす', kw: 'イヤホン ヘッドホン AirPods 同室 寮 静か アラーム', app: 1,
+      when: () => window.Capacitor?.getPlatform?.() === 'ios', go: () => { $('#alHead')?.click(); setTimeout(() => $('#alEarLink')?.scrollIntoView({ block: 'center' }), 120); } },
+    { id: 'exam', name: '試験前モード', where: 'カレンダーで予定を追加 → 種類を「試験」', desc: '試験の7日前から今日の画面に出て、その授業のミニノートや写真をすぐ見返せる', kw: '試験 テスト 期末 中間 復習 見返す 勉強', go: () => showTab('cal') },
+    { id: 'scan', name: '紙をスキャン', where: '授業の詳細 → ミニノート →「紙をスキャン」', desc: 'プリントや板書を撮ると、紙のふちを自動で囲んで、まっすぐ白くして残す', kw: 'スキャン スキャナー プリント 紙 板書 資料 まっすぐ 白く PDF', grid: 1, go: () => showTab('grid') },
+    { id: 'photoEdit', name: '写真の切り取り・回転', where: 'ミニノートで写真を撮ったあと／板書を撮ったあと', desc: '撮った写真を切り取り・回転・くっきり・白黒にできる。毎回開かないようにもできる', kw: '切り取り トリミング 回転 編集 くっきり 白黒 写真', grid: 1, go: () => showTab('grid') },
+    { id: 'sync', name: 'Googleで同期', where: '設定 → Googleで同期', desc: 'Googleでログインすると、スマホとPC（ブラウザ版）で同じデータを使える。機種変更もログインするだけ。データは自分のGoogleドライブにだけ置かれる', kw: '同期 Google グーグル ログイン PC パソコン 機種変 引き継ぎ ドライブ', when: () => !$('#setSync')?.hidden, go: () => goSet('#syncBody') },
+    { id: 'undo', name: '操作を取り消す', where: '消した・変えたすぐあとの「元に戻す」／時間割タブの「学期・休み」のいちばん下', desc: 'まちがえて消したり、まとめて変えたりしたのを元に戻す', kw: '取り消し 元に戻す 戻す まちがえ 間違え 消しちゃった 復活 アンドゥ', go: () => { openTermDlg(); setTimeout(() => $('#undoLast')?.scrollIntoView({ block: 'center' }), 80); } },
+    { id: 'place', name: '予定のいつもの場所', where: '予定を追加するとき、名前の下の「いつもの場所を決める」', desc: '同じ名前の予定（バイト先、サークル…）に、決めた場所を自動で入れる', kw: '場所 住所 いつもの 自動 バイト先', go: () => showTab('cal') },
+    { id: 'dayStart', name: '日付が変わる時刻', where: '設定 → 課題とカレンダー', desc: '夜ふかしする人向け。深夜0〜5時までは前の日として今日の画面を出す', kw: '日付 変わる 深夜 夜ふかし 0時 日をまたぐ 朝', go: () => goSet('#sDayStart') },
+    { id: 'fun', name: 'おせっかい機能', where: '設定 → おせっかい機能', desc: '締切が話しかけてくる「締切トーク」、締切を少し早めに見せる「サバ読み」、やる気天気予報など。最初は全部オフ', kw: 'おせっかい 締切トーク サバ読み やる気 天気予報 睡眠 生存率 遊び', go: () => goSet('#setFun') },
+    { id: 'grNews', name: '共有グループの新着・通知', where: '共有グループの画面', desc: 'ほかの人が予定を足したり変えたりすると、新着の数と「最近の変更」が出る。アプリ版はグループごとに通知も選べる', kw: '新着 通知 プッシュ 変更 お知らせ グループ', go: () => $('#groupBtn')?.click() },
+    { id: 'calShow', name: 'カレンダーに出す予定を選ぶ', where: 'カレンダーの上の「共有」', desc: '自分の予定と、共有グループの予定をグループごとに出す・隠す', kw: '表示 隠す 非表示 グループ カレンダー 絞り込み', go: () => $('#calShow')?.click() },
+    { id: 'aiMore', name: 'がくログのAIの回数をふやす', where: '設定 → AI →「動画を見て、今日あと5回ふやす」', desc: '1日5回を使い切ったら、動画の広告を最後まで見るとその日はあと5回使える（1日1回）', kw: '回数 ふやす 増やす 使い切った 足りない 動画 AI', app: 1, when: () => !!PROVIDERS.gaku && !!window.ads?.video, go: () => goSet('#sGakuLeft') },
+    { id: 'adOff', name: '広告を消す', where: '広告の横の「広告を消す」／設定 → 広告', desc: '動画の広告を最後まで見ると、その日はもう広告が出ない', kw: '広告 消す 非表示 じゃま バナー 動画', app: 1, when: () => !!$('#setAd'), go: () => goSet('#adBody') }
+  );
 }
