@@ -6246,7 +6246,11 @@ function gakuSetLeft(left) {
 }
 function gakuErr(err) {
   const c = String(err?.code || '').replace(/^functions\//, '');
-  if (c === 'resource-exhausted') { gakuSetLeft(0); return '今日の分を使い切ったよ。明日（0時）また使えるよ。急ぎなら、設定 → AI で自分のキーのAIに切り替えてね'; }
+  if (c === 'resource-exhausted') {
+    gakuSetLeft(0);
+    return '今日の分を使い切ったよ。明日（0時）また使えるよ。急ぎなら、' +
+      (gakuCanMore() ? '設定 → AI で動画を見ると今日あと5回使えるよ（自分のキーのAIに切り替えてもいいよ）' : '設定 → AI で自分のキーのAIに切り替えてね');
+  }
   if (c === 'unavailable') return '今はがくログのAIが混んでて使えないみたい。少しあとで試すか、設定 → AI で自分のキーのAIに切り替えてね';
   if (c === 'unauthenticated' || c === 'permission-denied' || /app.?check|attest|integrity/i.test(String(err?.message)))
     return 'このアプリが本物か確かめられなかった。アプリを最新にして、もう一度試してね';
@@ -6255,12 +6259,47 @@ function gakuErr(err) {
   if (err instanceof TypeError || /network|offline|failed to fetch|internet/i.test(String(err?.message))) return '通信できなかった。ネットにつながってるか確認してね';
   return 'うまく読み取れなかった。もう一回試してね';
 }
+// 動画の広告を見たら、今日あと5回（1日1回まで。アプリ版で広告が出せるときだけ）
+const GAKU_BONUS = 'gakulog-ai-bonus'; // 動画で増やした日
+const gakuBonusToday = () => { try { return localStorage.getItem(GAKU_BONUS) === ymd(new Date()); } catch { return false; } };
+const gakuCanMore = () => !!window.ads?.video && !gakuBonusToday();
+async function gakuMore(call) {
+  if (!await window.ads.video()) return false;
+  call ??= await gakuInit();
+  try {
+    const r = await call({ bonus: true });
+    try { localStorage.setItem(GAKU_BONUS, ymd(new Date())); } catch {}
+    if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
+    toast(`今日あと${r.data?.left ?? 5}回使えるよ。見てくれてありがとう！`);
+    return true;
+  } catch (err) {
+    // もう今日は増やしてた（ほかの端末で見た…）
+    if (String(err?.code || '').endsWith('already-exists')) {
+      try { localStorage.setItem(GAKU_BONUS, ymd(new Date())); } catch {}
+      const left = err.details?.left;
+      if (Number.isFinite(left)) gakuSetLeft(left);
+      return left > 0;
+    }
+    toast(gakuErr(err));
+    return false;
+  }
+}
 async function gakuAsk(prompt, b64 = null) {
   const call = await gakuInit().catch(err => { throw new Error(gakuErr(err)); });
   aiCheck();
   let r;
-  try { r = await call({ prompt, ...(b64 && { image: b64 }) }); }
-  catch (err) { throw new Error(gakuErr(err)); }
+  const ask = () => call({ prompt, ...(b64 && { image: b64 }) });
+  try { r = await ask(); }
+  catch (err) {
+    // 使い切った → 動画を見るならあと5回にして、そのまま続ける
+    const out = String(err?.code || '').endsWith('resource-exhausted');
+    if (!out || !gakuCanMore()) throw new Error(gakuErr(err));
+    gakuSetLeft(0);
+    if (!confirm('今日の分を使い切ったよ。\n動画の広告（30秒くらい）を最後まで見ると、今日あと5回使えるよ。見る？') || !await gakuMore(call))
+      throw new Error(gakuErr(err));
+    try { r = await ask(); }
+    catch (err2) { throw new Error(gakuErr(err2)); }
+  }
   aiCheck();
   if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
   return String(r.data?.text || '');
@@ -6271,6 +6310,17 @@ window.gakuLeftShow = async (ask = true) => {
   if (!el) return;
   const n = gakuLeft();
   el.textContent = n == null ? '1日5回まで使えるよ' : n > 0 ? `今日はあと${n}回使えるよ` : '今日の分は使い切ったよ。明日また使えるよ';
+  // 使い切ったら「動画を見て、今日あと5回」
+  let b = $('#sGakuMore');
+  if (!b) {
+    b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'sGakuMore';
+    b.textContent = '動画を見て、今日あと5回ふやす';
+    b.onclick = async () => { b.disabled = true; await gakuMore().catch(err => toast(gakuErr(err))); b.disabled = false; window.gakuLeftShow(false); };
+    el.after(b);
+  }
+  b.hidden = !(n === 0 && gakuCanMore());
   if (!ask || n != null) return;
   try {
     const r = await (await gakuInit())({ peek: true });
@@ -14616,8 +14666,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const busy = () => document.hidden || !!document.querySelector('dialog[open]') ||
     !!document.activeElement?.matches?.('input:not([type=checkbox], [type=radio], [type=button]), textarea, [contenteditable="true"]');
 
-  async function start() {
-    if (started || starting || state.onboarded === false || busy()) return;
+  async function start(force) {
+    if (started || starting || (!force && (state.onboarded === false || busy()))) return;
     starting = true;
     try {
       // 「トラッキングを許可」してくれた人にだけ、その人に合わせた広告
@@ -14667,10 +14717,14 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   chip.hidden = true;
   chip.textContent = '広告を消す';
 
-  async function watch() {
+  // 動画の広告を出す → 最後まで見たら true
+  async function video() {
     let got = false;
     const hs = [];
     try {
+      // まだ広告の準備をしてなければ（AIの回数で先に見るとき）ここで
+      if (!started) await start(true);
+      if (!started) throw new Error('not started');
       hs.push(await AD.addListener('onRewardedVideoAdReward', () => { got = true; }));
       await AD.prepareRewardVideoAd({ adId: AD_TEST ? 'ca-app-pub-3940256099942544/1712485313' : ids.reward, npa, isTesting: AD_TEST });
       await AD.showRewardVideoAd();
@@ -14678,7 +14732,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       toast('今は動画を用意できなかった。少しあとでもう一度やってみてね');
     }
     hs.forEach(h => h?.remove?.());
-    if (got) {
+    update();
+    return got;
+  }
+  async function watch() {
+    if (await video()) {
       try { localStorage.setItem(OFF_KEY, ymd(new Date())); } catch {}
       toast('今日はもう広告が出ないよ。見てくれてありがとう！');
     }
@@ -14715,7 +14773,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     document.addEventListener('visibilitychange', () => { if (!document.hidden) drawSet(); update(); });
     update();
   }
-  window.ads = { get shown() { return shown; }, offToday, update };
+  window.ads = { get shown() { return shown; }, offToday, update, ...(ids && { video }) };
 }
 
 /* ===== 整理：その他タブ（よく使うものはタイル）・まとめて変えるは学期の画面へ ===== */
