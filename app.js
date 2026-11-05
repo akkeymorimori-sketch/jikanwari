@@ -12204,35 +12204,6 @@ const apply = id => {
   applyWall();
 }
 
-/* ===== 試用期間のお礼ポイント ===== */
-setTimeout(() => {
-  const GIFT_ID = 'beta-thanks';
-  const GIFT_PT = 200;
-  const LABEL = '試用期間のお礼';
-  const END = new Date('2027-01-01T00:00:00+09:00').getTime();
-  const p = ptState();
-  if (!Array.isArray(p.gifts)) p.gifts = [];
-  if (!Array.isArray(p.log)) p.log = [];
-  const top = p.log[0];
-  const entry = () => ({ date: ymd(new Date()), get: GIFT_PT, gift: LABEL, streak: top?.streak ?? 0 });
-  let got = false;
-
-  if (Date.now() < END && !p.gifts.includes(GIFT_ID)) {
-    p.gifts.push(GIFT_ID);
-    p.pt += GIFT_PT;
-    p.log.unshift(entry());
-    got = true;
-  } else if (p.gifts.includes(GIFT_ID) && !p.log.some(x => x.gift === LABEL)) {
-    p.log.unshift(entry()); // 前のコードでもらった人にも履歴だけ付ける
-  } else return;
-
-  p.log = p.log.slice(0, 30);
-  save();
-  if (typeof renderPtBtn === 'function') renderPtBtn();
-  if (ptDlg.open) renderPoints();
-  if (got) setTimeout(() => alert(`試してくれてありがとう！\nお礼に${GIFT_PT}pプレゼント`), 800);
-}, 0);
-
 /* ===== 直前の操作をあとからでも取り消す ===== */
 {
   const KEY = 'undoSnap';
@@ -12589,33 +12560,6 @@ window.ngCheck = text => {
   const t = ngNorm(text);
   return NG_WORDS.some(w => t.includes(ngNorm(w)));
 };
-
-/* ===== スクショ用：予定を一時的にしまう（公開前に消す） ===== */
-{
-  const KEY = 'demoStashEvents';
-  const reload = () => setTimeout(() => location.reload(), 300);
-  const stash = () => {
-    if (localStorage.getItem(KEY)) return alert('もうしまってあるよ。先に戻してね');
-    const mine = state.events.filter(e => !e.gid);
-    if (!confirm(`予定${mine.length}件を一時的にしまう？（グループの予定はそのまま）`)) return;
-    try { localStorage.setItem(KEY, JSON.stringify(mine)); }
-    catch (err) { return alert('しまえなかった。容量がいっぱいかも'); }
-    state.events = state.events.filter(e => e.gid);
-    save(); reload();
-  };
-  const back = () => {
-    const s = localStorage.getItem(KEY);
-    if (!s) return alert('しまってある予定はないよ');
-    const demo = state.events.filter(e => !e.gid).length;
-    if (!confirm(`しまった予定を戻す？いまのデモの予定${demo}件は消えるよ`)) return;
-    state.events = [...JSON.parse(s), ...state.events.filter(e => e.gid)];
-    save(); localStorage.removeItem(KEY); reload();
-  };
-  FEATURES.push(
-    { id: 'demoStash', name: '【開発用】予定をしまう', where: '開発用', desc: 'スクショ用に自分の予定を一時的にしまう', kw: 'デモ しまう 退避', go: stash },
-    { id: 'demoBack', name: '【開発用】予定を戻す', where: '開発用', desc: 'しまった予定を元に戻す', kw: 'デモ 戻す 退避', go: back }
-  );
-}
 
 /* ===== カレンダー：日付の下のフォームは「＋」を押したときだけ出す ===== */
 {
