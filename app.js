@@ -10769,29 +10769,62 @@ if (window.Capacitor?.isNativePlatform?.()) {
   dlg.addEventListener('cancel', e => { e.preventDefault(); close(false); });
 
   // 撮った・選んだ写真を入れる（すぐ編集する設定なら1枚ずつ編集の画面。スキャンは四隅を合わせる画面）
+  const addPic = async b => {
+    const key = 'n-' + uid();
+    await pPut(key, b);
+    const url = URL.createObjectURL(b);
+    urls.push(url);
+    ed.pics.push({ key, url });
+    ed.added.push(key);
+  };
   const addFiles = async (e, scan) => {
-    const fs = [...e.target.files].slice(0, 4 - ed.pics.length);
+    const all = [...e.target.files], fs = all.slice(0, Math.max(0, 4 - ed.pics.length));
     e.target.value = '';
     for (const f of fs) {
       try {
         const b = await window.snapPhoto(f, scan);
         if (!ed) return;
-        const key = 'n-' + uid();
-        await pPut(key, b);
-        const url = URL.createObjectURL(b);
-        urls.push(url);
-        ed.pics.push({ key, url });
-        ed.added.push(key);
+        await addPic(b);
       } catch (err) {
         console.warn('mini note', err);
         alert('写真を読み込めなかった');
       }
     }
-    if (fs.length < e.target.files.length || (e.target.files.length && !fs.length)) toast?.('写真は4枚までだよ');
+    if (fs.length < all.length) toast?.('写真は4枚までだよ');
     drawPics();
   };
   $('#mnFile').onchange = e => addFiles(e, false);
   $('#mnScan').onchange = e => addFiles(e, true);
+
+  // アプリ版の「紙をスキャン」：iPhone・Android のスキャナー（メモアプリのスキャンと同じ、カメラの画面で紙を自動で囲んで撮る）
+  // 使えなかったら（Google Play 開発者サービスがない Android など）、ふつうのカメラ＋四隅を合わせる画面にする
+  let nScan = window.Capacitor?.isNativePlatform?.() ? window.Capacitor?.Plugins?.GakuScan || null : null;
+  $('#mnScan').closest('label').addEventListener('click', async e => {
+    if (!nScan || !ed) return;
+    e.preventDefault();
+    const left = 4 - ed.pics.length;
+    if (left <= 0) return toast?.('写真は4枚までだよ');
+    let r;
+    try { r = await nScan.scan({ max: left }); }
+    catch (err) {
+      console.warn('scanner', err);
+      nScan = null;
+      toast?.('スキャナーが使えなかったから、カメラで撮ってね。撮ったら四隅を合わせられるよ');
+      $('#mnScan').click();
+      return;
+    }
+    if (r?.cancelled || !ed) return;
+    const imgs = (r?.images || []).slice(0, left);
+    for (const b64 of imgs) {
+      try {
+        const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        await addPic(new Blob([bin], { type: 'image/jpeg' }));
+      } catch (err) { console.warn('scanner', err); }
+    }
+    if (r?.dropped || (r?.images || []).length > imgs.length) toast?.('写真は4枚までだから、多い分は入れなかったよ');
+    else if (imgs.length) toast?.(`スキャンした${imgs.length}枚を入れたよ。✎ で切り取り・回転もできるよ`);
+    drawPics();
+  });
   $('#mnPics').onclick = async e => {
     // 写真を編集：新しい写真として入れて、前の写真はノートを保存したら消す（保存しなければ元のまま）
     const edt = e.target.closest('[data-mned]');
