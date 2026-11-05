@@ -8089,7 +8089,15 @@ function renderPtBtn() {
   window.tileIco?.();
 }
 
-function ptRun() {
+// Googleで同期してるときは、ほかの端末の分を取ってきてから数える
+// （しばらく開いてなかった端末が、古いポイント・連続日数のまま数えて、ほかの端末の分を上書きしないように）
+let ptRunning = false;
+async function ptRun() {
+  if (ptRunning) return;
+  ptRunning = true;
+  try {
+    if (window.gdFresh && !(await window.gdFresh())) return; // まだ取り込めてない：次に開いたときに数える
+  } finally { ptRunning = false; }
   const r = ptCheckIn();
   renderPtBtn();
   if (ptDlg.open) renderPoints();
@@ -8104,7 +8112,8 @@ if (typeof FEATURES !== 'undefined' && !FEATURES.some(f => f.id === 'points')) F
   kw: 'ポイント ログイン ボーナス 連続 交換 ごほうび', go: () => openPoints()
 });
 
-ptRun();
+renderPtBtn();
+setTimeout(ptRun, 0); // 同期（このファイルの最後のほう）の準備ができてから
 
 /* ===== 日課 ===== */
 const HB_KEY = 'gakulog-habit-v1';
@@ -14211,6 +14220,20 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     }
     drawStatus();
   }
+
+  // ほかの端末の変更を取り込みおわるまで待つ（開いたときに自動で変えるもの用：ポイントなど）
+  // true：取り込んだ・同期してない・オフライン。false：時間切れや入力中で、まだ入れられてない
+  window.gdFresh = async (ms = 12000) => {
+    if (!sy.on || !navigator.onLine) return true;
+    const end = Date.now() + ms;
+    if (!sy.init || Date.now() - sy.last > 20000) {
+      const done = await Promise.race([sync().then(() => true), new Promise(r => setTimeout(() => r(false), ms))]);
+      if (!done) return false;
+    }
+    if (status === 'login' || status === 'err') return true; // つながらない：この端末だけで使ってるのと同じ
+    while (pending && Date.now() < end) await new Promise(r => setTimeout(r, 300));
+    return !pending;
+  };
 
   // 保存のたびに見る
   const s0 = save;
