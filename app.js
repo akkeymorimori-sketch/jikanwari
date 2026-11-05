@@ -492,7 +492,16 @@ const DEFAULT_TIMES = [
   ['16:40', '18:10'], ['18:20', '19:50'], ['20:00', '21:30'], ['', ''], ['', ''], ['', '']
 ];
 
+// がくログのAI（キー不要）：サーバーの関数（functions/ai.js）が Gemini に聞く。1人1日の回数はサーバーで数える
+// 本物のがくログからだけ使える（App Check）。アプリはネイティブのプラグイン、Web は reCAPTCHA Enterprise のサイトキーを入れたら出る
+const AI_RECAPTCHA = '';
+const GAKU_OK = window.Capacitor?.isNativePlatform?.() ? !!window.Capacitor?.Plugins?.FirebaseAppCheck : !!AI_RECAPTCHA;
 const PROVIDERS = {
+  ...(GAKU_OK && { gaku: {
+    label: 'がくログのAI（キー不要・1日5回）',
+    url: '', model: '', models: [], keyUrl: '',
+    note: '準備はいらないよ。画像や文字は読み取りのときだけ Google の AI（Vertex AI）に送って、AIの学習には使われない。もっと使いたいときは、自分のキーのAIに切り替えてね。'
+  } }),
   gemini: {
     label: 'Gemini（Google AI Studio・無料枠あり）',
     url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
@@ -518,6 +527,9 @@ const PROVIDERS = {
     note: ''
   }
 };
+
+// そのAIが使える状態か（がくログのAIはキーがいらない）
+const aiOk = (p = state.provider) => p === 'gaku' ? !!PROVIDERS.gaku : !!state.keys?.[p];
 
 // 混雑時に切り替える予備のモデル（今はなし）
 const FALLBACK_MODEL = {};
@@ -642,6 +654,8 @@ function normalize(s) {
   if (!PROVIDERS[s.provider]) s.provider = 'gemini';
   s.keys ??= {};
   s.models ??= {};
+  // キーを入れてない人は「がくログのAI」に（キーを入れてる人はそのまま）
+  if (PROVIDERS.gaku && s.provider !== 'gaku' && !s.keys[s.provider]) s.provider = 'gaku';
   s.packChecks ??= {};
 
   // 前に3.8を保存してたら、1回だけ3.5に戻す
@@ -2572,6 +2586,7 @@ function aiEnd(runSel) {
 
 // 1回だけリクエストを送る
 async function requestOnce(p, key, model, b64, prompt = PROMPT) {
+  if (p === 'gaku') return { ok: true, text: await gakuAsk(prompt, b64) };
   let r;
   if (p === 'claude') {
     // Sonnet 5.5 / Opus 5.5 は、安全チェックで断られたときにサーバー側で別のモデルへ切り替えてもらう
@@ -2628,8 +2643,8 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
 
 // 混雑時は自動でやり直し、予備のモデルがあれば切り替える
 async function callVision(b64, prompt = PROMPT, st = $('#ocrStatus')) {
-  const p = state.provider, key = state.keys[p], main = modelOf(p);
-  if (!key) throw new Error('設定でAPIキーを入れてね');
+  const p = state.provider, key = state.keys[p], main = p === 'gaku' ? 'がくログのAI' : modelOf(p);
+  if (!aiOk(p)) throw new Error('設定でAPIキーを入れてね');
   if (!main) throw new Error('設定でモデルIDを入れてね');
 
   const models = [main];
@@ -3016,6 +3031,9 @@ function fillProviderFields(p) {
   $('#sModel').hidden = preset;
   $('#sKeyLink').href = PROVIDERS[p].keyUrl;
   $('#sNote').textContent = PROVIDERS[p].note;
+  // がくログのAIのときは、キー・モデルの欄を隠して「今日はあと◯回」
+  $('#aiBox').classList.toggle('gaku', p === 'gaku');
+  if (p === 'gaku') window.gakuLeftShow?.();
 }
 function stashProviderFields() {
   tmp.keys[tmp.provider] = $('#sKey').value.trim();
@@ -3898,7 +3916,7 @@ function resetScan() {
   $('#scanFile').value = '';
   $('#scanBox').hidden = true;
   $('#scanStatus').textContent = '';
-  const hasKey = !!state.keys[state.provider];
+  const hasKey = aiOk();
   $('#scanFile').hidden = !hasKey;
   $('#scanNote').textContent = hasKey
     ? '名前・会社名・口座は、範囲の外に出すか塗りつぶしてから送るのがおすすめ。' +
@@ -4125,7 +4143,7 @@ $('#toastUndo').onclick = () => {
   hideToastEl();
 };
 /* ===== 写真から追加（AI読み取りの入口） ===== */
-const hasKey = () => !!state.keys[state.provider];
+const hasKey = () => aiOk();
 
 const photoDlg = document.createElement('dialog');
 photoDlg.id = 'photoDlg';
@@ -5994,6 +6012,7 @@ answerは2文以内の、やさしいタメ口の日本語。idsは関係が強�
 // 文字だけでAIに聞く
 async function askText(prompt) {
   const p = state.provider, key = state.keys[p], model = modelOf(p);
+  if (p === 'gaku') return gakuAsk(prompt);
   if (!key) throw new Error('設定でAPIキーを入れてね');
   const claude = p === 'claude';
   const r = await fetch(PROVIDERS[p].url, {
@@ -6183,7 +6202,7 @@ function fbInit() {
     const auth = A.initializeAuth(app, { persistence: A.indexedDBLocalPersistence });
     await auth.authStateReady();
     if (!auth.currentUser) await A.signInAnonymously(auth);
-    fb = { db: F.getFirestore(app), uid: auth.currentUser.uid, F, A, auth };
+    fb = { db: F.getFirestore(app), uid: auth.currentUser.uid, F, A, auth, app };
     return fb;
   })().catch(err => { fbLoading = null; throw err; });
 }
@@ -6194,6 +6213,70 @@ function fbErr(err) {
   if (c.includes('unavailable') || c.includes('network') || err instanceof TypeError) return 'ネットにつながってないかも';
   return `うまくいかなかった（${c || err?.message || 'エラー'}）`;
 }
+
+/* ===== がくログのAI（キー不要） ===== */
+// サーバーの関数 ai（functions/ai.js）を呼ぶ。App Check で「本物のがくログから」を証明してから
+let gakuLoading = null;
+function gakuInit() {
+  return gakuLoading ??= (async () => {
+    const f = await fbInit();
+    const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
+    const [AC, FN] = await Promise.all([import(base + 'firebase-app-check.js'), import(base + 'firebase-functions.js')]);
+    const N = window.Capacitor?.Plugins?.FirebaseAppCheck;
+    let provider;
+    if (window.Capacitor?.isNativePlatform?.() && N) {
+      // iPhone は App Attest、Android は Play Integrity（ネイティブのプラグインが証明をもらってくる）
+      await N.initialize({ isTokenAutoRefreshEnabled: true });
+      provider = new AC.CustomProvider({ getToken: async () => {
+        const r = await N.getToken();
+        return { token: r.token, expireTimeMillis: r.expireTimeMillis || Date.now() + 30 * 60000 };
+      } });
+    } else provider = new AC.ReCaptchaEnterpriseProvider(AI_RECAPTCHA);
+    AC.initializeAppCheck(f.app, { provider, isTokenAutoRefreshEnabled: true });
+    return FN.httpsCallable(FN.getFunctions(f.app, 'asia-northeast1'), 'ai', { timeout: 200000 });
+  })().catch(err => { gakuLoading = null; throw err; });
+}
+const GAKU_LEFT = 'gakulog-ai-left'; // { day, left }（設定に出すだけ。本当の回数はサーバーが数えてる）
+function gakuLeft() {
+  try { const x = JSON.parse(localStorage.getItem(GAKU_LEFT)); return x?.day === ymd(new Date()) && Number.isFinite(x.left) ? x.left : null; } catch { return null; }
+}
+function gakuSetLeft(left) {
+  try { localStorage.setItem(GAKU_LEFT, JSON.stringify({ day: ymd(new Date()), left })); } catch {}
+  window.gakuLeftShow?.(false);
+}
+function gakuErr(err) {
+  const c = String(err?.code || '').replace(/^functions\//, '');
+  if (c === 'resource-exhausted') { gakuSetLeft(0); return '今日の分を使い切ったよ。明日（0時）また使えるよ。急ぎなら、設定 → AI で自分のキーのAIに切り替えてね'; }
+  if (c === 'unavailable') return '今はがくログのAIが混んでて使えないみたい。少しあとで試すか、設定 → AI で自分のキーのAIに切り替えてね';
+  if (c === 'unauthenticated' || c === 'permission-denied' || /app.?check|attest|integrity/i.test(String(err?.message)))
+    return 'このアプリが本物か確かめられなかった。アプリを最新にして、もう一度試してね';
+  if (c === 'invalid-argument') return '画像か文字が大きすぎるみたい。範囲をしぼって試してね';
+  if (c === 'deadline-exceeded') return '時間がかかりすぎて止まった。範囲をしぼるか、少しあとで試してね';
+  if (err instanceof TypeError || /network|offline|failed to fetch|internet/i.test(String(err?.message))) return '通信できなかった。ネットにつながってるか確認してね';
+  return 'うまく読み取れなかった。もう一回試してね';
+}
+async function gakuAsk(prompt, b64 = null) {
+  const call = await gakuInit().catch(err => { throw new Error(gakuErr(err)); });
+  aiCheck();
+  let r;
+  try { r = await call({ prompt, ...(b64 && { image: b64 }) }); }
+  catch (err) { throw new Error(gakuErr(err)); }
+  aiCheck();
+  if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
+  return String(r.data?.text || '');
+}
+// 設定 → AI に「今日はあと◯回」（ask：わからなければサーバーに聞く）
+window.gakuLeftShow = async (ask = true) => {
+  const el = $('#sGakuLeft');
+  if (!el) return;
+  const n = gakuLeft();
+  el.textContent = n == null ? '1日5回まで使えるよ' : n > 0 ? `今日はあと${n}回使えるよ` : '今日の分は使い切ったよ。明日また使えるよ';
+  if (!ask || n != null) return;
+  try {
+    const r = await (await gakuInit())({ peek: true });
+    if (Number.isFinite(r.data?.left)) gakuSetLeft(r.data.left);
+  } catch {}
+};
 
 // 画面
 const groupDlg = document.createElement('dialog');
@@ -7627,7 +7710,7 @@ function setSums() {
   const n = state.calSync?.cals?.length || 0;
   put('setCal', n ? `取り込み ${n}件` : '');
   const pv = PROVIDERS[$('#sProvider').value];
-  put('aiBox', `${pv ? pv.label.split('（')[0] : ''}・${$('#sKey').value.trim() ? 'キーあり' : 'キーなし'}`);
+  put('aiBox', $('#sProvider').value === 'gaku' ? 'がくログのAI' : `${pv ? pv.label.split('（')[0] : ''}・${$('#sKey').value.trim() ? 'キーあり' : 'キーなし'}`);
   put('setSyl', $('#sSyllabus').value.trim() ? '設定済み' : '未設定');
   const d = state.lastExport ? new Date(state.lastExport) : null;
   put('setData', d && !isNaN(d) ? `最後の書き出し ${md(d)}` : 'まだ書き出してない');
@@ -14503,6 +14586,138 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   resume();
 }
 
+/* ===== 広告（アプリ版だけ。タブの上に小さいバナー、動画を見るとその日は出ない） ===== */
+{
+  const AD = window.Capacitor?.Plugins?.AdMob;
+  const plat = window.Capacitor?.getPlatform?.();
+  // AdMob の広告ユニット（Android はあとで足す）
+  const IDS = {
+    ios: { banner: 'ca-app-pub-9369660298902208/4694393553', reward: 'ca-app-pub-9369660298902208/2337316818' }
+  };
+  // 開発中は Google のテスト用の広告を出す（自分で本物の広告を押すと AdMob の規約違反になる）。公開するときに false
+  const AD_TEST = true;
+  const ids = window.Capacitor?.isNativePlatform?.() && AD ? IDS[plat] : null;
+  const OFF_KEY = 'gakulog-adoff'; // 動画を見た日（この端末だけ）
+  const offToday = () => { try { return localStorage.getItem(OFF_KEY) === ymd(new Date()); } catch { return false; } };
+  let started = false, starting = false, made = false, shown = false, npa = true, timer = 0;
+
+  // 広告の高さぶん、画面の下を空ける（CSS の --ad-h）
+  const setH = h => {
+    document.documentElement.style.setProperty('--ad-h', (h > 0 ? h : 0) + 'px');
+    document.documentElement.classList.toggle('hasAd', h > 0);
+    chip.hidden = !(h > 0);
+  };
+  // タブの上に出す：タブの高さ（下の安全な余白をのぞく）
+  const margin = () => {
+    const tb = $('#tabbar');
+    return tb ? Math.round(tb.getBoundingClientRect().height - parseFloat(getComputedStyle(tb).paddingBottom || 0)) : 0;
+  };
+  // ダイアログを開いてるとき・文字を入れてるとき・鳴ってるときは出さない
+  const busy = () => document.hidden || !!document.querySelector('dialog[open]') ||
+    !!document.activeElement?.matches?.('input:not([type=checkbox], [type=radio], [type=button]), textarea, [contenteditable="true"]');
+
+  async function start() {
+    if (started || starting || state.onboarded === false || busy()) return;
+    starting = true;
+    try {
+      // 「トラッキングを許可」してくれた人にだけ、その人に合わせた広告
+      let st = (await AD.trackingAuthorizationStatus())?.status;
+      if (st === 'notDetermined') {
+        await AD.requestTrackingAuthorization();
+        st = (await AD.trackingAuthorizationStatus())?.status;
+      }
+      npa = st !== 'authorized';
+      await AD.initialize({ maxAdContentRating: 'Teen' });
+      started = true;
+    } catch {
+      // 次のきっかけでもう一度
+    }
+    starting = false;
+    update();
+  }
+
+  async function apply() {
+    if (!started) return start();
+    const want = !offToday() && !busy();
+    if (want === shown) return;
+    shown = want;
+    try {
+      if (want && !made) {
+        made = true;
+        await AD.showBanner({ adId: AD_TEST ? 'ca-app-pub-3940256099942544/2435281174' : ids.banner,
+          adSize: 'ADAPTIVE_BANNER', position: 'BOTTOM_CENTER', margin: margin(), npa, isTesting: AD_TEST });
+      } else if (want) await AD.resumeBanner();
+      else { await AD.hideBanner(); setH(0); }
+    } catch {
+      shown = false; made = false; setH(0);
+    }
+  }
+  const update = () => { clearTimeout(timer); timer = setTimeout(apply, 120); };
+
+  // 動画を見ると、今日はもう出ない
+  const dlg = document.createElement('dialog');
+  dlg.id = 'adOffDlg';
+  dlg.innerHTML = '<div class="dlg"><h2>広告を消す</h2>' +
+    '<p>動画の広告（30秒くらい）を最後まで見ると、今日はもう広告が出なくなるよ。</p>' +
+    '<div class="row"><button type="button" id="adOffNo">やめる</button>' +
+    '<button type="button" class="primary" id="adOffGo">動画を見る</button></div></div>';
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.id = 'adOff';
+  chip.hidden = true;
+  chip.textContent = '広告を消す';
+
+  async function watch() {
+    let got = false;
+    const hs = [];
+    try {
+      hs.push(await AD.addListener('onRewardedVideoAdReward', () => { got = true; }));
+      await AD.prepareRewardVideoAd({ adId: AD_TEST ? 'ca-app-pub-3940256099942544/1712485313' : ids.reward, npa, isTesting: AD_TEST });
+      await AD.showRewardVideoAd();
+    } catch {
+      toast('今は動画を用意できなかった。少しあとでもう一度やってみてね');
+    }
+    hs.forEach(h => h?.remove?.());
+    if (got) {
+      try { localStorage.setItem(OFF_KEY, ymd(new Date())); } catch {}
+      toast('今日はもう広告が出ないよ。見てくれてありがとう！');
+    }
+    drawSet();
+    update();
+  }
+
+  // 設定 → 広告
+  const sec = document.createElement('details');
+  sec.className = 'sec set';
+  sec.id = 'setAd';
+  sec.innerHTML = '<summary>広告</summary><div id="adBody"></div>';
+  function drawSet() {
+    $('#adBody').innerHTML = (offToday() ? '<p>今日は広告が出ないよ</p>'
+      : '<p class="hint">動画の広告を見ると、その日はもう広告が出なくなるよ</p>' +
+        '<button type="button" id="adWatch">動画を見て、今日は広告を消す</button>') +
+      '<p class="hint">あなたに合わせた広告にするかどうかは、iPhone の「設定」→「プライバシーとセキュリティ」→「トラッキング」で変えられるよ</p>';
+  }
+
+  if (ids) {
+    document.body.append(dlg, chip);
+    $('#setData')?.before(sec);
+    drawSet();
+    chip.addEventListener('click', () => dlg.showModal());
+    dlg.addEventListener('click', e => {
+      if (e.target.id === 'adOffNo' || e.target === dlg) dlg.close();
+      if (e.target.id === 'adOffGo') { dlg.close(); watch(); }
+    });
+    sec.addEventListener('click', e => { if (e.target.id === 'adWatch') watch(); });
+    AD.addListener('bannerAdSizeChanged', s => setH(shown ? s?.height || 0 : 0));
+    new MutationObserver(update).observe(document.body, { attributes: true, attributeFilter: ['open'], subtree: true });
+    document.addEventListener('focusin', update);
+    document.addEventListener('focusout', update);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) drawSet(); update(); });
+    update();
+  }
+  window.ads = { get shown() { return shown; }, offToday, update };
+}
+
 /* ===== 整理：その他タブ（よく使うものはタイル）・まとめて変えるは学期の画面へ ===== */
 {
   // 授業の回数・欠席の上限・遅刻の数え方は、時間割タブの「学期・休み」の中へ
@@ -14991,7 +15206,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     $('#qaPrev').innerHTML = p.map(row).join('');
     $('#qaGo').disabled = !p.length || p.some(bad);
     $('#qaGo').textContent = p.length > 1 ? `${p.length}件追加` : '追加';
-    $('#qaAi').hidden = !p.length || !state.keys?.[state.provider] || !featOn('ai');
+    $('#qaAi').hidden = !p.length || !aiOk() || !featOn('ai');
     for (const k of Object.keys(ovr)) if (!lines().includes(k)) delete ovr[k];
   };
   const grow = () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 160) + 'px'; };

@@ -142,11 +142,11 @@ main { max-width: 900px; margin: 0 auto; padding: 8px; }
 .start { margin: 0 0 6px; font-size: 14px; color: var(--accent); }
 
 /* ===== 画面（タブ） ===== */
-.view { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom)); }
+.view { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom) + var(--ad-h, 0px)); }
 /* ＋ボタンは「今日」だけなので、そこだけ＋ボタン（56px＋すき間）が重ならないぶん空けておく */
-#view-today { padding-bottom: calc(var(--tabbar-h) + 84px + env(safe-area-inset-bottom)); }
+#view-today { padding-bottom: calc(var(--tabbar-h) + 84px + env(safe-area-inset-bottom) + var(--ad-h, 0px)); }
 /* 時間割は表を画面のまんなかまで持ってこれるように */
-#view-grid { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom) + 15vh); }
+#view-grid { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom) + 15vh + var(--ad-h, 0px)); }
 
 #tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
@@ -403,7 +403,7 @@ details.sec > a, #aiBox > a { display: block; }
 /* 「元に戻す」（下のタブに重ならない位置） */
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom)); z-index: 10;
+  bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom) + var(--ad-h, 0px)); z-index: 10;
   display: flex; gap: 10px; align-items: center; max-width: 92vw;
   background: var(--toast-bg); color: var(--toast-fg); font-size: 14px;
   padding: 8px 8px 8px 14px; border-radius: 8px;
@@ -492,7 +492,7 @@ details.sec > a, #aiBox > a { display: block; }
 #fab {
   position: fixed;
   right: 16px;
-  bottom: calc(76px + env(safe-area-inset-bottom));
+  bottom: calc(76px + env(safe-area-inset-bottom) + var(--ad-h, 0px));
   z-index: 50;
   display: flex;
   flex-direction: column;
@@ -1335,7 +1335,7 @@ dialog {
 .tourBtns button { flex: 1; }
 .tourBtns button[hidden] { display: none; }
 
-#tourPill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 50; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: 999px; background: #6d28d9; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+#tourPill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom) + var(--ad-h, 0px)); z-index: 50; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: 999px; background: #6d28d9; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
 #tourPill button { background: none; border: none; color: #fff; font-weight: bold; }
 #tourPill .x { width: 32px; height: 32px; }
 
@@ -1774,6 +1774,14 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 #earRingDlg .dlg { text-align: center; gap: 14px; padding: 24px 18px; }
 #earRingDlg h2 { font-size: 1.4em; }
 #earRingDlg .big { font-size: 1.2em; padding: 14px; }
+/* 広告（アプリ版）：バナーはタブの上にネイティブで出る。その上に「広告を消す」 */
+#adOff {
+  position: fixed; left: 6px; z-index: 4;
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--ad-h, 0px) + 4px);
+  padding: 2px 10px; border-radius: 999px; font-size: 11px;
+  background: var(--surface); color: var(--muted); border: 1px solid var(--line);
+}
+#adOffDlg .row { justify-content: flex-end; gap: 8px; }
 
 /* 設定：グループの見出し・すぐ反映・目覚ましへのリンク */
 .setGrpH { margin: 14px 2px 4px; font-size: 12px; color: var(--sub); font-weight: bold; }
@@ -1996,3 +2004,8 @@ html { touch-action: manipulation; }
 .moodMark .mFace { width: 12px; height: 12px; stroke-width: 2.2; }
 .dyTbl .moodMark { margin: 0 4px 0 0; }
 .dyTbl .moodMark .mFace { width: 16px; height: 16px; }
+
+/* 設定 → AI：がくログのAI（キー不要）のときは、キー・モデルの欄を出さずに「今日はあと◯回」 */
+#aiBox:not(.gaku) #sGakuLeft,
+#aiBox.gaku :is(#sKeyLink, .aiKeyH, #sKey, #sKeyPaste, #sModelPick, #sModel) { display: none; }
+.aiLeft { margin: 8px 0 0; font-weight: bold; }

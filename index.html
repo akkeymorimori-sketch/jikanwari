@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=248">
+<link rel="stylesheet" href="style.css?v=249">
 </head>
 <body>
 <header>
@@ -602,14 +602,15 @@
 
     <details class="sec set" id="aiBox">
       <summary>AI（画像の読み取り） <small></small></summary>
-      <p class="hint">APIキーを入れると、写真から時間割・シフト表・給与明細を読み取れるよ</p>
+      <p class="hint">写真から時間割・シフト表・給与明細などを読み取るときに使うAI</p>
       <select id="sProvider" aria-label="使うAI"></select>
+      <p id="sGakuLeft" class="aiLeft"></p>
       <a id="sKeyLink" target="_blank" rel="noopener">APIキーを取得する</a>
       <p id="sNote" class="hint"></p>
-      <h3>APIキー</h3>
+      <h3 class="aiKeyH">APIキー</h3>
       <!-- type="password" にすると、PC のブラウザがメモや予定を追加するたびに「パスワードを保存？」と聞いてくるので、見た目だけ伏せ字 -->
       <input id="sKey" type="text" class="secretIn" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="ここに貼り付け" aria-label="APIキー">
-      <h3>モデル</h3>
+      <h3 class="aiKeyH">モデル</h3>
       <select id="sModelPick" aria-label="モデル"></select>
       <input id="sModel" placeholder="モデルIDを直接入力" aria-label="モデルID" hidden>
     </details>
@@ -644,6 +645,6 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=248"></script>
+<script src="app.js?v=249"></script>
 </body>
 </html>
