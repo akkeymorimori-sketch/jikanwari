@@ -3628,7 +3628,7 @@ function renderIncome() {
     Array.from({ length: 12 }, (_, i) => {
       const ms = xs.filter(x => +x.date.slice(5, 7) === i + 1);
       const has = ms.length > 0;
-      return `<tr class="${has ? '' : 'empty'}"><td>${i + 1}月</td>` +
+      return `<tr class="${has ? '' : 'empty'}" data-inmonth="${i + 1}"><td>${i + 1}月</td>` +
       `<td>${has ? yen(sumGross(ms)) + (netOnly(ms) ? '*' : '') : '-'}</td><td>${has ? yen(sumOf(ms, 'net')) : '-'}</td></tr>`;
     }).join('');
 
@@ -5960,7 +5960,7 @@ const FEATURES = [
   { id: 'cats', name: '課題の名目', where: 'カレンダーで課題を追加 → 授業の欄 →「＋ 新しい名目を作る」', desc: 'サークルや就活など、授業以外の課題のグループ', kw: '名目 グループ サークル 授業以外', go: () => showTab('cal') },
   { id: 'cal', name: 'カレンダー', where: '下の「カレンダー」タブ', desc: '課題・バイト・予定・休みを月の表で見る。上の年月をタップすると飛べる', kw: 'カレンダー 予定 スケジュール 月', go: () => showTab('cal') },
   { id: 'job', name: 'バイトの予定', where: 'カレンダーで日付をタップ →「＋ 予定」→ 種類を「バイト」', desc: '同じ曜日に4週分まとめて追加できる。夜勤もOK', kw: 'バイト アルバイト 勤務 塾', go: () => showTab('cal') },
-  { id: 'income', name: '収入', where: '「収入」ボタン', desc: '月ごと・バイト先ごとの収入、年間の上限まであといくら、時給からの見込み', kw: '収入 給料 お金 扶養 見込み 時給 上限', go: () => $('#incomeBtn').click() },
+  { id: 'income', name: '収入', where: '「収入」ボタン', desc: '月ごと・バイト先ごとの収入、1年と1か月の目標額の円グラフ、年間の上限まであといくら、時給からの見込み', kw: '収入 給料 お金 扶養 見込み 時給 上限', go: () => $('#incomeBtn').click() },
   { id: 'term', name: '学期', where: '時間割タブの上の「学期・休み」／上の学期の選択', desc: '前期・後期の切り替え、新しい学期づくり、開始日と終了日', kw: '学期 前期 後期 年度 新学期 開始日', grid: 1, go: () => goTerm('#termList') },
   { id: 'offday', name: '授業がない日・曜日の振替', where: '時間割タブの上の「学期・休み」', desc: '祝日や行事で授業がない日、ほかの曜日の授業をする日', kw: '祝日 振替 授業がない 休み', grid: 1, go: () => goTerm('#offFrom') },
   { id: 'intensive', name: '集中講義', where: '時間割の下', desc: '期間だけ決まってる授業を登録', kw: '集中講義 集中', grid: 1, go: () => showTab('grid') },
@@ -9250,10 +9250,10 @@ setTimeout(wgPush, 0);
 document.addEventListener('visibilitychange', () => { if (document.hidden) wgPush(); });
 
 /* ===== 収入：バイト先ごとの円グラフ ===== */
-function jobPie(jobs, total) {
+function jobPie(jobs, total, opt = {}) {
   const num = v => +String(v ?? '').replace(/[^\d.]/g, '') || 0;
-  const goal = num(state.incomeGoal);
-  const limit = num(state.incomeLimit ?? $('#inLimit')?.value);
+  const goal = num(opt.goal ?? state.incomeGoal);
+  const limit = num(opt.limit ?? state.incomeLimit ?? $('#inLimit')?.value);
   if (!goal && !limit && jobs.size < 2) return '';
   const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#84cc16'];
   const top = limit || goal;                       // 100%にする額
@@ -15692,6 +15692,7 @@ const APP_VER = '1.1.1';
 const WHATS_NEW = [
   { ver: '1.1.1', items: [
     { feat: 'news', title: 'お知らせ', desc: 'その他のいちばん上に、運営からのお知らせとアップデートで増えた機能が並ぶよ。読んだものもあとから見返せる' },
+    { feat: 'income', title: '収入に、月ごとの目標と円グラフ', desc: '1か月の目標額を入れると、その月の収入がバイト先ごとの円グラフで何%かわかるよ。カレンダーのバイトの日からも開ける' },
     { feat: 'help', title: '機能をさがすが広くなった', desc: 'ToDo・日課・アラーム・試験前モード・紙をスキャン・取り消しなども、やりたいことから探せるように' }
   ] },
   { ver: '1.1', items: [
@@ -15873,4 +15874,83 @@ const WHATS_NEW = [
 
   FEATURES.push({ id: 'news', name: 'お知らせ', where: 'その他のいちばん上の「お知らせ」', desc: '運営からのお知らせと、アップデートで増えた機能。読んだものもあとから見返せる',
     kw: 'お知らせ ニュース 新機能 アップデート 更新 運営', go: () => { showTab('more'); btn.click(); } });
+}
+
+/* ===== 収入：月ごとの目標額と円グラフ ===== */
+// 1年の円グラフの下に「◯月」の円グラフ（バイト先ごと・月の目標に対して何%）。月は ‹ › か、月ごとの表の行で選ぶ
+{
+  if (state.incomeGoalMonth == null) state.incomeGoalMonth = '';
+  let mon = 0, monYear = 0;
+  const box = document.createElement('div');
+  box.id = 'inMonthCard';
+  box.className = 'inMonthCard';
+  box.innerHTML = '<div class="row calNav"><button type="button" id="inMPrev" aria-label="前の月">‹</button>' +
+    '<b id="inMTitle"></b><button type="button" id="inMNext" aria-label="次の月">›</button></div>' +
+    '<div id="inMSum"></div>' +
+    '<label class="inGoalRow">目標額（1か月）<input id="inGoalM" inputmode="numeric" placeholder="例：50000"></label>';
+  // 1年の上限・目標の欄のあと、「月ごと」の表の前
+  if ($('#inMonthsBox')) $('#inMonthsBox').before(box); else $('#inMonths').before(box);
+
+  // 年を変えたら：今年なら今月、ほかの年は記録がある最後の月（なければ12月）
+  const pickMonth = () => {
+    if (monYear === inYear && mon) return;
+    monYear = inYear;
+    const now = new Date();
+    const last = incomesOf(inYear).at(-1);
+    mon = inYear === now.getFullYear() ? now.getMonth() + 1 : last ? +last.date.slice(5, 7) : 12;
+  };
+  const draw = () => {
+    pickMonth();
+    const xs = incomesOf(inYear).filter(x => +x.date.slice(5, 7) === mon);
+    const g = sumGross(xs), jobs = new Map();
+    for (const x of xs) jobs.set(x.job || '未設定', (jobs.get(x.job || '未設定') || 0) + grossOf(x));
+    $('#inMTitle').textContent = `${mon}月`;
+    $('#inMPrev').disabled = mon <= 1;
+    $('#inMNext').disabled = mon >= 12;
+    const pie = jobPie(jobs, g, { goal: state.incomeGoalMonth, limit: 0 });
+    $('#inMSum').innerHTML = `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(sumOf(xs, 'net'))}</small></p>` +
+      (netOnly(xs) ? '<p class="hint">総支給がわからない分は手取りで数えてるよ</p>' : '') +
+      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ</p>') + pie;
+  };
+  const _ri = renderIncome;
+  renderIncome = function () { _ri.apply(this, arguments); draw(); };
+
+  $('#inMPrev').onclick = () => { if (mon > 1) { mon--; draw(); } };
+  $('#inMNext').onclick = () => { if (mon < 12) { mon++; draw(); } };
+  $('#inMonths').addEventListener('click', e => {
+    const r = e.target.closest('[data-inmonth]');
+    if (!r) return;
+    mon = +r.dataset.inmonth;
+    draw();
+    box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+  $('#inGoalM').addEventListener('input', e => {
+    state.incomeGoalMonth = toYen(e.target.value) ?? '';
+    save();
+    draw();
+  });
+  $('#incomeBtn').addEventListener('click', () => { $('#inGoalM').value = state.incomeGoalMonth; monYear = 0; draw(); });
+
+  // ほかの画面から「その月の収入」を開く
+  window.openIncomeMonth = (y, m) => {
+    $('#incomeBtn').click();
+    inYear = y; monYear = y; mon = m;
+    renderIncome();
+    setTimeout(() => box.scrollIntoView({ block: 'center' }), 60);
+  };
+  // カレンダーの「この日の予定」：バイトがある日は、その月の収入へ
+  const _rd = renderDay;
+  renderDay = function () {
+    const r = _rd.apply(this, arguments);
+    if (featOn('job') && calSel && calEvents(calSel).some(e => e.kind === 'job')) {
+      const li = document.createElement('li');
+      li.className = 'inGoRow';
+      li.innerHTML = `<button type="button" class="linkBtn" data-ico="wallet" id="inGoCal">${+calSel.slice(5, 7)}月の収入を見る ›</button>`;
+      $('#dayList').append(li);
+    }
+    return r;
+  };
+  $('#dayList').addEventListener('click', e => {
+    if (e.target.closest('#inGoCal')) window.openIncomeMonth(+calSel.slice(0, 4), +calSel.slice(5, 7));
+  });
 }

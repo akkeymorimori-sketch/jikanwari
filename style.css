@@ -2042,3 +2042,11 @@ html { touch-action: manipulation; }
 .newsItem button { padding: 4px 12px; font-size: 13px; }
 .newsBtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .newsClose { justify-content: flex-end; margin-top: 10px; }
+
+/* ===== 収入：月ごとの円グラフ・カレンダーから収入へ ===== */
+.inMonthCard { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.inMonthCard .calNav { justify-content: center; gap: 12px; }
+.inMonthCard .inGoalRow { margin-top: 10px; }
+#inMonths tr[data-inmonth]:not(.empty) { cursor: pointer; }
+#dayList .inGoRow { border: 0; padding-top: 4px; }
+#inGoCal { background: none; border: none; padding: 4px 0; min-height: 0; color: var(--accent); font-size: 14px; }
