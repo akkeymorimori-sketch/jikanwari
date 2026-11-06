@@ -612,6 +612,8 @@ function normalize(s) {
   s.showSat ??= false;
   s.weekStart = s.weekStart === 'sun' ? 'sun' : 'mon'; // カレンダーの週のはじまり（最初は月曜）
   s.dayStart = DAY_STARTS.includes(+s.dayStart) ? +s.dayStart : 0; // 日付が変わる時刻（0なら夜中の0時）
+  // お知らせ・新機能の紹介：読んだものの id
+  s.newsSeen = [...new Set((Array.isArray(s.newsSeen) ? s.newsSeen : []).filter(x => typeof x === 'string' && /^[\w.-]{1,60}$/.test(x)))].slice(-300);
   // 共有グループの新着：見た時刻・開いた予定
   const num = v => Number.isFinite(+v) && +v > 0 ? +v : 0;
   s.grSeen = Object.fromEntries(Object.entries(s.grSeen && typeof s.grSeen === 'object' ? s.grSeen : {})
@@ -14835,7 +14837,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   };
   // iPhone（WebKit）は CSS のマスクのアイコンをごくまれに描き忘れるので、ここは同じ絵を本物の SVG にして入れる（ポイントのボタンは書き直されるたびに呼ぶ）
   const tileIco = window.tileIco = () => {
-    for (const b of view.querySelectorAll('#moreTiles > button > b, .moreMain > button > b, .moreHelp > button > b')) {
+    for (const b of view.querySelectorAll('#moreTiles > button > b, .moreMain > button > b, .moreHelp > button > b, .moreNews > button > b')) {
       const m = getComputedStyle(b.parentNode).getPropertyValue('--ico').match(/<svg[\s\S]*<\/svg>/);
       if (!m || b.querySelector('.tIco')) continue;
       const s = document.createElement('span');
@@ -15444,4 +15446,190 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     { id: 'aiMore', name: 'がくログのAIの回数をふやす', where: '設定 → AI →「動画を見て、今日あと5回ふやす」', desc: '1日5回を使い切ったら、動画の広告を最後まで見るとその日はあと5回使える（1日1回）', kw: '回数 ふやす 増やす 使い切った 足りない 動画 AI', app: 1, when: () => !!PROVIDERS.gaku && !!window.ads?.video, go: () => goSet('#sGakuLeft') },
     { id: 'adOff', name: '広告を消す', where: '広告の横の「広告を消す」／設定 → 広告', desc: '動画の広告を最後まで見ると、その日はもう広告が出ない', kw: '広告 消す 非表示 じゃま バナー 動画', app: 1, when: () => !!$('#setAd'), go: () => goSet('#adBody') }
   );
+}
+
+/* ===== お知らせ（運営からのお知らせ＋アップデートの新機能。アプリの中だけ） ===== */
+// 運営からのお知らせは www/news.json（Web版と一緒に公開。アプリ版はネットの最新を読む）。読めなくても何も出さないだけ
+// 新機能は WHATS_NEW に書く（新機能がないバージョンは書かない）。APP_VER は package.json の version と同じにする（テストで確かめる）
+const APP_VER = '1.1.0';
+const WHATS_NEW = [
+  { ver: '1.1', items: [
+    { feat: 'ai', title: 'キーなしで使える「がくログのAI」', desc: '時間割・シフト表・給与明細・手帳やスクショの予定を、準備なしで写真から読み取れるよ（1日5回）' },
+    { feat: 'scan', title: 'ミニノートに「紙をスキャン」', desc: 'プリントや板書を撮ると、紙を自動で囲んで、まっすぐ白くして残せる' },
+    { feat: 'mood', title: '今日の気分', desc: '一言日記と一緒に、9種類の顔で今日の気分を残せる。カレンダーにも顔が出るよ' },
+    { feat: 'photoEdit', title: '写真の切り取り・回転', desc: '写真を撮ったら、その場で切り取り・回転・くっきりにできる' }
+  ] }
+];
+{
+  const NEWS_CACHE = 'gakulog-news-v1', INIT = 'gakulog-news-init';
+  const native = !!window.Capacitor?.isNativePlatform?.();
+  const plat = native ? window.Capacitor.getPlatform() : 'web';
+  const NEWS_URL = native ? APP_URL + 'news.json' : 'news.json';
+  const vnum = v => String(v || '').split('.').map(n => +n || 0).concat(0, 0, 0).slice(0, 3);
+  const vcmp = (a, b) => { const x = vnum(a), y = vnum(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+  const okId = v => typeof v === 'string' && /^[\w.-]{1,60}$/.test(v);
+  const ymdOk = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+  let remote = (() => { try { return JSON.parse(localStorage.getItem(NEWS_CACHE) || 'null')?.news || []; } catch { return []; } })();
+
+  // そのまま出していいお知らせだけ（形・OS・バージョン・期間）
+  const clean = list => {
+    const day = ymd(new Date());
+    return (Array.isArray(list) ? list : []).filter(n => n && okId(n.id) && typeof n.title === 'string' && n.title.trim()).map(n => ({
+      id: n.id, title: n.title.slice(0, 80), body: typeof n.body === 'string' ? n.body.slice(0, 2000) : '',
+      date: ymdOk(n.date), until: ymdOk(n.until), important: n.important === true, os: Array.isArray(n.os) ? n.os : null,
+      minVer: typeof n.minVer === 'string' ? n.minVer : '', maxVer: typeof n.maxVer === 'string' ? n.maxVer : '',
+      feat: typeof n.feat === 'string' ? n.feat : '', url: typeof n.url === 'string' && /^https:\/\//.test(n.url) ? n.url : '',
+      urlLabel: typeof n.urlLabel === 'string' ? n.urlLabel.slice(0, 30) : ''
+    })).filter(n => (!n.os || n.os.includes(plat)) && (!n.minVer || vcmp(APP_VER, n.minVer) >= 0) && (!n.maxVer || vcmp(APP_VER, n.maxVer) <= 0) &&
+      (!n.until || n.until >= day) && (!n.date || n.date <= day));
+  };
+
+  // 新機能の紹介も、お知らせの一覧に「v1.1 の新機能」として並べる（オフの機能・この端末で使えない機能は外す）
+  const featOk = id => helpFeatures().find(f => f.id === id) || null;
+  const whatsNew = () => WHATS_NEW.filter(w => vcmp(w.ver, APP_VER) <= 0).map(w => ({
+    id: 'v' + w.ver, wn: true, title: `v${w.ver} の新機能`, date: '', items: w.items.filter(it => !it.feat || featOk(it.feat))
+  })).filter(w => w.items.length);
+  const all = () => [...clean(remote), ...whatsNew()];
+  const seenList = () => Array.isArray(state.newsSeen) ? state.newsSeen : [];
+  const seen = id => seenList().includes(id);
+  const unread = () => all().filter(n => !seen(n.id));
+  function markSeen(id) {
+    if (seen(id)) return;
+    state.newsSeen = [...seenList(), id].slice(-300);
+    save();
+    badge();
+  }
+
+  // この端末で初めて動いたとき：入れたばかりの人は今までの新機能を読んだことに、前から使ってる人は 1.0 より後のものを出す
+  try {
+    if (!localStorage.getItem(INIT)) {
+      const base = state.onboarded === false ? APP_VER : '1.0';
+      const old = WHATS_NEW.filter(w => vcmp(w.ver, base) <= 0).map(w => 'v' + w.ver).filter(id => !seen(id));
+      if (old.length) { state.newsSeen = [...seenList(), ...old]; save(); }
+      localStorage.setItem(INIT, '1');
+    }
+  } catch {}
+
+  // 読み込み（4秒で打ち切り。失敗したら前に読めた分のまま）
+  window.newsLoad = async () => {
+    try {
+      const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+      const r = await fetch(NEWS_URL, { cache: 'no-store', signal: ctl.signal });
+      clearTimeout(t);
+      if (!r.ok) return false;
+      const d = await r.json();
+      if (!Array.isArray(d?.news)) return false;
+      remote = d.news;
+      try { localStorage.setItem(NEWS_CACHE, JSON.stringify({ news: remote })); } catch {}
+      badge();
+      return true;
+    } catch { return false; }
+  };
+
+  // 本文（文字はそのまま、改行だけ）と、下のボタン
+  const bodyHtml = n => {
+    if (n.wn) return n.items.map(it => `<div class="newsItem"><b>${esc(it.title)}</b><p>${esc(it.desc)}</p>` +
+      (it.feat ? `<button type="button" data-newsgo="${esc(it.feat)}">詳しく見る</button>` : '') + '</div>').join('');
+    const f = n.feat && featOk(n.feat);
+    return `<p class="newsText">${esc(n.body).replace(/\n/g, '<br>')}</p>` + (f || n.url ? '<div class="newsBtns">' +
+      (f ? `<button type="button" class="primary" data-newsgo="${esc(f.id)}">${esc(f.name)}を開く</button>` : '') +
+      (n.url ? `<button type="button" data-newsurl="${esc(n.url)}">${esc(n.urlLabel || 'ページを開く')}</button>` : '') + '</div>' : '');
+  };
+  const go = b => {
+    if (b.dataset.newsurl) return openUrl(b.dataset.newsurl);
+    const f = featOk(b.dataset.newsgo);
+    if (!f) return;
+    document.querySelectorAll('dialog[open]').forEach(d => d.close());
+    setTimeout(f.go, 60);
+  };
+
+  // その他タブのいちばん上：お知らせ（未読があれば件数）、下のバーの「その他」に点
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'newsBtn';
+  btn.innerHTML = '<b>お知らせ</b><small id="newsSub"></small><span class="grNewN" id="newsN" hidden></span>';
+  const box = document.createElement('div');
+  box.className = 'card menu moreNews';
+  box.append(btn);
+  const dot = document.createElement('span');
+  dot.className = 'newsDot';
+  dot.hidden = true;
+  dot.setAttribute('aria-hidden', 'true');
+  function badge() {
+    const u = unread().length, top = all()[0];
+    $('#newsN').textContent = u > 99 ? '99+' : u;
+    $('#newsN').hidden = !u;
+    $('#newsSub').textContent = top ? top.title : 'まだお知らせはないよ';
+    btn.setAttribute('aria-label', u ? `お知らせ（未読${u}件）` : 'お知らせ');
+    dot.hidden = !u;
+  }
+  setTimeout(() => {
+    $('#view-more').prepend(box);
+    $('#tabbar [data-tab="more"]')?.append(dot);
+    window.tileIco?.();
+    badge();
+  }, 0);
+
+  // お知らせの一覧（開いたものは読んだことに。いつでも見返せる）
+  const list = document.createElement('dialog');
+  list.id = 'newsDlg';
+  list.innerHTML = '<div class="dlg"><div class="dlgHead"><h2>お知らせ</h2>' +
+    '<button type="button" class="x big" data-close aria-label="閉じる">×</button></div><div id="newsList"></div></div>';
+  document.body.append(list);
+  const drawList = () => {
+    const a = all();
+    $('#newsList').innerHTML = a.length ? a.map(n => `<details class="newsRow${seen(n.id) ? '' : ' unread'}" data-news="${esc(n.id)}">` +
+      `<summary>${n.important ? '<span class="newsImp">重要</span>' : ''}<b>${esc(n.title)}</b>` +
+      (n.date ? `<small>${+n.date.slice(5, 7)}/${+n.date.slice(8)}</small>` : '') + '</summary>' + bodyHtml(n) + '</details>').join('')
+      : '<p class="hint">まだお知らせはないよ</p>';
+  };
+  btn.onclick = () => {
+    drawList();
+    list.showModal();
+    window.newsLoad().then(ok => { if (ok && list.open) drawList(); });
+  };
+  list.addEventListener('toggle', e => {
+    const d = e.target.closest?.('details[data-news]');
+    if (d?.open) { markSeen(d.dataset.news); d.classList.remove('unread'); }
+  }, true);
+  list.addEventListener('click', e => {
+    if (e.target.closest('[data-close]') || e.target === list) return list.close();
+    const b = e.target.closest('[data-newsgo], [data-newsurl]');
+    if (b) go(b);
+  });
+
+  // 起動したときのカード（1回の起動で1つだけ。重要なお知らせ → 新機能の順。閉じたら読んだことに）
+  const card = document.createElement('dialog');
+  card.id = 'newsCard';
+  document.body.append(card);
+  let shown = null;
+  const showCard = n => {
+    shown = n;
+    card.innerHTML = `<div class="dlg"><p class="newsKind">${n.wn ? '新しくなったところ' : '重要なお知らせ'}</p><h2>${esc(n.title)}</h2>` +
+      bodyHtml(n) + '<div class="row newsClose"><button type="button" data-close>閉じる</button></div></div>';
+    card.showModal();
+  };
+  card.addEventListener('close', () => { if (shown) markSeen(shown.id); shown = null; });
+  card.addEventListener('click', e => {
+    if (e.target.closest('[data-close]')) return card.close();
+    const b = e.target.closest('[data-newsgo], [data-newsurl]');
+    if (b) { card.close(); go(b); }
+  });
+
+  window.newsStart = async () => {
+    // 初めての質問・機能の紹介が終わって、ほかの画面が開いてないとき
+    for (let i = 0; i < 40 && (state.onboarded === false || !state.tourDone || document.querySelector('dialog[open]')); i++)
+      await new Promise(r => setTimeout(r, 1500));
+    if (state.onboarded === false || !state.tourDone) return;
+    if (window.gdFresh) await window.gdFresh(); // ほかの端末で読んだ分を先に取り込む
+    await window.newsLoad();
+    if (document.querySelector('dialog[open]')) return;
+    const u = unread();
+    const n = u.find(x => x.important) || u.find(x => x.wn);
+    if (n) showCard(n);
+  };
+  setTimeout(() => window.newsStart(), 1500);
+
+  FEATURES.push({ id: 'news', name: 'お知らせ', where: 'その他のいちばん上の「お知らせ」', desc: '運営からのお知らせと、アップデートで増えた機能。読んだものもあとから見返せる',
+    kw: 'お知らせ ニュース 新機能 アップデート 更新 運営', go: () => { showTab('more'); btn.click(); } });
 }

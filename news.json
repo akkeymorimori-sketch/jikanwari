@@ -1,0 +1,16 @@
+{
+  "news": [
+    {
+      "id": "appstore-open",
+      "date": "2026-11-06",
+      "until": "2027-03-31",
+      "important": true,
+      "os": ["web"],
+      "title": "App Store版の公開にあたってのお願い",
+      "body": "がくログが App Store で公開されました！（まだ検索では出てこないかも…下のボタンから開けます）\n\nApp Store版に移るときにデータが消えないように、先に「その他」→「設定」→「Googleで同期」で Google アカウントとつないでおいてください。\nつないでおけば、アプリに移るときも、機種変更のときも、データをそのまま引き継げます。\n\nテストに協力してくれて、本当にありがとうございました！",
+      "feat": "sync",
+      "url": "https://apps.apple.com/jp/app/id6822575777",
+      "urlLabel": "App Storeで見る"
+    }
+  ]
+}

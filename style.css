@@ -1842,7 +1842,7 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 }
 
 /* その他タブ：ボタンの頭は絵文字ではなく線のアイコン（文字と同じ色。テーマ・ダークモードにもそのまま合う） */
-#incomeBtn > b::before, #mnAllBtn > b::before, #groupBtn > b::before, #shareBtn > b::before, #ptBtn > b::before, #moreAlarm > b::before, #wallBtn > b::before, #settingsBtn > b::before, #tourBtn > b::before, #helpBtn > b::before, #feedbackBtn > b::before, #supportBtn > b::before, #privacyBtn > b::before {
+#newsBtn > b::before, #incomeBtn > b::before, #mnAllBtn > b::before, #groupBtn > b::before, #shareBtn > b::before, #ptBtn > b::before, #moreAlarm > b::before, #wallBtn > b::before, #settingsBtn > b::before, #tourBtn > b::before, #helpBtn > b::before, #feedbackBtn > b::before, #supportBtn > b::before, #privacyBtn > b::before {
   content: ''; display: inline-block; width: 1.15em; height: 1.15em; margin-right: 6px; vertical-align: -0.2em;
   background: currentColor; -webkit-mask: var(--ico) center / contain no-repeat; mask: var(--ico) center / contain no-repeat;
 }
@@ -2018,3 +2018,27 @@ html { touch-action: manipulation; }
 
 /* 通知の設定：前の日／朝／バイトの区切りに線 */
 .nRow.nSep { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+
+/* ===== お知らせ ===== */
+#newsBtn { position: relative; --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z'/><path d='M10 21h4'/></svg>"); }
+#newsBtn small { padding-right: 36px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+#newsBtn > .grNewN { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); }
+.newsDot { position: absolute; top: 7px; left: calc(50% + 9px); width: 9px; height: 9px; border-radius: 50%; background: var(--over); box-shadow: 0 0 0 2px var(--bg); }
+.newsDot[hidden] { display: none; }
+#newsDlg .dlg, #newsCard .dlg { max-width: 420px; }
+.newsRow { border-top: 1px solid var(--line); padding: 10px 2px; }
+.newsRow:first-child { border-top: 0; }
+.newsRow > summary { cursor: pointer; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.newsRow > summary b { font-weight: normal; }
+.newsRow.unread > summary b { font-weight: bold; }
+.newsRow.unread > summary::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--over); align-self: center; }
+.newsRow > summary small { color: var(--muted); margin-left: auto; }
+.newsImp { font-size: 11px; font-weight: bold; color: var(--danger); border: 1px solid currentColor; border-radius: 6px; padding: 0 5px; }
+.newsKind { margin: 0 0 4px; font-size: 12px; font-weight: bold; color: var(--accent); }
+#newsCard h2 { margin: 0 0 8px; }
+.newsText { line-height: 1.7; margin: 8px 0; }
+.newsItem { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.newsItem p { margin: 4px 0 6px; color: var(--sub); font-size: 14px; }
+.newsItem button { padding: 4px 12px; font-size: 13px; }
+.newsBtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.newsClose { justify-content: flex-end; margin-top: 10px; }
