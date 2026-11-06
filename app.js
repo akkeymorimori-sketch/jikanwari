@@ -15427,6 +15427,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 {
   const scrollTo = sel => () => { showTab('today'); setTimeout(() => $(sel)?.scrollIntoView({ block: 'center' }), 80); };
   FEATURES.push(
+    { id: 'help', name: '機能をさがす', where: 'その他 → 困ったとき →「機能をさがす」', desc: 'やりたいことを書くと、どの機能でどこにあるかを探す', kw: '探す さがす 検索 どこ 使い方 わからない', go: () => { showTab('more'); $('#helpBtn')?.click(); } },
     { id: 'todo', name: 'ToDo', where: '今日の画面の「ToDo」', desc: '今日やることを書いて、終わったらチェック。ひとことで「帰りに牛乳買う」みたいに入れてもいい', kw: 'ToDo やること タスク リスト 買い物 やり忘れ', go: scrollTo('#todoCard') },
     { id: 'habit', name: '日課', where: '今日の画面の「日課」→「編集」', desc: '毎日やりたいこと（英単語10個、筋トレ…）を決めて、やった日にチェック', kw: '日課 習慣 毎日 継続 ルーティン 筋トレ 勉強', go: scrollTo('#habitCard') },
     { id: 'mood', name: '今日の気分', where: '今日の画面の一言日記の上', desc: '9種類の顔から今日の気分を選んで残す。カレンダーや「月ごとに見る」にも顔が出る', kw: '気分 きもち 機嫌 顔 体調 日記 記録', go: scrollTo('#moodRow') },
@@ -15451,8 +15452,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 /* ===== お知らせ（運営からのお知らせ＋アップデートの新機能。アプリの中だけ） ===== */
 // 運営からのお知らせは www/news.json（Web版と一緒に公開。アプリ版はネットの最新を読む）。読めなくても何も出さないだけ
 // 新機能は WHATS_NEW に書く（新機能がないバージョンは書かない）。APP_VER は package.json の version と同じにする（テストで確かめる）
-const APP_VER = '1.1.0';
+const APP_VER = '1.1.1';
 const WHATS_NEW = [
+  { ver: '1.1.1', items: [
+    { feat: 'news', title: 'お知らせ', desc: 'その他のいちばん上に、運営からのお知らせとアップデートで増えた機能が並ぶよ。読んだものもあとから見返せる' },
+    { feat: 'help', title: '機能をさがすが広くなった', desc: 'ToDo・日課・アラーム・試験前モード・紙をスキャン・取り消しなども、やりたいことから探せるように' }
+  ] },
   { ver: '1.1', items: [
     { feat: 'ai', title: 'キーなしで使える「がくログのAI」', desc: '時間割・シフト表・給与明細・手帳やスクショの予定を、準備なしで写真から読み取れるよ（1日5回）' },
     { feat: 'scan', title: 'ミニノートに「紙をスキャン」', desc: 'プリントや板書を撮ると、紙を自動で囲んで、まっすぐ白くして残せる' },
