@@ -825,6 +825,7 @@ function normalize(s) {
     events: nf.events !== false,
     tDays: [1, 3, 7].includes(nf.tDays) ? nf.tDays : 3,
     mTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(nf.mTime) ? nf.mTime : '07:30',
+    mAlarm: nf.mAlarm === true, // アラームが鳴る朝は、朝の通知をアラームの1分後に
     habit: nf.habit !== false,
     fortune: nf.fortune !== false,
       sign: /^(\d|1[01])$/.test(nf.sign) ? nf.sign : '',
@@ -5507,7 +5508,10 @@ function notifyPlan() {
     const hl = n.habit ? hbLoad().list : [];
     for (let i = 0; i <= NOTIFY_DAYS; i++) {
       const day = addDays(today, i);
-      const at = new Date(day); at.setHours(mh, mi, 0, 0);
+      let at = new Date(day); at.setHours(mh, mi, 0, 0);
+      // アラームが鳴る朝（昼まで）は、その最初のアラームの1分後に（止めたらすぐ見られるように）
+      const al = n.mAlarm ? window.alFirstOn?.(ymd(day)) : null;
+      if (al) at = new Date(al.getTime() + 60000);
       if (at <= now) continue;
       const k = ymd(day), lines = [], hits = [];
       if (anOn) for (const a of state.annivs) {
@@ -5574,6 +5578,7 @@ if (LN) {
     '<label><input type="checkbox" id="nTasks"> 課題の締切</label><label><input type="checkbox" id="nEvents"> 予定</label></div>' +
     '<div class="row nRow">課題の締切は <select id="nTDays"><option value="1">明日だけ</option><option value="3">3日以内</option><option value="7">1週間以内</option></select> を知らせる</div>' +
     '<div class="row nRow nSep">朝の <input type="time" id="nMTime"> に知らせる</div>' +
+    '<label class="row nRow" id="nMAlarmRow" hidden><input type="checkbox" id="nMAlarm"> アラームが鳴る日は、アラームを止めたころ（1分後）に知らせる</label>' +
     '<div class="row nRow nKinds">' +
     '<label><input type="checkbox" id="nHabit"> 今日の日課</label>' +
     '<label><input type="checkbox" id="nFortune"> 今日の運勢</label><label><input type="checkbox" id="nFun"> 今日は何の日</label></div>' +
@@ -5609,6 +5614,8 @@ if (LN) {
     $('#nTDays').value = String(state.notify.tDays);
     $('#nFun').checked = state.notify.fun;
     $('#nMTime').value = state.notify.mTime;
+    $('#nMAlarm').checked = state.notify.mAlarm;
+    $('#nMAlarmRow').hidden = !window.alFirstOn || !window.alNext?.().length && !state.notify.mAlarm;
     $('#nHabit').checked = state.notify.habit;
     $('#nFortune').checked = state.notify.fortune;
     $('#nAnniv').checked = state.notify.anniv;
@@ -5646,6 +5653,7 @@ for (const [id, key] of [['nExam', 'exam'], ['nItems', 'items'], ['nTasks', 'tas
   $('#nTDays').onchange = e => { state.notify.tDays = Number(e.target.value); save(); };
   $('#nFun').onchange = e => { state.notify.fun = e.target.checked; save(); };
   $('#nHabit').onchange = e => { state.notify.habit = e.target.checked; save(); };
+  $('#nMAlarm').onchange = e => { state.notify.mAlarm = e.target.checked; save(); };
   $('#nMTime').onchange = e => {
   if (!/^\d\d:\d\d$/.test(e.target.value)) return syncNotifyUI();
   state.notify.mTime = e.target.value;
@@ -10008,6 +10016,13 @@ var WG_LOOK = {
       .sort((x, y) => x.at - y.at);
   }
 
+  // その日の朝（昼まで）に最初に鳴るアラーム。朝の通知を合わせるのに使う（鳴らせる端末で、オンのときだけ）
+  window.alFirstOn = k => {
+    if (!alReady || !featOn('alarm')) return null;
+    const x = alItems().find(x => ymd(new Date(x.at)) === k && new Date(x.at).getHours() < 12);
+    return x ? new Date(x.at) : null;
+  };
+
   // ウィジェットに出す、これから鳴るアラーム（鳴らせる端末で、オンのときだけ）
   window.alNext = () => !alReady || !featOn('alarm') ? [] :
     alItems().filter(x => x.at > Date.now()).slice(0, 12).map(x => ({ at: x.at, title: x.title }));
@@ -10410,6 +10425,7 @@ var WG_LOOK = {
     }
     window.alPush();
     if (alReady) wgPush();
+    if (alReady && state.notify?.mAlarm) scheduleNotify(); // 朝の通知をアラームに合わせてるなら、鳴らせるとわかってから組み直す
     // ウィジェットのアラームを押したら（gakulog://alarm）、アラームの画面を開く
     const APP = window.Capacitor?.Plugins?.App;
     const fromUrl = u => { if (/^gakulog:\/\/alarm/.test(u || '')) openAlarm(); };
@@ -15693,6 +15709,7 @@ const WHATS_NEW = [
   { ver: '1.1.1', items: [
     { feat: 'news', title: 'お知らせ', desc: 'その他のいちばん上に、運営からのお知らせとアップデートで増えた機能が並ぶよ。読んだものもあとから見返せる' },
     { feat: 'income', title: '収入に、月ごとの目標と円グラフ', desc: '1か月の目標額を入れると、その月の収入がバイト先ごとの円グラフで何%かわかるよ。カレンダーのバイトの日からも開ける' },
+    { feat: 'notify', title: '朝の通知をアラームに合わせる', desc: '設定 → 通知で選ぶと、アラームが鳴る日は、止めたころ（1分後）に今日の運勢や日課が届くよ' },
     { feat: 'help', title: '機能をさがすが広くなった', desc: 'ToDo・日課・アラーム・試験前モード・紙をスキャン・取り消しなども、やりたいことから探せるように' }
   ] },
   { ver: '1.1', items: [
