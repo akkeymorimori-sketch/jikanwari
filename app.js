@@ -7654,6 +7654,7 @@ async function applyWall() {
     if (u) wallBg.style.backgroundImage = `url("${u}")`;
   }
   document.documentElement.classList.toggle('hasWall', w.type !== 'none');
+  Promise.resolve().then(() => applyCardColor()); // 読み込み中は、色の section が動いてから
 }
 
 // 大きい写真は縮めて保存（長いほうを1600pxまで）
@@ -7735,6 +7736,7 @@ $('#wallDim').oninput = e => {
   state.wall.dim = +e.target.value;
   $('#wallDimV').textContent = e.target.value + '%';
   wallBg.style.setProperty('--wdim', state.wall.dim / 100);
+  cardHint(applyCardColor());
 };
 $('#wallDim').onchange = () => save();
 
@@ -7892,6 +7894,7 @@ function applyCard() {
     state.wall.card = +e.target.value;
     $('#wallCardV').textContent = e.target.value + '%';
     applyCard();
+    cardHint(applyCardColor());
   };
   $('#wallCard').onchange = () => save();
 
@@ -7931,9 +7934,56 @@ function hexContrast(a, b) {
 }
 
 // 色を画面に反映して、実際のカードの色と文字の色を返す
+// 壁紙の明るさ（0〜1）。画像は小さく描いて平均をとる。わからないあいだは null
+let wallLumSrc = '', wallLumVal = null;
+function wallLum() {
+  const r = document.documentElement;
+  if (!r.classList.contains('hasWall')) return null;
+  const bg = getComputedStyle(wallBg).backgroundImage, m = bg.match(/url\("?(.*?)"?\)/);
+  const base = hexLum(toHex6(getComputedStyle(wallBg).backgroundColor.replace(/rgba?\((\d+), (\d+), (\d+).*/, (_, a, b, c) => '#' + [a, b, c].map(v => (+v).toString(16).padStart(2, '0')).join(''))));
+  const dim = (wallState().dim || 0) / 100;
+  if (!m) return base; // 模様だけの壁紙は、ほぼ地の色
+  if (wallLumSrc !== m[1]) {
+    wallLumSrc = m[1]; wallLumVal = null;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+        const x = cv.getContext('2d'); x.drawImage(img, 0, 0, 16, 16);
+        const d = x.getImageData(0, 0, 16, 16).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += hexLum('#' + [d[i], d[i + 1], d[i + 2]].map(v => v.toString(16).padStart(2, '0')).join(''));
+        if (wallLumSrc === m[1]) { wallLumVal = sum / (d.length / 4); applyCardColor(); }
+      } catch {}
+    };
+    img.src = m[1];
+    return null;
+  }
+  return wallLumVal == null ? null : wallLumVal * (1 - dim) + base * dim;
+}
+
 function applyCardColor() {
   const w = wallState(), r = document.documentElement;
-  const c = HEX6.test(w.cardColor || '') ? w.cardColor : '';
+  let c = HEX6.test(w.cardColor || '') ? w.cardColor : '';
+  // カードも文字も「自動」で壁紙があるとき：薄い文字（--muted）でも読める（4.5 以上）ように、カードを必要なぶんだけ濃くする。
+  // 白いカードと黒いカード（ダークモードなら逆）で、少ない濃さで読めるほうを使う（暗い壁紙のライトモードなら黒いカードに白い文字）
+  let lvl = cardLevel() / 100;
+  if (!c && !HEX6.test(w.textColor || '')) {
+    const wl = wallLum();
+    if (wl != null) {
+      const surf = toHex6(getComputedStyle(r).getPropertyValue('--surface')), lightUi = hexLum(surf) > .4;
+      const ct = (x, y) => (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
+      const need = (card, muted) => {
+        let a = lvl;
+        while (a < .95 && ct(hexLum(card) * a + wl * (1 - a), hexLum(muted)) < 4.5) a = Math.min(.95, a + .05);
+        return a;
+      };
+      const flip = lightUi ? '#1d1f24' : '#ffffff';
+      const n1 = need(surf, lightUi ? '#666666' : '#9a9ea6'), n2 = need(flip, lightUi ? '#9a9ea6' : '#666666');
+      if (n2 < n1) { c = flip; lvl = n2; } else lvl = n1;
+    }
+  }
+  r.style.setProperty('--cardA', Math.round(lvl * 100) + '%');
   const t = HEX6.test(w.textColor || '') ? w.textColor
     : c ? (hexLum(c) > .4 ? '#222222' : '#f2f2f2') : '';
   if (c) r.style.setProperty('--cardC', c); else r.style.removeProperty('--cardC');
@@ -7944,6 +7994,7 @@ function applyCardColor() {
   else delete r.dataset.cardScheme;
   const css = getComputedStyle(r);
   return {
+    raised: Math.round(lvl * 100) > cardLevel(),
     base: c || toHex6(css.getPropertyValue('--surface')),
     text: t || toHex6(css.getPropertyValue('--text'))
   };
@@ -7952,7 +8003,8 @@ function applyCardColor() {
 function cardHint(res) {
   const el = $('#wallCHint');
   if (el) el.textContent = hexContrast(res.base, res.text) < 3
-    ? '⚠ 読みにくいかも。文字の色を「自動」にするか、ちがう色にしてみて' : '';
+    ? '⚠ 読みにくいかも。文字の色を「自動」にするか、ちがう色にしてみて'
+    : res.raised ? '壁紙に合わせて、文字が読めるようにカードを少し濃くしてるよ' : '';
 }
 
 {
@@ -12403,6 +12455,7 @@ const apply = id => {
     wallBg.className = 'wp-shop';
     wallBg.style.backgroundImage = url(b);
     document.documentElement.classList.add('hasWall');
+    applyCardColor();
   };
 
   // 壁紙画面に「交換した背景」欄
