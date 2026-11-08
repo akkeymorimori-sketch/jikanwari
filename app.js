@@ -14952,12 +14952,19 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 {
   const AD = window.Capacitor?.Plugins?.AdMob;
   const plat = window.Capacitor?.getPlatform?.();
-  // AdMob の広告ユニット（Android はあとで足す）
+  // AdMob の広告ユニット
   const IDS = {
-    ios: { banner: 'ca-app-pub-9369660298902208/4694393553', reward: 'ca-app-pub-9369660298902208/2337316818' }
+    ios: { banner: 'ca-app-pub-9369660298902208/4694393553', reward: 'ca-app-pub-9369660298902208/2337316818' },
+    android: { banner: 'ca-app-pub-9369660298902208/6721286514', reward: 'ca-app-pub-9369660298902208/1816444191' }
   };
-  // 開発中は Google のテスト用の広告を出す（自分で本物の広告を押すと AdMob の規約違反になる）。公開するときに false
-  const AD_TEST = false;
+  // 開発中・テスト中は Google のテスト用の広告を出す（自分で本物の広告を押すと AdMob の規約違反になる）。本番に出すときにその OS を false
+  // Android はクローズドテストのあいだ true
+  const AD_TEST = { ios: false, android: true }[plat] ?? true;
+  // Google のテスト用の広告ユニット（OS ごとにちがう）
+  const TEST_IDS = {
+    ios: { banner: 'ca-app-pub-3940256099942544/2435281174', reward: 'ca-app-pub-3940256099942544/1712485313' },
+    android: { banner: 'ca-app-pub-3940256099942544/9214589741', reward: 'ca-app-pub-3940256099942544/5224354917' }
+  };
   const ids = window.Capacitor?.isNativePlatform?.() && AD ? IDS[plat] : null;
   const OFF_KEY = 'gakulog-adoff'; // 動画を見た日（この端末だけ）
   const offToday = () => { try { return localStorage.getItem(OFF_KEY) === ymd(new Date()); } catch { return false; } };
@@ -14982,7 +14989,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (started || starting || (!force && (state.onboarded === false || busy()))) return;
     starting = true;
     try {
-      // 「トラッキングを許可」してくれた人にだけ、その人に合わせた広告
+      // 「トラッキングを許可」してくれた人にだけ、その人に合わせた広告（Android は聞かない。広告 ID は端末の設定で止められる）
       let st = (await AD.trackingAuthorizationStatus())?.status;
       if (st === 'notDetermined') {
         await AD.requestTrackingAuthorization();
@@ -15006,7 +15013,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     try {
       if (want && !made) {
         made = true;
-        await AD.showBanner({ adId: AD_TEST ? 'ca-app-pub-3940256099942544/2435281174' : ids.banner,
+        await AD.showBanner({ adId: (AD_TEST ? TEST_IDS[plat] || TEST_IDS.ios : ids).banner,
           adSize: 'ADAPTIVE_BANNER', position: 'BOTTOM_CENTER', margin: margin(), npa, isTesting: AD_TEST });
       } else if (want) await AD.resumeBanner();
       else { await AD.hideBanner(); setH(0); }
@@ -15038,7 +15045,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       if (!started) await start(true);
       if (!started) throw new Error('not started');
       hs.push(await AD.addListener('onRewardedVideoAdReward', () => { got = true; }));
-      await AD.prepareRewardVideoAd({ adId: AD_TEST ? 'ca-app-pub-3940256099942544/1712485313' : ids.reward, npa, isTesting: AD_TEST });
+      await AD.prepareRewardVideoAd({ adId: (AD_TEST ? TEST_IDS[plat] || TEST_IDS.ios : ids).reward, npa, isTesting: AD_TEST });
       await AD.showRewardVideoAd();
     } catch {
       toast('今は動画を用意できなかった。少しあとでもう一度やってみてね');
@@ -15065,7 +15072,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     $('#adBody').innerHTML = (offToday() ? '<p>今日は広告が出ないよ</p>'
       : '<p class="hint">動画の広告を見ると、その日はもう広告が出なくなるよ</p>' +
         '<button type="button" id="adWatch">動画を見て、今日は広告を消す</button>') +
-      '<p class="hint">あなたに合わせた広告にするかどうかは、iPhone の「設定」→「プライバシーとセキュリティ」→「トラッキング」で変えられるよ</p>';
+      (plat === 'android'
+        ? '<p class="hint">あなたに合わせた広告にするかどうかは、スマホの「設定」→「プライバシー」→「広告」（機種によっては「Google」→「広告」）で変えられるよ</p>'
+        : '<p class="hint">あなたに合わせた広告にするかどうかは、iPhone の「設定」→「プライバシーとセキュリティ」→「トラッキング」で変えられるよ</p>');
   }
 
   if (ids) {
