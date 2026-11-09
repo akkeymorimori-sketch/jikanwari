@@ -15293,6 +15293,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     // 金額（「800円」「1,200円」「¥500」「3万円」）。支出になったときだけタイトルから抜く
     const amtM = s.match(AMT);
     const amt = amtM ? Math.round(parseFloat((amtM[1] || amtM[2]).replace(/,/g, '')) * (amtM[3] ? 10000 : 1)) : 0;
+    // 支出になりそう（金額があって、時刻・時限・先のことば・くり返しがない）なら、日付は過ぎた日として読む
+    // （「1日」は今月か先月の1日、「月曜」はこの前の月曜、「12/1」は去年の12/1）
+    const past = amt > 0 && featOn('spend') && !NOT_SPEND.test(s)
+      && !/明日|あした|明後日|あさって|明々後日|しあさって|来週|再来週|来月|再来月|日後|週間後|[かヶカケ]月後|毎週|毎月|毎日|平日|隔週|\d\s*(?:時|:\d{2}|限)/.test(s);
 
     // くり返し
     let rep = null;
@@ -15307,7 +15311,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const fixY = (y, m, d) => {
       if (y) return mk(+y, m, d);
       let x = mk(today.getFullYear(), m, d);
-      if (x && x < addDays(today, -60)) x = mk(today.getFullYear() + 1, m, d); // 2か月より前なら来年（1/5 を11月に書いたとき）
+      if (past) { if (x && x > today) x = mk(today.getFullYear() - 1, m, d); }
+      else if (x && x < addDays(today, -60)) x = mk(today.getFullYear() + 1, m, d); // 2か月より前なら来年（1/5 を11月に書いたとき）
       return x;
     };
     const D = String.raw`(?<![\d/.])(?:(\d{4})\s*[/.年]\s*)?(\d{1,2})\s*[/.月]\s*(\d{1,2})日?(?:\s*\(${JP}(?:曜日?)?\))?(?![\d/.])`;
@@ -15342,12 +15347,13 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       dates.push(x);
     });
     // 「3日」「来月10日」「3日と10日」
-    take(/(来月|再来月|今月)?の?(?<![\d/.])(\d{1,2})日(?!後|間|目|分|中|以内)((?:\s*[,、・と]\s*\d{1,2}日)*)/g, (_, mo, d, rest) => {
+    take(/(来月|再来月|今月)?の?(?<![\d/.])(\d{1,2})日(?!後|前|間|目|分|中|以内)((?:\s*[,、・と]\s*\d{1,2}日)*)/g, (_, mo, d, rest) => {
       const add = mo === '来月' ? 1 : mo === '再来月' ? 2 : 0;
       let ok = false;
       for (const k of [d, ...(rest.match(/\d{1,2}/g) || [])]) {
         let x = mk(today.getFullYear(), today.getMonth() + 1 + add, +k);
-        if (x && !mo && x < today) x = mk(today.getFullYear(), today.getMonth() + 2, +k); // 今月もう過ぎてたら来月
+        if (x && !mo && !past && x < today) x = mk(today.getFullYear(), today.getMonth() + 2, +k); // 今月もう過ぎてたら来月
+        if (x && !mo && past && x > today) x = mk(today.getFullYear(), today.getMonth(), +k); // 支出：まだ来てない日なら先月
         if (x) { dates.push(x); ok = true; }
       }
       if (!ok) return false;
@@ -15355,6 +15361,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     for (const [re, n] of [[/明々後日|明明後日|しあさって/g, 3], [/明後日|あさって/g, 2], [/明日|あした|あす/g, 1], [/今日|本日|きょう/g, 0], [/一昨日|おととい/g, -2], [/昨日|きのう/g, -1]])
       take(re, () => { dates.push(addDays(today, n)); });
     take(/(\d+)\s*日後/g, (_, n) => { dates.push(addDays(today, +n)); });
+    take(/(\d+)\s*日前/g, (_, n) => { dates.push(addDays(today, -n)); });
+    take(/(\d+)\s*週間前/g, (_, n) => { dates.push(addDays(today, -7 * n)); });
     take(/(\d+)\s*週間後/g, (_, n) => { dates.push(addDays(today, 7 * n)); });
     take(/(\d+)\s*[かヶカケ]月後/g, (_, n) => { dates.push(new Date(today.getFullYear(), today.getMonth() + +n, Math.min(today.getDate(), 28))); });
     take(/(再来|来|今)?週末/, (_, w) => {
@@ -15366,11 +15374,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const addWd = (w, d) => {
       const g = WDS.indexOf(d);
       if (!w) return wdList.push(g);
-      const mon = addDays(today, -dayIndex(today) + (w === '来週' ? 7 : w === '再来週' ? 14 : 0));
+      const mon = addDays(today, -dayIndex(today) + ({ 来週: 7, 再来週: 14, 先週: -7, 先々週: -14 }[w] || 0));
       dates.push(addDays(mon, (g + 6) % 7));
     };
     // 「木3」「木曜3」「来週の月2」：曜日＋時限（時刻は設定の時限から）。「金3万円」などは前後で見分ける
-    take(new RegExp(`(?<=[\\s${CUT}])(?:(再来週|来週|今週)の?)?(${JP})(?:曜日|曜)?\\s*(\\d{1,2})\\s*(?:限目?)?(?=[\\s${CUT}]|に|は|の|で)`), (_, w, d, p) => {
+    take(new RegExp(`(?<=[\\s${CUT}])(?:(再来週|来週|今週|先々週|先週)の?)?(${JP})(?:曜日|曜)?\\s*(\\d{1,2})\\s*(?:限目?)?(?=[\\s${CUT}]|に|は|の|で)`), (_, w, d, p) => {
       if (+p < 1 || +p > Math.max(7, state.times.length)) return false;
       addWd(w, d);
       r.period = +p;
@@ -15378,10 +15386,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       if (tp?.start) r.start = tp.start;
       if (tp?.end) r.end = tp.end;
     });
-    take(new RegExp(`(再来週|来週|今週)?の?(${JP})(?:曜日|曜)`, 'g'), (_, w, d) => { addWd(w, d); });
-    take(new RegExp(`(?<=[\\s${CUT}])(再来週|来週|今週)の?(${JP})(?=[\\s${CUT}]|に|は|の)`, 'g'), (_, w, d) => { addWd(w, d); });
+    take(new RegExp(`(再来週|来週|今週|先々週|先週)?の?(${JP})(?:曜日|曜)`, 'g'), (_, w, d) => { addWd(w, d); });
+    take(new RegExp(`(?<=[\\s${CUT}])(再来週|来週|今週|先々週|先週)の?(${JP})(?=[\\s${CUT}]|に|は|の)`, 'g'), (_, w, d) => { addWd(w, d); });
     take(new RegExp(`(?<=[\\s${CUT}])(${JP})(?=[\\s${CUT}])`, 'g'), (_, d) => { addWd('', d); });
-    take(/(再来週|来週)/, (_, w) => { dates.push(addDays(today, w === '来週' ? 7 : 14)); });
+    take(/(再来週|来週|先々週|先週)/, (_, w) => { dates.push(addDays(today, { 来週: 7, 再来週: 14, 先週: -7, 先々週: -14 }[w])); });
 
     // 時限：「3限」「3-4限」（時刻は設定の時限から）
     const setPeriod = (a, b) => {
@@ -15436,7 +15444,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     // 曜日だけのとき・くり返しの日付
     for (const g of wdList) {
       let k = (g - today.getDay() + 7) % 7;
-      if (k === 0 && !(r.start && toMin(r.start) > nowMin)) k = 7;
+      if (past) k = -((today.getDay() - g + 7) % 7); // 支出：この前のその曜日（今日がその曜日なら今日）
+      else if (k === 0 && !(r.start && toMin(r.start) > nowMin)) k = 7;
       dates.push(addDays(today, k));
     }
     if (rep) {
