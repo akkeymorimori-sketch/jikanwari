@@ -380,8 +380,22 @@ const WEEK = ['日', '月', '火', '水', '木', '金', '土'];
 const KEY = 'jikanwari-v2';
 const OLD_KEY = 'jikanwari-v1';
 // 設定でオン/オフできる機能（時間割は前からある state.useGrid）。オフでもデータは消さない
-const FEAT_KEYS = ['job', 'group', 'share', 'diary', 'todo', 'memo', 'habit', 'points', 'alarm', 'ai', 'exam'];
+const FEAT_KEYS = ['job', 'spend', 'group', 'share', 'diary', 'todo', 'memo', 'habit', 'points', 'alarm', 'ai', 'exam'];
 const featOn = k => k === 'grid' ? state.useGrid !== false : state?.features?.[k] !== false;
+// 支出のカテゴリ（c は円グラフの色、kw はひとこと追加・レシートのメモから当てる言葉。上から順に見る）
+const SP_CATS = [
+  { id: 'food', label: '食費', c: '#f59e0b', kw: /ランチ|昼ご?飯|昼食|夕飯|夕食|晩ご?飯|夜ご?飯|朝ご?飯|朝食|ご飯|ごはん|弁当|食費|カフェ|コーヒー|スタバ|マック|コンビニ|飲み物|ジュース|お菓子|おやつ|パン|スーパー|学食|ラーメン|外食|食材|牛乳|スイーツ|うどん|そば|寿司|定食/ },
+  { id: 'move', label: '交通', c: '#3b82f6', kw: /電車|バス|タクシー|交通|定期|切符|ガソリン|駐車|新幹線|飛行機|suica|pasmo|icoca|チャージ/i },
+  { id: 'study', label: '学業', c: '#8b5cf6', kw: /教科書|参考書|本代|文房具|ノート|ペン|印刷|コピー|学費|資格|検定|受験|教材|レジュメ/ },
+  { id: 'social', label: '交際', c: '#ef4444', kw: /飲み会|プレゼント|誕生日|お祝い|デート|割り?勘|会費|サークル|打ち上げ|合宿/ },
+  { id: 'fun', label: '趣味', c: '#ec4899', kw: /ゲーム|映画|ライブ|チケット|推し|グッズ|漫画|マンガ|カラオケ|課金|サブスク|雑誌|旅行|本/ },
+  { id: 'look', label: '服・美容', c: '#14b8a6', kw: /服|靴|美容院|美容|化粧|コスメ|ヘア|カット|ネイル|ユニクロ|アクセ/ },
+  { id: 'daily', label: '日用品', c: '#10b981', kw: /日用品|洗剤|ティッシュ|トイレットペーパー|シャンプー|ドラッグストア|薬|病院|歯医者|マスク|100均|百均|ダイソー/ },
+  { id: 'home', label: '住まい・通信', c: '#84cc16', kw: /家賃|電気代|ガス代|水道|スマホ代|携帯代|通信|wi-?fi|光熱|ネット代/i },
+  { id: 'etc', label: 'その他', c: '#94a3b8', kw: null }
+];
+const spCatOf = text => (SP_CATS.find(c => c.kw?.test(text || '')) || SP_CATS.at(-1)).id;
+const spCat = id => SP_CATS.find(c => c.id === id) || SP_CATS.at(-1);
 // 今日の気分（一言日記といっしょに state.mood[日付] = id）。顔は線の絵（f）を丸の中に描く
 const EYES = 'M8.5 9.6v.8M15.5 9.6v.8';
 const MOODS = [
@@ -732,6 +746,17 @@ function normalize(s) {
     x.net = toYen(x.net);
   }
   s.incomeLimit = toYen(s.incomeLimit) ?? '';
+  // 支出（使ったお金）。レシートの写真は IndexedDB（gakulog-img）に rc-… で置く
+  s.spends = Array.isArray(s.spends) ? s.spends.filter(x => x && isYmd(x.date) && toYen(x.amount) != null) : [];
+  for (const x of s.spends) {
+    x.id = fixId(x.id);
+    x.amount = toYen(x.amount);
+    x.cat = SP_CATS.some(c => c.id === x.cat) ? x.cat : 'etc';
+    x.memo = typeof x.memo === 'string' ? x.memo.slice(0, 60) : '';
+    if (typeof x.pic !== 'string' || !/^rc-[\w-]{1,64}$/.test(x.pic)) delete x.pic;
+  }
+  s.spendGoalMonth = toYen(s.spendGoalMonth) ?? '';
+  s.spendKeepPic = s.spendKeepPic !== false; // レシートの写真を残す（白黒で小さくして）
   // バイト先ごとの時給・休憩（収入の見込み用）
   s.wages = s.wages && typeof s.wages === 'object' && !Array.isArray(s.wages) ? s.wages : {};
   for (const [k, v] of Object.entries(s.wages)) {
@@ -3775,10 +3800,20 @@ document.addEventListener('click', e => {
   window.dyRefresh?.();
 });
 
+// 書き始めた日に入れる（23:59に書き始めて0:01に書き終えても、前の日の日記になる）
+let diaryDay = null;
+$('#diaryInput').addEventListener('focus', () => { diaryDay = todayStr(); });
 $('#diaryInput').addEventListener('input', e => {
-  const v = e.target.value.trim(), k = todayStr();
+  const v = e.target.value.trim(), k = diaryDay ||= todayStr();
   if (v) state.diary[k] = v; else delete state.diary[k];
   save();
+});
+$('#diaryInput').addEventListener('blur', () => {
+  const k = diaryDay;
+  diaryDay = null;
+  if (!k || k === todayStr()) return;
+  if (state.diary[k]) toast(`${md(parseYmd(k))}の日記に入れたよ`);
+  renderNotes(); // 欄は新しい日の日記にする
 });
 
 // カレンダーで見返す・書き直す
@@ -5868,17 +5903,26 @@ function moveEvents(ids, delta, msg) {
 }
 
 let drag = null, dragSkipClick = 0;
+// つかんでる間だけ、画面の下にゴミ箱（落とすと消える）
+const dragTrash = document.createElement('div');
+dragTrash.id = 'dragTrash';
+dragTrash.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg><span>ここに落とすと消す</span>';
+document.body.append(dragTrash);
 function endDrag() {
   if (!drag) return;
   clearTimeout(drag.timer);
   drag.ghost?.remove();
   drag.over?.classList.remove('dropTo');
+  dragTrash.classList.remove('on', 'hot');
   drag = null;
 }
 function moveGhost(x, y) {
   drag.ghost.style.left = x + 'px';
   drag.ghost.style.top = y + 'px';
-  const cell = document.elementFromPoint(x, y)?.closest('#calGrid .cd') || null;
+  const r = dragTrash.getBoundingClientRect();
+  drag.trash = x >= r.left - 12 && x <= r.right + 12 && y >= r.top - 12 && y <= r.bottom + 12;
+  dragTrash.classList.toggle('hot', drag.trash);
+  const cell = drag.trash ? null : document.elementFromPoint(x, y)?.closest('#calGrid .cd') || null;
   if (cell !== drag.over) {
     drag.over?.classList.remove('dropTo');
     cell?.classList.add('dropTo');
@@ -5902,6 +5946,7 @@ $('#calGrid').addEventListener('pointerdown', e => {
     g.textContent = ev.title || EV_LABEL[ev.kind];
     document.body.append(g);
     drag.ghost = g;
+    dragTrash.classList.add('on');
     moveGhost(x0, y0);
   }, 400);
 });
@@ -5916,10 +5961,11 @@ document.addEventListener('pointermove', e => {
 });
 document.addEventListener('pointerup', () => {
   if (!drag) return;
-  const { on, over, ev } = drag;
+  const { on, over, ev, trash } = drag;
   endDrag();
   if (!on) return;
   dragSkipClick = Date.now();
+  if (trash) return dropTrash(ev);
   const to = over?.dataset.date;
   if (!to || to === ev.date) return;
   if (ev.gid) {
@@ -5930,6 +5976,23 @@ document.addEventListener('pointerup', () => {
   calSel = to;
   moveEvents(new Set([ev.id]), evDayDiff(ev.date, to), `${md(parseYmd(to))}に移動したよ`);
 });
+// ゴミ箱に落とした予定を消す（くり返しの予定もこの1件だけ。共有した予定は今の削除と同じく確かめてから）
+function dropTrash(ev) {
+  if (ev.gid) {
+    if (grLocked(ev)) return alert(grLockMsg(ev));
+    if (!grDelAsk(ev)) return;
+    return grDelete(ev).catch(grFail);
+  }
+  if (ev.src === 'cal') return alert('カレンダーから取り込んだ予定は、元のカレンダーで消してね（ここで消しても次の取り込みで戻っちゃう）');
+  const i = state.events.findIndex(x => x.id === ev.id);
+  if (i < 0) return;
+  state.events.splice(i, 1);
+  save(); renderAll(); renderCal(); renderDay();
+  toast(`「${ev.title || EV_LABEL[ev.kind] || '予定'}」を消したよ`, () => {
+    if (!state.events.some(x => x.id === ev.id)) state.events.splice(i, 0, ev);
+    save(); renderAll(); renderCal(); renderDay();
+  });
+}
 document.addEventListener('pointercancel', () => endDrag());
 // つかんでる間は画面をスクロールさせない
 document.addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
@@ -5997,7 +6060,7 @@ const FEATURES = [
 const FEAT_NEED = {
   job: ['job'], income: ['job'], calSync: ['job'], photoPay: ['job', 'ai'], photoShift: ['job', 'ai'],
   photoGrid: ['grid', 'ai'], photoMemo: ['ai'], ai: ['ai'], aiMore: ['ai'], group: ['group'], grNews: ['group'], calShow: ['group'],
-  todo: ['todo'], habit: ['habit'], alarm: ['alarm'], alarmEar: ['alarm'], exam: ['exam'], mood: ['diary'],
+  spend: ['spend'], todo: ['todo'], habit: ['habit'], alarm: ['alarm'], alarmEar: ['alarm'], exam: ['exam'], mood: ['diary'],
   share: ['grid', 'share'], friendGrid: ['grid', 'share'], points: ['points'], miniNote: ['grid']
 };
 const featShown = id => id === 'notes' ? featOn('memo') || featOn('diary') : (FEAT_NEED[id] || []).every(featOn);
@@ -14455,6 +14518,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     for (const t of state.terms) for (const c of t.courses) for (const n of c.notes || []) for (const k of n.pics || []) s.add(k);
     for (const e of state.events) if (e.img && !skip('events', e)) s.add(e.img);
     if (state.wall?.img && !sy.lookLocal) s.add(state.wall.img);
+    for (const x of state.spends || []) if (x.pic) s.add(x.pic);
     return s;
   };
 
@@ -15137,7 +15201,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 
   const arrange = () => {
     const pick = sel => typeof sel === 'string' ? $(sel) : sel;
-    const tiles = card('moreTiles', ...['#incomeBtn', '#mnAllBtn', '#groupBtn', '#shareBtn', al, '#ptBtn'].map(pick));
+    const tiles = card('moreTiles', ...[$('#moneyTile') ? '#moneyTile' : '#incomeBtn', '#mnAllBtn', '#groupBtn', '#shareBtn', al, '#ptBtn'].map(pick));
     tiles.id = 'moreTiles';
     $('#mnAllBtn')?.classList.add('gridOnly');
     const main = card('moreMain', ...['#wallBtn', '#settingsBtn'].map(pick));
@@ -15151,7 +15215,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   };
   // iPhone（WebKit）は CSS のマスクのアイコンをごくまれに描き忘れるので、ここは同じ絵を本物の SVG にして入れる（ポイントのボタンは書き直されるたびに呼ぶ）
   const tileIco = window.tileIco = () => {
-    for (const b of view.querySelectorAll('#moreTiles > button > b, .moreMain > button > b, .moreHelp > button > b, .moreNews > button > b')) {
+    for (const b of view.querySelectorAll('#moreTiles > button > b, #moneyTile > button > b, .moreMain > button > b, .moreHelp > button > b, .moreNews > button > b')) {
       const m = getComputedStyle(b.parentNode).getPropertyValue('--ico').match(/<svg[\s\S]*<\/svg>/);
       if (!m || b.querySelector('.tIco')) continue;
       const s = document.createElement('span');
@@ -15203,9 +15267,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     past: /(?:った|た|だった|かった|でした|ました|ちゃった|じゃった)(?:[!！?？。…〜~ｗw笑]|な|なぁ|なー|よ|ね|わ)*$/,
   };
   const VAGUE = { 朝: '08:00', 昼: '12:00', 夕方: '17:00', 夜: '19:00' };
+  const AMT = /(?:[¥￥]\s*([\d,]+)|(\d[\d,]*(?:\.\d+)?)\s*(万)?\s*(?:円|えん))/;
+  const NOT_SPEND = /給料|給与|入金|もらった|貰った|返して|バイト代|仕送り|お小遣い|お年玉/;
 
   window.qaParse = (line, now = clock()) => {
-    const r = { src: line, kind: '', evKind: 'other', title: '', dates: [], start: '', end: '', place: '', remind: 0, gid: '', cid: '', rep: '', next: false, warn: [] };
+    const r = { src: line, kind: '', evKind: 'other', title: '', dates: [], start: '', end: '', place: '', remind: 0, gid: '', cid: '', rep: '', next: false, amount: 0, cat: '', warn: [] };
     let s = ' ' + norm(line) + ' ';
     // re に合うところを抜く。fn が false を返したら抜かない
     const take = (re, fn = () => {}) => { s = s.replace(re, (...m) => fn(...m) === false ? m[0] : CUT); };
@@ -15224,6 +15290,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     take(/@(\S+)/, (_, p) => { r.place = p.slice(0, 60); });
     take(/場所\s*[:は]\s*(\S+)/, (_, p) => { r.place = p.slice(0, 60); });
     take(/(\d+)\s*(分|時間)前(?:に)?(?:通知|お知らせ|知らせて|教えて|リマインド)?/, (_, n, u) => { r.remind = Math.min(1440, +n * (u === '分' ? 1 : 60)) || 0; });
+    // 金額（「800円」「1,200円」「¥500」「3万円」）。支出になったときだけタイトルから抜く
+    const amtM = s.match(AMT);
+    const amt = amtM ? Math.round(parseFloat((amtM[1] || amtM[2]).replace(/,/g, '')) * (amtM[3] ? 10000 : 1)) : 0;
 
     // くり返し
     let rep = null;
@@ -15283,7 +15352,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       }
       if (!ok) return false;
     });
-    for (const [re, n] of [[/明々後日|明明後日|しあさって/g, 3], [/明後日|あさって/g, 2], [/明日|あした|あす/g, 1], [/今日|本日|きょう/g, 0]])
+    for (const [re, n] of [[/明々後日|明明後日|しあさって/g, 3], [/明後日|あさって/g, 2], [/明日|あした|あす/g, 1], [/今日|本日|きょう/g, 0], [/一昨日|おととい/g, -2], [/昨日|きのう/g, -1]])
       take(re, () => { dates.push(addDays(today, n)); });
     take(/(\d+)\s*日後/g, (_, n) => { dates.push(addDays(today, +n)); });
     take(/(\d+)\s*週間後/g, (_, n) => { dates.push(addDays(today, 7 * n)); });
@@ -15300,6 +15369,15 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       const mon = addDays(today, -dayIndex(today) + (w === '来週' ? 7 : w === '再来週' ? 14 : 0));
       dates.push(addDays(mon, (g + 6) % 7));
     };
+    // 「木3」「木曜3」「来週の月2」：曜日＋時限（時刻は設定の時限から）。「金3万円」などは前後で見分ける
+    take(new RegExp(`(?<=[\\s${CUT}])(?:(再来週|来週|今週)の?)?(${JP})(?:曜日|曜)?\\s*(\\d{1,2})\\s*(?:限目?)?(?=[\\s${CUT}]|に|は|の|で)`), (_, w, d, p) => {
+      if (+p < 1 || +p > Math.max(7, state.times.length)) return false;
+      addWd(w, d);
+      r.period = +p;
+      const tp = state.times[p - 1];
+      if (tp?.start) r.start = tp.start;
+      if (tp?.end) r.end = tp.end;
+    });
     take(new RegExp(`(再来週|来週|今週)?の?(${JP})(?:曜日|曜)`, 'g'), (_, w, d) => { addWd(w, d); });
     take(new RegExp(`(?<=[\\s${CUT}])(再来週|来週|今週)の?(${JP})(?=[\\s${CUT}]|に|は|の)`, 'g'), (_, w, d) => { addWd(w, d); });
     take(new RegExp(`(?<=[\\s${CUT}])(${JP})(?=[\\s${CUT}])`, 'g'), (_, d) => { addWd('', d); });
@@ -15399,6 +15477,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (!best && r.period && ds.length === 1) {
       const d = parseYmd(ds[0]);
       best = (t?.courses || []).find(c => c.day === effDay(d, t) && c.period === r.period) || null;
+      // 「木3 レポート 次回」：時限で授業が決まったら「次回」はその授業の次の回
+      if (best && /(?:^|\s)次回?の?(?=\s|$)/.test(title)) {
+        r.next = true;
+        title = title.replace(/(?:^|\s)次回?の?(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+      }
     }
     const nameRe = bestName ? new RegExp(`(?:次回?の?\\s*)?${escRe(bestName)}(?:の)?`, 'i') : null;
     if (nameRe && new RegExp(`次回?の?\\s*${escRe(bestName)}`, 'i').test(title)) r.next = true;
@@ -15409,7 +15492,13 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const preset = (state.evPresets || []).find(p => p.title === title);
     const custom = (state.evKinds || []).find(k => title.includes(k.name));
     if (KW.cancel.test(title) && best) r.kind = 'cancel';
-    else if (KW.item.test(title) || (r.next && best && !KW.task.test(title) && !KW.exam.test(title))) {
+    else if (amt > 0 && amt <= 1e7 && featOn('spend') && !r.start && !rep && !r.gid && !KW.job.test(title) && !NOT_SPEND.test(title)
+      && !(KW.todoish.test(title) && !KW.past.test(title)) && !(ds[0] > ymd(today))) {
+      // 「ランチ 800円」「昨日 本 1,200円」：支出（先の日付・時刻つき・「買う」みたいなこれからのことは今までどおり）
+      r.kind = 'spend'; r.amount = amt;
+      r.title = title.replace(AMT, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+      r.cat = spCatOf(r.title);
+    } else if (KW.item.test(title) || (r.next && best && !KW.task.test(title) && !KW.exam.test(title))) {
       const thing = noName().replace(KW.item, ' ').replace(/(?:^|\s)次回?の?(?=\s|$)/g, ' ').replace(/を(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
       if (best) { r.kind = 'item'; r.title = thing; }
       else { r.kind = 'todo'; r.title = thing ? `${thing}を持っていく` : title; }
@@ -15442,7 +15531,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const nextClass = c => { const x = occurrencesAhead(c, 1, t, now)[0]; return x ? ymd(x) : ''; };
     if (!ds.length) {
       if (r.kind === 'cancel' || (r.kind === 'task' && best)) { const n = nextClass(best); if (n) ds = [n]; }
-      else if (r.kind === 'todo' || r.kind === 'diary') ds = [ymd(today)];
+      else if (r.kind === 'todo' || r.kind === 'diary' || r.kind === 'spend') ds = [ymd(today)];
       else if (r.kind === 'ev') ds = [ymd(r.start && toMin(r.start) <= nowMin ? addDays(today, 1) : today)]; // 時刻が過ぎてたら明日
     }
     if (r.kind === 'cancel') {
@@ -15451,7 +15540,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     }
     if (r.kind === 'ev' && r.evKind === 'exam' && !r.title) r.title = best ? `${nm(best)} 試験` : '試験';
     if (r.kind === 'item' && !r.title) r.warn.push('持っていくものを書いてね');
-    if (r.kind === 'task' || r.kind === 'item' || r.kind === 'todo' || r.kind === 'diary' || r.kind === 'cancel') ds = ds.slice(0, r.kind === 'cancel' ? 31 : 1);
+    if (r.kind === 'task' || r.kind === 'item' || r.kind === 'todo' || r.kind === 'diary' || r.kind === 'spend' || r.kind === 'cancel') ds = ds.slice(0, r.kind === 'cancel' ? 31 : 1);
     if (r.kind === 'diary' && !r.title) r.warn.push('日記に書くことを入れてね');
     if (r.kind !== 'ev') { r.gid = ''; r.remind = 0; r.place = ''; }
     if (r.remind && !window.Capacitor?.isNativePlatform?.()) r.warn.push('「○分前」の通知はアプリ版だけ');
@@ -15462,7 +15551,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   };
 
   // 読み取った（直した）ものを入れる
-  const LABEL = { task: '課題', item: '持ち物', cancel: '休講', todo: 'ToDo', diary: '日記' };
+  const LABEL = { task: '課題', item: '持ち物', cancel: '休講', todo: 'ToDo', diary: '日記', spend: '支出' };
   const labelOf = x => x.kind === 'ev' ? (EV_LABEL[x.evKind] || (state.evKinds || []).find(k => k.id === x.evKind)?.name || '予定') : LABEL[x.kind];
   window.qaApply = list => {
     const t = term(), now = Date.now();
@@ -15502,20 +15591,22 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
           // その日の一言日記に足す（もう書いてあれば後ろにつなげる）
           const k = x.dates[0] || todayStr(), old = state.diary[k] || '';
           state.diary[k] = (old && !old.includes(x.title) ? old + ' ' + x.title : old || x.title).slice(0, 200);
+        } else if (x.kind === 'spend' && toYen(x.amount) > 0) {
+          state.spends.push({ id: uid(), date: x.dates[0] || todayStr(), amount: toYen(x.amount), cat: spCat(x.cat || spCatOf(x.title)).id, memo: (x.title || '').slice(0, 60) });
         } else if (x.kind === 'todo') {
           if (!Array.isArray(state.todos)) state.todos = [];
           state.todos.push({ id: uid(), date: x.dates[0] || todayStr(), text: x.title.slice(0, 60), done: false });
         }
       }
     });
-    for (const f of [renderCal, renderDay, window.renderTodo, renderEvSuggest]) try { f?.(); } catch {}
+    for (const f of [renderCal, renderDay, window.renderTodo, renderEvSuggest, window.spRender]) try { f?.(); } catch {}
     return true;
   };
 
   // ===== 画面：今日タブのいちばん上の欄（＋ボタンの画面にも同じものを移して使う） =====
   const EXAMPLES = ['明日19時 飲み会 @渋谷', '11/10 統計 レポート提出', '次の英語 辞書', '金曜 3限 統計 小テスト',
     '毎週火曜 18-22 バイト', '11/12 統計 休講', '土曜 13時 ゼミ 30分前', '印鑑を持ってく 明日', '11/3~11/5 合宿',
-    '帰りに牛乳', '今日はゼミの発表うまくいった'];
+    '帰りに牛乳', '今日はゼミの発表うまくいった', 'ランチ 800円'];
   const box = document.createElement('div');
   box.id = 'qaBox';
   box.innerHTML =
@@ -15527,7 +15618,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     `<div class="qaEx" id="qaEx" hidden><p class="hint">押すと入るよ。何行もまとめて貼り付けてもいい（1行1件）</p>${EXAMPLES.map(e => `<button type="button" class="qaChip" data-qex="${esc(e)}">${esc(e)}</button>`).join('')}` +
     '<p class="hint">日付：11/3・3日・明日・火曜・来週の金曜・3日後・月末／時刻：19・19時半・19-22・3限・夜<br>' +
     '「提出」「締切」→課題、「持ってく」「次の○○」→持ち物、「休講」→休講、「テスト」→試験、「バイト」→バイト<br>' +
-    '「帰りに」「買う」「〜しなきゃ」→ToDo、「〜だった」「〜した」「日記：」→一言日記<br>' +
+    '「帰りに」「買う」「〜しなきゃ」→ToDo、「〜だった」「〜した」「日記：」→一言日記、「800円」→支出<br>' +
     '毎週火曜・毎月25日・平日 → くり返し、@場所、30分前 → 通知、#グループ名 → 共有</p></div>';
   const card = document.createElement('section');
   card.id = 'qaCard';
@@ -15551,15 +15642,15 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (['item', 'cancel'].includes(x.kind) && !x.cid) x.cid = courses().find(c => c.name)?.id || '';
     if (!x.dates.length) {
       if (x.kind === 'cancel' && x.cid) { const c = findCourse(x.cid), d = c && occurrencesAhead(c, 1)[0]; if (d) x.dates = [ymd(d)]; }
-      else if (x.kind === 'ev' || x.kind === 'todo' || x.kind === 'diary') x.dates = [todayStr()];
+      else if (x.kind === 'ev' || x.kind === 'todo' || x.kind === 'diary' || x.kind === 'spend') x.dates = [todayStr()];
     }
     return x;
   };
   const plan = () => lines().map(l => fix({ ...qaParse(l), ...(ovr[l] || {}) }));
   const KINDS = () => [['ev:other', '予定'], ...(featOn('job') ? [['ev:job', 'バイト']] : []), ['ev:exam', '試験'],
     ...(state.evKinds || []).map(k => ['ev:' + k.id, k.name]), ['task', '課題'],
-    ...(state.useGrid ? [['item', '持ち物'], ['cancel', '休講']] : []), ...(featOn('todo') ? [['todo', 'ToDo']] : []), ...(featOn('diary') ? [['diary', '日記']] : [])];
-  const bad = x => (['item', 'cancel'].includes(x.kind) && !x.cid) || ((x.kind === 'item' || x.kind === 'diary') && !x.title) || (x.kind === 'cancel' && !x.dates.length);
+    ...(state.useGrid ? [['item', '持ち物'], ['cancel', '休講']] : []), ...(featOn('todo') ? [['todo', 'ToDo']] : []), ...(featOn('diary') ? [['diary', '日記']] : []), ...(featOn('spend') ? [['spend', '支出']] : [])];
+  const bad = x => (x.kind === 'spend' && !(toYen(x.amount) > 0)) || (['item', 'cancel'].includes(x.kind) && !x.cid) || ((x.kind === 'item' || x.kind === 'diary') && !x.title) || (x.kind === 'cancel' && !x.dates.length);
   const row = (x, i) => {
     const k = x.kind === 'ev' ? 'ev:' + x.evKind : x.kind;
     const d0 = x.dates[0] || '';
@@ -15573,8 +15664,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
         : `<span class="qaDate"><input type="date" data-qf="date" value="${d0}" aria-label="${x.kind === 'task' ? '締切' : '日付'}">` +
           `<small>${d0 ? WEEK[parseYmd(d0).getDay()] : '締切なし'}</small></span>`) +
       (x.dates.length > 1 ? `<span class="qaChip">ほか${x.dates.length - 1}日${x.rep ? `（${esc(x.rep)}）` : ''}</span>` : '') +
+      (x.kind === 'spend' ? `<span class="qaAmt"><input type="number" min="0" inputmode="numeric" data-qf="amount" value="${toYen(x.amount) || ''}" aria-label="金額">円</span>` +
+        `<select data-qf="cat" aria-label="カテゴリ">${SP_CATS.map(c => `<option value="${c.id}"${c.id === spCat(x.cat).id ? ' selected' : ''}>${c.label}</option>`).join('')}</select>` : '') +
       (x.kind === 'ev' ? `<span class="qaTime"><input type="time" data-qf="start" value="${x.start}" aria-label="開始"><span class="qaTil">〜</span><input type="time" data-qf="end" value="${x.end}" aria-label="終了"></span>` : '') +
-      (x.kind !== 'cancel' ? `<input class="qaTitle" data-qf="title" value="${esc(x.title)}" placeholder="${x.kind === 'item' ? '持っていくもの' : 'タイトル'}" aria-label="タイトル" autocomplete="off" maxlength="60">` : '') +
+      (x.kind !== 'cancel' ? `<input class="qaTitle" data-qf="title" value="${esc(x.title)}" placeholder="${x.kind === 'item' ? '持っていくもの' : x.kind === 'spend' ? 'メモ（なくてもOK）' : 'タイトル'}" aria-label="タイトル" autocomplete="off" maxlength="60">` : '') +
       (x.place ? `<span class="qaChip">📍${esc(x.place)}</span>` : '') +
       (x.remind ? `<span class="qaChip">${x.remind < 60 ? x.remind + '分' : fmtLeft(x.remind * 60000)}前に通知</span>` : '') +
       (x.gid ? `<span class="qaChip">${esc(grNames[x.gid] || 'グループ')}に共有</span>` : '') +
@@ -15605,7 +15698,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (f === 'kind') {
       const [kind, evKind] = v.split(':');
       Object.assign(o, { kind, ...(evKind && { evKind }), warn: [] });
-      if (kind === 'todo' || kind === 'task' || kind === 'item' || kind === 'diary') o.dates = x.dates.slice(0, 1);
+      if (kind === 'todo' || kind === 'task' || kind === 'item' || kind === 'diary' || kind === 'spend') o.dates = x.dates.slice(0, 1);
+      if (kind === 'spend' && !x.cat) o.cat = spCatOf(x.title);
     } else if (f === 'date') {
       if (!v) o.dates = [];
       else if (x.dates[0]) { const k = Math.round((parseYmd(v) - parseYmd(x.dates[0])) / 864e5); o.dates = x.dates.map(d => ymd(addDays(parseYmd(d), k))); }
@@ -15769,6 +15863,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 const APP_VER = '1.1.1';
 const WHATS_NEW = [
   { ver: '1.1.1', items: [
+    { feat: 'spend', title: '支出の記録', desc: '使ったお金をカテゴリごとに記録して、月の予算と円グラフ、収入−支出で残りがわかるよ。レシートを撮るとAIが金額を読む。ひとことで追加の「ランチ 800円」でも入る' },
     { feat: 'news', title: 'お知らせ', desc: 'その他のいちばん上に、運営からのお知らせとアップデートで増えた機能が並ぶよ。読んだものもあとから見返せる' },
     { feat: 'income', title: '収入に、月ごとの目標と円グラフ', desc: '1か月の目標額を入れると、その月の収入がバイト先ごとの円グラフで何%かわかるよ。カレンダーのバイトの日からも開ける' },
     { feat: 'notify', title: '朝の通知をアラームに合わせる', desc: '設定 → 通知で選ぶと、アラームが鳴る日は、止めたころ（1分後）に今日の運勢や日課が届くよ' },
@@ -15989,7 +16084,7 @@ const WHATS_NEW = [
     const pie = jobPie(jobs, g, { goal: state.incomeGoalMonth, limit: 0 });
     $('#inMSum').innerHTML = `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(sumOf(xs, 'net'))}</small></p>` +
       (netOnly(xs) ? '<p class="hint">総支給がわからない分は手取りで数えてるよ</p>' : '') +
-      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ</p>') + pie;
+      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ</p>') + pie + (window.spBal?.(inYear, mon) || '');
   };
   const _ri = renderIncome;
   renderIncome = function () { _ri.apply(this, arguments); draw(); };
@@ -16032,4 +16127,339 @@ const WHATS_NEW = [
   $('#dayList').addEventListener('click', e => {
     if (e.target.closest('#inGoCal')) window.openIncomeMonth(+calSel.slice(0, 4), +calSel.slice(5, 7));
   });
+}
+
+/* ===== 支出（使ったお金：カテゴリ・月の予算と円グラフ・収入−支出・レシートの読み取り） ===== */
+// 記録は state.spends = [{ id, date, amount, cat, memo, pic }]（pic はレシートの写真 rc-…、gakulog-img に白黒で小さくして置く）
+// 入口：その他の「収入｜支出」の右半分、収入の画面の上の切りかえ、ひとことで追加の「ランチ 800円」、カレンダーの日の「支出」
+{
+  const now0 = new Date();
+  let spY = now0.getFullYear(), spM = now0.getMonth() + 1;
+  let spEdit = null, spPend = null, spPendUrl = '', spCatSel = 'food', spRunning = false;
+  const ymKey = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+  const spendsOf = (y, m) => state.spends.filter(x => x.date.startsWith(ymKey(y, m) + '-'))
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const sumAmt = xs => xs.reduce((a, x) => a + (x.amount || 0), 0);
+  // 収入（手取り。なければ総支給）は支給日の月で数える
+  const incomeOfMonth = (y, m) => state.incomes.filter(x => x.date.startsWith(ymKey(y, m) + '-'))
+    .reduce((a, x) => a + (x.net ?? x.gross ?? 0), 0);
+
+  // 収入−支出の1行（収入の月の円グラフの下と、支出の画面で使う）
+  window.spBal = (y, m) => {
+    if (!featOn('spend') || !featOn('job')) return '';
+    const out = sumAmt(spendsOf(y, m)), inc = incomeOfMonth(y, m);
+    if (!out && !inc) return '';
+    const left = inc - out;
+    return `<p class="spBal">収入 ${yen(inc)} − 支出 ${yen(out)} ＝ <b class="${left < 0 ? 'over' : ''}">${left < 0 ? '−' + yen(-left) : yen(left)}</b></p>` +
+      '<p class="hint">収入は手取り（なければ総支給）を、支給日の月で数えてるよ</p>';
+  };
+
+  // カテゴリの円グラフ（予算があれば予算を100%に）
+  const spPie = (cats, total, budget) => {
+    const base = budget ? Math.max(budget, total) : total;
+    if (!base) return '';
+    const rows = [...cats].sort((a, b) => b[1] - a[1]);
+    let deg = 0;
+    const seg = [];
+    const leg = rows.map(([id, v]) => {
+      const c = spCat(id), d = v / base * 360;
+      seg.push(`${c.c} ${deg}deg ${deg + d}deg`);
+      deg += d;
+      return `<li><i style="background:${c.c}"></i>${c.label}<span>${yen(v)} <small>${Math.round(v / (total || 1) * 100)}%</small></span></li>`;
+    });
+    if (deg < 359.9) {
+      seg.push(`var(--line, #d1d5db) ${deg}deg 360deg`);
+      leg.push(`<li class="rest"><i></i>予算の残り<span>${yen(budget - total)}</span></li>`);
+    }
+    const center = budget ? `<small>予算の</small><b>${Math.floor(total / budget * 100)}%</b>` : `<small>合計</small><b>${yen(total)}</b>`;
+    const msg = !budget ? '' : total <= budget
+      ? `<p class="gpMsg">予算まであと <b>${yen(budget - total)}</b></p>`
+      : `<p class="gpMsg over">予算を ${yen(total - budget)} こえてる</p>`;
+    return `<div class="gPie"><div class="gpChart" style="background:conic-gradient(${seg.join(',')})">` +
+      `<div class="gpIn">${center}</div></div><ul class="gpLeg">${leg.join('')}</ul></div>` + msg;
+  };
+
+  // ----- 画面 -----
+  const dlg = document.createElement('dialog');
+  dlg.id = 'spendDlg';
+  dlg.innerHTML = '<div class="dlg">' +
+    '<div class="dlgHead"><h2 tabindex="-1" autofocus>支出</h2><button type="button" class="x big" id="spX" aria-label="閉じる">×</button></div>' +
+    '<div class="seg moneySeg"><button type="button" data-money="in">収入</button><button type="button" data-money="out" class="on">支出</button></div>' +
+    '<div class="row calNav"><button type="button" id="spPrev" aria-label="前の月">‹</button><b id="spTitle"></b><button type="button" id="spNext" aria-label="次の月">›</button></div>' +
+    '<div id="spSum"></div>' +
+    '<label class="inGoalRow">予算（1か月）<input id="spGoal" inputmode="numeric" placeholder="空でもOK"></label>' +
+    '<h3>記録</h3><ul id="spList"></ul>' +
+    '<h3 id="spHead">支出を追加</h3>' +
+    '<div class="spPhotoRow"><button type="button" id="spPhoto" data-ico="camera">レシートを撮る・選ぶ</button>' +
+    '<input type="file" id="spFile" accept="image/*" hidden></div>' +
+    '<p class="hint" id="spSt"></p>' +
+    '<div id="spPic" hidden><img id="spPicImg" alt="レシート"><button type="button" class="linkBtn" id="spPicDel">写真を外す</button></div>' +
+    '<div class="row"><span class="hint lbl">日付</span><input type="date" id="spDate" aria-label="日付"></div>' +
+    '<div class="row"><span class="hint lbl">金額</span><input type="number" id="spAmt" min="0" inputmode="numeric" aria-label="金額"><span class="hint">円</span></div>' +
+    `<div class="chips spCats" id="spCats">${SP_CATS.map(c => `<button type="button" data-spcat="${c.id}"><i style="background:${c.c}"></i>${c.label}</button>`).join('')}</div>` +
+    '<div class="row"><span class="hint lbl">メモ</span><input id="spMemo" maxlength="60" autocomplete="off" placeholder="例：ランチ" aria-label="メモ"></div>' +
+    '<label class="spKeep"><input type="checkbox" id="spKeep"> レシートの写真を残す（白黒で小さくして保存）</label>' +
+    '<div class="row end"><button type="button" id="spCancel" hidden>やめる</button><button type="button" id="spSave" class="primary">追加</button></div>' +
+    '</div>';
+  document.body.append(dlg);
+
+  const setCat = id => {
+    spCatSel = spCat(id).id;
+    for (const b of dlg.querySelectorAll('[data-spcat]')) b.classList.toggle('on', b.dataset.spcat === spCatSel);
+  };
+  const setPic = (blob, url) => {
+    if (spPendUrl) URL.revokeObjectURL(spPendUrl);
+    spPend = blob;
+    spPendUrl = url || (blob ? URL.createObjectURL(blob) : '');
+    $('#spPic').hidden = !spPendUrl;
+    if (spPendUrl) $('#spPicImg').src = spPendUrl; else $('#spPicImg').removeAttribute('src');
+  };
+  const resetForm = () => {
+    spEdit = null;
+    $('#spDate').value = todayStr();
+    $('#spAmt').value = '';
+    $('#spMemo').value = '';
+    $('#spSt').textContent = '';
+    $('#spHead').textContent = '支出を追加';
+    $('#spSave').textContent = '追加';
+    $('#spCancel').hidden = true;
+    setCat('food');
+    setPic(null);
+    spOldPic = '';
+    catTouched = false;
+  };
+  let spOldPic = ''; // 直してる記録の写真（外したら '' のまま保存）
+
+  window.spRender = () => {
+    if (!dlg.open) return;
+    $('#spTitle').textContent = `${spY}年${spM}月`;
+    const xs = spendsOf(spY, spM), total = sumAmt(xs);
+    const cats = new Map();
+    for (const x of xs) cats.set(x.cat, (cats.get(x.cat) || 0) + x.amount);
+    const budget = toYen(state.spendGoalMonth) || 0;
+    $('#spSum').innerHTML = `<p class="inTotal">支出<b>${yen(total)}</b><small>${xs.length}件</small></p>` +
+      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ。下から追加するか、今日タブの「ひとことで追加」に「ランチ 800円」みたいに書いてもOK</p>') +
+      spPie(cats, total, budget) + window.spBal(spY, spM);
+    $('#spList').innerHTML = xs.map(x => {
+      const c = spCat(x.cat);
+      return `<li class="${x.id === spEdit ? 'editing' : ''}"><button type="button" class="evText spRow" data-spedit="${x.id}">` +
+        `<span class="tag">${md(parseYmd(x.date))}</span><i class="spDot" style="background:${c.c}"></i>${c.label}` +
+        `${x.memo ? ` <span class="spMemo">${esc(x.memo)}</span>` : ''}${x.pic ? ' <span class="spHasPic" data-ico="image" aria-label="写真あり"></span>' : ''}` +
+        `<b class="spAmt">${yen(x.amount)}</b></button>` +
+        `<button type="button" class="x" data-spdel="${x.id}" aria-label="削除">×</button></li>`;
+    }).join('') || '<li class="muted">なし</li>';
+  };
+
+  const open = (y, m) => {
+    if (y) { spY = y; spM = m; }
+    $('#spGoal').value = state.spendGoalMonth;
+    $('#spKeep').checked = state.spendKeepPic !== false;
+    $('#spPhoto').hidden = false;
+    resetForm();
+    if (!dlg.open) dlg.showModal();
+    window.spRender();
+    cleanPics();
+  };
+  window.openSpend = open;
+
+  // 使われなくなったレシートの写真を片づける（消した記録は「元に戻す」があるので、開いたときにまとめて）
+  const cleanPics = async () => {
+    try {
+      const used = new Set(state.spends.map(x => x.pic).filter(Boolean));
+      for (const k of await imgKeys()) if (String(k).startsWith('rc-') && !used.has(k)) await imgDel(k);
+    } catch {}
+  };
+
+  $('#spX').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => setPic(null));
+  $('#spPrev').onclick = () => { if (--spM < 1) { spM = 12; spY--; } window.spRender(); };
+  $('#spNext').onclick = () => { if (++spM > 12) { spM = 1; spY++; } window.spRender(); };
+  $('#spGoal').addEventListener('input', e => { state.spendGoalMonth = toYen(e.target.value) ?? ''; save(); window.spRender(); });
+  $('#spKeep').addEventListener('change', e => { state.spendKeepPic = e.target.checked; save(); });
+  $('#spCats').addEventListener('click', e => { const b = e.target.closest('[data-spcat]'); if (b) setCat(b.dataset.spcat); });
+  // メモを書いたらカテゴリを当てる（自分で選んだあとは変えない）
+  let catTouched = false;
+  $('#spCats').addEventListener('click', () => { catTouched = true; });
+  $('#spMemo').addEventListener('input', e => {
+    if (catTouched || spEdit) return;
+    const id = spCatOf(e.target.value);
+    if (id !== 'etc') setCat(id);
+  });
+  $('#spPicDel').onclick = () => { setPic(null); spOldPic = ''; };
+  $('#spPicImg').onclick = () => {
+    if (spPend) return;
+    if (spOldPic) openShiftImg(spOldPic, 'レシート');
+  };
+
+  // 保存
+  $('#spSave').onclick = async () => {
+    const amount = toYen($('#spAmt').value);
+    if (!(amount > 0)) { $('#spAmt').focus(); return alert('金額を入れてね'); }
+    const date = isYmd($('#spDate').value) ? $('#spDate').value : todayStr();
+    let pic = spOldPic;
+    if (spPend && state.spendKeepPic !== false) {
+      pic = 'rc-' + uid();
+      try { await imgPut(pic, spPend); } catch { pic = spOldPic; toast('写真を保存できなかった（記録は入れたよ）'); }
+    }
+    const v = { date, amount, cat: spCatSel, memo: $('#spMemo').value.trim().slice(0, 60), ...(pic && { pic }) };
+    const old = spEdit && state.spends.find(x => x.id === spEdit);
+    if (old) {
+      for (const k of Object.keys(old)) if (k !== 'id') delete old[k];
+      Object.assign(old, v);
+      toast('直したよ');
+    } else {
+      state.spends.push({ id: uid(), ...v });
+      toast(`${spCat(v.cat).label} ${yen(amount)}を入れたよ`);
+    }
+    save();
+    const [y, m] = date.split('-').map(Number);
+    spY = y; spM = m;
+    resetForm();
+    window.spRender();
+    try { renderDay(); } catch {}
+  };
+  $('#spCancel').onclick = () => { resetForm(); window.spRender(); };
+
+  // 記録を押すと直す・×で消す（元に戻せる）
+  $('#spList').addEventListener('click', e => {
+    const d = e.target.closest('[data-spdel]');
+    if (d) {
+      const x = state.spends.find(v => v.id === d.dataset.spdel);
+      if (!x) return;
+      withUndo(`${spCat(x.cat).label} ${yen(x.amount)}を消したよ`, () => { state.spends = state.spends.filter(v => v !== x); });
+      if (spEdit === x.id) resetForm();
+      window.spRender();
+      return;
+    }
+    const b = e.target.closest('[data-spedit]');
+    const x = b && state.spends.find(v => v.id === b.dataset.spedit);
+    if (!x) return;
+    resetForm();
+    spEdit = x.id;
+    $('#spDate').value = x.date;
+    $('#spAmt').value = x.amount;
+    $('#spMemo').value = x.memo || '';
+    setCat(x.cat);
+    spOldPic = x.pic || '';
+    if (x.pic) imgGet(x.pic).then(bl => { if (bl && spEdit === x.id && !spPend) setPic(null, URL.createObjectURL(bl)); }).catch(() => {});
+    $('#spHead').textContent = '支出を直す';
+    $('#spSave').textContent = '保存';
+    $('#spCancel').hidden = false;
+    window.spRender();
+    $('#spHead').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+
+  // ----- レシートの写真：白黒で小さくして残す・AIで金額・日付・お店を読む -----
+  const shrinkGray = async (file, max = 1200) => {
+    const bmp = await createImageBitmap(file);
+    const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(bmp.width * r);
+    cv.height = Math.round(bmp.height * r);
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+    bmp.close?.();
+    const im = ctx.getImageData(0, 0, cv.width, cv.height), p = im.data;
+    for (let i = 0; i < p.length; i += 4) p[i] = p[i + 1] = p[i + 2] = 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2];
+    ctx.putImageData(im, 0, 0);
+    const b = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.7));
+    cv.width = cv.height = 0;
+    return b;
+  };
+  const RC_PROMPT = () => `これはお店のレシート（または領収書）の写真です。次のJSONだけを返してください（説明やコードブロックは不要）。
+{"date":"YYYY-MM-DD","amount":合計金額の整数,"store":"お店の名前","cat":"カテゴリ"}
+- amount は税込の合計（「合計」「お支払い」「領収金額」）。お預かり・お釣り・ポイントは入れない
+- 年がわからないときは ${new Date().getFullYear()} 年として、わからない項目は "" にする
+- cat は次から1つ：${SP_CATS.map(c => `${c.id}=${c.label}`).join('、')}`;
+
+  $('#spPhoto').onclick = () => $('#spFile').click();
+  $('#spFile').addEventListener('change', async e => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f || spRunning) return;
+    const st = $('#spSt');
+    try { setPic(await shrinkGray(f)); }
+    catch { st.textContent = '写真を開けなかった'; return; }
+    if (!featOn('ai') || !aiOk()) {
+      st.textContent = '金額を入れて「追加」を押してね（設定 → 機能で「写真から読み取り（AI）」をオンにすると、金額を自動で読むよ）';
+      return;
+    }
+    spRunning = true;
+    $('#spPhoto').disabled = true;
+    aiBegin('#spPhoto');
+    st.textContent = `読み取り中…（${PROVIDERS[state.provider].label}）`;
+    try {
+      const txt = await callVision(await fileToJpegBase64(f), RC_PROMPT(), st);
+      const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+      if (a < 0 || b < a) throw new Error('結果がうまく読めなかった。もう一回撮ってみて');
+      const d = JSON.parse(txt.slice(a, b + 1));
+      const got = [];
+      if (isYmd(d.date) && d.date <= ymd(addDays(new Date(), 1))) { $('#spDate').value = d.date; got.push('日付'); }
+      const amt = toYen(d.amount);
+      if (amt > 0) { $('#spAmt').value = amt; got.push('金額'); }
+      const store = typeof d.store === 'string' ? d.store.trim().slice(0, 60) : '';
+      if (store && !$('#spMemo').value.trim()) { $('#spMemo').value = store; got.push('お店'); }
+      if (SP_CATS.some(c => c.id === d.cat) && !catTouched) setCat(d.cat);
+      else if (store && !catTouched) setCat(spCatOf(store));
+      st.textContent = got.length ? `${got.join('・')}を読み取ったよ。確かめて「${$('#spSave').textContent}」を押してね` : '金額が見つからなかった。手で入れてね';
+    } catch (err) {
+      st.textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
+    } finally {
+      aiEnd('#spPhoto');
+      spRunning = false;
+      $('#spPhoto').disabled = false;
+    }
+  });
+
+  // ----- 入口：その他の「収入｜支出」のマス -----
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'spendBtn';
+  btn.innerHTML = '<b>支出</b><small>使ったお金</small>';
+  btn.onclick = () => open(new Date().getFullYear(), new Date().getMonth() + 1);
+  const inBtn = $('#incomeBtn');
+  const tile = document.createElement('div');
+  tile.id = 'moneyTile';
+  tile.className = 'moneyTile';
+  inBtn.before(tile);
+  tile.append(inBtn, btn);
+
+  // 収入と支出の画面の上の切りかえ（両方オンのときだけ出る）
+  const inSeg = document.createElement('div');
+  inSeg.className = 'seg moneySeg';
+  inSeg.innerHTML = '<button type="button" data-money="in" class="on">収入</button><button type="button" data-money="out">支出</button>';
+  $('#incomeDlg .dlgHead').after(inSeg);
+  document.addEventListener('click', e => {
+    const b = e.target.closest('.moneySeg [data-money]');
+    if (!b || b.classList.contains('on')) return;
+    if (b.dataset.money === 'out') {
+      const y = inYear, m = y === new Date().getFullYear() ? new Date().getMonth() + 1 : 12;
+      $('#incomeDlg').close();
+      open(y, m);
+    } else {
+      const y = spY, m = spM;
+      dlg.close();
+      window.openIncomeMonth(y, m);
+    }
+  });
+
+  // カレンダーの「この日の予定」：支出があれば合計と、その月の支出へ
+  const _rd = renderDay;
+  renderDay = function () {
+    const r = _rd.apply(this, arguments);
+    const xs = featOn('spend') && calSel ? state.spends.filter(x => x.date === calSel) : [];
+    if (xs.length) {
+      const li = document.createElement('li');
+      li.className = 'inGoRow';
+      li.innerHTML = `<button type="button" class="linkBtn" data-ico="receipt" id="spGoCal">支出 ${yen(sumAmt(xs))}（${xs.length}件）を見る ›</button>`;
+      $('#dayList').append(li);
+    }
+    return r;
+  };
+  $('#dayList').addEventListener('click', e => {
+    if (e.target.closest('#spGoCal')) open(+calSel.slice(0, 4), +calSel.slice(5, 7));
+  });
+
+  FEATURES.push({ id: 'spend', name: '支出', where: 'その他の「支出」（収入の右）', desc: '使ったお金をカテゴリごとに記録。月の予算と円グラフ、収入−支出で残りがわかる。レシートを撮るとAIが金額を読む。ひとことで追加に「ランチ 800円」でも入る',
+    kw: '支出 お金 出費 家計簿 レシート 予算 節約 使った 食費 円グラフ', go: () => btn.click() });
 }

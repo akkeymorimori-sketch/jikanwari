@@ -737,6 +737,29 @@ details.sec > a, #aiBox > a { display: block; }
   outline: 2px solid #2f6fde;
   outline-offset: -2px;
 }
+/* つかんでる間だけ出るゴミ箱 */
+#dragTrash {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+  z-index: 999;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border: 2px dashed var(--muted);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .2);
+  transition: transform .12s;
+}
+#dragTrash.on { display: flex; }
+#dragTrash.hot { border-style: solid; border-color: var(--danger); color: var(--danger); transform: translateX(-50%) scale(1.12); }
+#dragTrash svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* 試験 */
 .ev.exam { background: var(--exam-bg, #fde4e4); color: var(--exam-ink, #a12622); }
@@ -2050,3 +2073,38 @@ html { touch-action: manipulation; }
 #inMonths tr[data-inmonth]:not(.empty) { cursor: pointer; }
 #dayList .inGoRow { border: 0; padding-top: 4px; }
 #inGoCal { background: none; border: none; padding: 4px 0; min-height: 0; color: var(--accent); font-size: 14px; }
+
+/* 支出 */
+[data-ico="receipt"], #spendBtn { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M6 3h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 21z'/><path d='M9 8h6M9 12h6M9 16h3'/></svg>"); }
+#spendBtn > b::before {
+  content: ''; display: inline-block; width: 1.15em; height: 1.15em; margin-right: 6px; vertical-align: -0.2em;
+  background: currentColor; -webkit-mask: var(--ico) center / contain no-repeat; mask: var(--ico) center / contain no-repeat;
+}
+/* その他タブ：収入と支出で1マス（左右に半分ずつ） */
+.moneyTile { display: flex; gap: 6px; min-width: 0; }
+.moneyTile > button { flex: 1 1 0; min-width: 0; margin: 0 !important; padding-left: 6px; padding-right: 6px; }
+.moneyTile > button small { display: none !important; }
+.off-spend #spendBtn, .off-job.off-spend #moneyTile, .off-job .moneySeg, .off-spend .moneySeg { display: none !important; }
+/* 片方だけのときは、ふつうのマスと同じに説明も出す */
+.off-spend #incomeBtn small, .off-job #spendBtn small { display: -webkit-box !important; }
+.moneySeg { display: flex; margin: 0 0 10px; }
+.spPhotoRow { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.spPhotoRow button { flex: 1; }
+#spPic { display: flex; align-items: flex-end; gap: 10px; margin: 6px 0; }
+#spPic[hidden] { display: none; }
+#spPicImg { max-width: 120px; max-height: 160px; border-radius: 6px; border: 1px solid var(--line, #d1d5db); cursor: zoom-in; }
+.spCats { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.spCats button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 13px; border-radius: 999px; min-height: 0; }
+.spCats button.on { background: var(--accent-strong); color: var(--on-accent); border-color: var(--accent-strong); }
+.spCats i, .spDot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.spDot { margin: 0 5px 0 2px; }
+.spRow { display: flex; align-items: center; gap: 2px; width: 100%; text-align: left; }
+.spRow .spMemo { margin-left: 6px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.spRow .spAmt { margin-left: auto; padding-left: 8px; white-space: nowrap; }
+.spHasPic { color: var(--sub); }
+.spKeep { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--sub); margin: 8px 0; }
+.spBal { margin: 10px 0 2px; font-size: 14px; }
+.spBal b { font-size: 17px; margin-left: 2px; }
+.spBal b.over { color: var(--over); }
+.qaAmt { display: inline-flex; align-items: center; gap: 3px; }
+.qaAmt input { width: 7em; }
