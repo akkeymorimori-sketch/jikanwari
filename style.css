@@ -741,7 +741,7 @@ details.sec > a, #aiBox > a { display: block; }
 #dragTrash {
   position: fixed;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+  bottom: calc(var(--tabbar-h) + 16px + env(safe-area-inset-bottom, 0px) + var(--ad-h, 0px)); /* タブバーと広告のバナーの上 */
   z-index: 999;
   display: none;
   align-items: center;
