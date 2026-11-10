@@ -2084,10 +2084,16 @@ html { touch-action: manipulation; }
 .moneyTile { display: flex; gap: 6px; min-width: 0; }
 .moneyTile > button { flex: 1 1 0; min-width: 0; margin: 0 !important; padding-left: 6px; padding-right: 6px; }
 .moneyTile > button small { display: none !important; }
-.off-spend #spendBtn, .off-job.off-spend #moneyTile, .off-job .moneySeg, .off-spend .moneySeg { display: none !important; }
+.off-spend #spendBtn, .off-job.off-spend #moneyTile, .off-job .moneyTabs, .off-spend .moneyTabs,
+.off-spend #fabMenu [data-fab="spend"], .off-job #fabMenu [data-fab="income"], .off-spend .phOpt[data-ph="receipt"] { display: none !important; }
+/* 収入と支出の画面の見出し：「収入　支出」のタブ。両方オンのときはタブだけ、片方なら今までの見出し */
+.moneyTabs { display: flex; align-items: flex-end; gap: 22px; }
+.moneyTabs button { margin: 0; padding: 2px 2px 5px; min-height: 0; border: none; border-bottom: 3px solid transparent; border-radius: 0;
+  background: none; color: var(--muted); font-size: 1.3em; font-weight: bold; line-height: 1.2; }
+.moneyTabs button.on { color: var(--text); border-bottom-color: var(--accent-strong); }
+html:not(.off-job):not(.off-spend) .moneyTabs + h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 /* 片方だけのときは、ふつうのマスと同じに説明も出す */
 .off-spend #incomeBtn small, .off-job #spendBtn small { display: -webkit-box !important; }
-.moneySeg { display: flex; margin: 0 0 10px; }
 .spPhotoRow { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
 .spPhotoRow button { flex: 1; }
 #spPic { display: flex; align-items: flex-end; gap: 10px; margin: 6px 0; }

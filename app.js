@@ -13721,14 +13721,17 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const log = state.actLog || [];
     if (!log.length) return null;
     const first = new Date(Math.min(...log)); first.setHours(0, 0, 0, 0);
-    let n = 0;
-    for (let d = new Date(first); d <= new Date(); d = addDays(d, 1)) if (d.getDay() === dow) n++;
-    if (n < 3) return null; // 3週たまるまでは予報しない
+    const now = new Date(), today = new Date(now); today.setHours(0, 0, 0, 0);
     const hit = new Set();
     for (const t of log) {
       const d = new Date(t);
       if (d.getDay() === dow && d.getHours() === hour) hit.add(ymd(d));
     }
+    // 今日は、その時間がもう過ぎたか、もう何かしてたときだけ数える（まだ来てない時間を「何もしなかった」にしない）
+    let n = 0;
+    for (let d = new Date(first); d < today; d = addDays(d, 1)) if (d.getDay() === dow) n++;
+    if (now.getDay() === dow && (now.getHours() > hour || hit.has(ymd(now)))) n++;
+    if (n < 3) return null; // 3週たまるまでは予報しない
     return { p: Math.round((1 - hit.size / n) * 100), n };
   }
   window.moodAt = moodAt;
@@ -15870,8 +15873,11 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 /* ===== お知らせ（運営からのお知らせ＋アップデートの新機能。アプリの中だけ） ===== */
 // 運営からのお知らせは www/news.json（Web版と一緒に公開。アプリ版はネットの最新を読む）。読めなくても何も出さないだけ
 // 新機能は WHATS_NEW に書く（新機能がないバージョンは書かない）。APP_VER は package.json の version と同じにする（テストで確かめる）
-const APP_VER = '1.1.1';
+const APP_VER = '1.1.2';
 const WHATS_NEW = [
+  { ver: '1.1.2', items: [
+    { feat: 'spend', title: '収入・支出がすぐ入れられる', desc: '＋ボタンに「収入」「支出」、写真から追加に「レシート」が増えたよ。収入と支出の画面は、上の見出しで切りかえ' }
+  ] },
   { ver: '1.1.1', items: [
     { feat: 'spend', title: '支出の記録', desc: '使ったお金をカテゴリごとに記録して、月の予算と円グラフ、収入−支出で残りがわかるよ。レシートを撮るとAIが金額を読む。ひとことで追加の「ランチ 800円」でも入る' },
     { feat: 'quickAdd', title: 'ひとことで追加が賢くなった', desc: '「木3 レポート 次回」で次の木曜3限の課題、「昨日ランチ 800円」で昨日の支出が入るよ' },
@@ -16195,8 +16201,9 @@ const WHATS_NEW = [
   const dlg = document.createElement('dialog');
   dlg.id = 'spendDlg';
   dlg.innerHTML = '<div class="dlg">' +
-    '<div class="dlgHead"><h2 tabindex="-1" autofocus>支出</h2><button type="button" class="x big" id="spX" aria-label="閉じる">×</button></div>' +
-    '<div class="seg moneySeg"><button type="button" data-money="in">収入</button><button type="button" data-money="out" class="on">支出</button></div>' +
+    // 見出しが「収入　支出」のタブ（両方オンのとき。片方だけなら「支出」の見出し）
+    '<div class="dlgHead">' + '<div class="moneyTabs" role="tablist"><button type="button" role="tab" data-money="in">収入</button><button type="button" role="tab" data-money="out" class="on">支出</button></div>' +
+    '<h2 tabindex="-1" autofocus>支出</h2><button type="button" class="x big" id="spX" aria-label="閉じる">×</button></div>' +
     '<div class="row calNav"><button type="button" id="spPrev" aria-label="前の月">‹</button><b id="spTitle"></b><button type="button" id="spNext" aria-label="次の月">›</button></div>' +
     '<div id="spSum"></div>' +
     '<label class="inGoalRow">予算（1か月）<input id="spGoal" inputmode="numeric" placeholder="空でもOK"></label>' +
@@ -16436,13 +16443,14 @@ const WHATS_NEW = [
   inBtn.before(tile);
   tile.append(inBtn, btn);
 
-  // 収入と支出の画面の上の切りかえ（両方オンのときだけ出る）
-  const inSeg = document.createElement('div');
-  inSeg.className = 'seg moneySeg';
-  inSeg.innerHTML = '<button type="button" data-money="in" class="on">収入</button><button type="button" data-money="out">支出</button>';
-  $('#incomeDlg .dlgHead').after(inSeg);
+  // 収入の画面の見出しも「収入　支出」のタブに（両方オンのときだけ。押すともう片方の画面へ）
+  const inTabs = document.createElement('div');
+  inTabs.className = 'moneyTabs';
+  inTabs.setAttribute('role', 'tablist');
+  inTabs.innerHTML = '<button type="button" role="tab" data-money="in" class="on">収入</button><button type="button" role="tab" data-money="out">支出</button>';
+  $('#incomeDlg .dlgHead h2').before(inTabs);
   document.addEventListener('click', e => {
-    const b = e.target.closest('.moneySeg [data-money]');
+    const b = e.target.closest('.moneyTabs [data-money]');
     if (!b || b.classList.contains('on')) return;
     if (b.dataset.money === 'out') {
       const y = inYear, m = y === new Date().getFullYear() ? new Date().getMonth() + 1 : 12;
@@ -16472,6 +16480,26 @@ const WHATS_NEW = [
     if (e.target.closest('#spGoCal')) open(+calSel.slice(0, 4), +calSel.slice(5, 7));
   });
 
-  FEATURES.push({ id: 'spend', name: '支出', where: 'その他の「支出」（収入の右）', desc: '使ったお金をカテゴリごとに記録。月の予算と円グラフ、収入−支出で残りがわかる。レシートを撮るとAIが金額を読む。ひとことで追加に「ランチ 800円」でも入る',
+  // 写真から追加：レシート（AIがなくても写真を付けて手で入れられる）
+  $('#phPick [data-ph="pay"]').insertAdjacentHTML('afterend',
+    '<button type="button" class="phOpt" data-ph="receipt"><b data-ico="receipt">レシート</b><small>金額・日付・お店を読み取って支出に記録</small></button>');
+  $('#photoDlg').addEventListener('click', e => {
+    if (!e.target.closest('[data-ph="receipt"]')) return;
+    e.stopImmediatePropagation();
+    $('#photoDlg').close();
+    open(new Date().getFullYear(), new Date().getMonth() + 1);
+    $('#spFile').click(); // 押したその流れで開かないと、iPhone ではファイルの選択が出ない
+  }, true);
+
+  // ＋ボタンの「ほかの入れ方」：収入・支出
+  $('#fabMenu [data-fab="course"]').insertAdjacentHTML('afterend',
+    '<button type="button" data-fab="income" data-ico="wallet">収入</button><button type="button" data-fab="spend" data-ico="receipt">支出</button>');
+  $('#fabMenu').addEventListener('click', e => {
+    const k = e.target.closest('[data-fab]')?.dataset.fab;
+    if (k === 'spend') open(new Date().getFullYear(), new Date().getMonth() + 1);
+    else if (k === 'income') $('#incomeBtn').click();
+  });
+
+  FEATURES.push({ id: 'spend', name: '支出', where: 'その他の「支出」（収入の右）／＋ボタン／写真から追加 → レシート', desc: '使ったお金をカテゴリごとに記録。月の予算と円グラフ、収入−支出で残りがわかる。レシートを撮るとAIが金額を読む。ひとことで追加に「ランチ 800円」でも入る',
     kw: '支出 お金 出費 家計簿 レシート 予算 節約 使った 食費 円グラフ', go: () => btn.click() });
 }
