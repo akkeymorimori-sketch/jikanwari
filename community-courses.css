@@ -1,0 +1,20 @@
+/* ローカル確認画面だけに適用する。 */
+#communityDlg {
+  box-sizing: border-box;
+  width: min(640px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 32px);
+  padding: 18px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+#communityDlg h2 { margin-top: 0; }
+#communityDlg label { display: grid; gap: 4px; margin: 10px 0; }
+#communityDlg input, #communityDlg select, #communityDlg textarea { box-sizing: border-box; min-width: 0; max-width: 100%; }
+#communityDlg input:not([type=checkbox]), #communityDlg select, #communityDlg textarea { width: 100%; }
+#communityDlg label:has(input[type=checkbox]) { display: flex; align-items: flex-start; gap: 8px; }
+#communityDlg input[type=checkbox] { flex-shrink: 0; width: 20px; height: 20px; }
+#communityDlg fieldset, #communityDlg section { min-width: 0; margin: 14px 0; padding: 12px; border: 1px solid currentColor; border-radius: 12px; }
+#communityDlg pre { max-width: 100%; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+#communityDlg .ccBottom { position: static; padding: 12px 0; }
+#communityStatus { font-size: 14px; }

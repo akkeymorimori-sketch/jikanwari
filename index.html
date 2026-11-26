@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=271">
+<link rel="stylesheet" href="style.css?v=335">
 </head>
 <body>
 <header>
@@ -79,6 +79,7 @@
         <select id="ctCourse" aria-label="授業"></select>
         <input id="ctTitle" placeholder="課題（例：レポート第1回）" aria-label="課題の内容" autocomplete="off">
         <label id="ctDueBox" hidden>締切 <input type="date" id="ctDue"></label>
+        <textarea id="ctMemo" rows="2" maxlength="2000" placeholder="メモ（範囲・提出のしかた・字数など）" aria-label="課題のメモ"></textarea>
         <div class="ctBtns">
           <button type="button" id="ctDel" hidden>削除</button>
           <button type="button" id="ctCancel" hidden>やめる</button>
@@ -105,7 +106,6 @@
         <input type="time" id="evStart" aria-label="開始時刻">
         <span class="hint">〜</span>
         <input type="time" id="evEnd" aria-label="終了時刻">
-        <button id="evAdd">追加</button>
       </div>
       <!-- メモはいつも見えるように「くわしく」の外に置く（中に入れてたら、メモがあるのに気づかれなかった） -->
       <textarea id="evMemo" rows="2" placeholder="メモ（場所・持ち物など）" aria-label="予定のメモ"></textarea>
@@ -113,6 +113,8 @@
         <summary>くわしく（まとめて追加・共有など）</summary>
         <label class="inline" id="evWeeklyBox"><input type="checkbox" id="evWeekly"> 同じ曜日に4週分まとめて追加</label>
       </details>
+      <!-- 追加のボタンは課題と同じく、いちばん下に大きく -->
+      <div class="ctBtns"><button id="evAdd" class="primary">予定を追加</button></div>
       <div id="evEditBox" hidden>
         <!-- 同じ予定が2件以上あるときだけ出す -->
         <fieldset class="evScopeBox" id="evScopeBox" hidden>
@@ -135,6 +137,23 @@
 
   <!-- 時間割 -->
   <section class="view" id="view-grid" hidden>
+    <div id="courseViewSwitch" class="courseViewSwitch" role="group" aria-label="授業の表示">
+      <button type="button" data-course-view="grid" aria-pressed="true">時間割</button>
+      <button type="button" data-course-view="list" aria-pressed="false">授業一覧</button>
+    </div>
+    <section id="courseOverview" class="card" hidden aria-label="授業一覧">
+      <div class="courseOverviewHead"><h2>授業一覧</h2><span id="overviewTerm" class="muted"></span></div>
+      <div class="courseOverviewTools">
+        <div role="group" aria-label="一覧の絞り込み">
+          <button type="button" data-course-filter="all" aria-pressed="true">すべて</button>
+          <button type="button" data-course-filter="warn" aria-pressed="false">要注意</button>
+        </div>
+        <label>並び順<select id="courseOverviewSort"><option value="day">曜日・時限順</option><option value="absence">欠席が多い順</option></select></label>
+      </div>
+      <p id="overviewSummary" class="hint" role="status"></p>
+      <div id="courseOverviewRows"></div>
+      <p class="hint">授業をタップすると欠席・遅刻を確認・記録できるよ。上限は今までの設定を使うよ。</p>
+    </section>
     <div id="grid"></div>
     <section class="card" id="intCard"></section>
   </section>
@@ -204,17 +223,20 @@
     </div>
     <div class="row">
       <label class="fld"><span>曜日</span><select id="cDay"></select></label>
-      <label class="fld"><span>時限</span><select id="cPeriod"></select></label>
+      <label class="fld"><span>開始の時限</span><select id="cPeriod"></select></label>
+      <label class="fld"><span>終了の時限</span><select id="cPeriodEnd"></select></label>
     </div>
     <div class="row">
       <label class="fld"><span>先生</span><input id="cTeacher" placeholder="例：田中"></label>
       <label class="fld"><span>教室</span><input id="cRoom" placeholder="例：A101"></label>
     </div>
-    <div class="row" id="cIntRow" hidden>
-      <span class="hint">日程</span>
-      <input type="date" id="cFrom" aria-label="集中講義の開始日">
-      <span class="hint">〜</span>
-      <input type="date" id="cTo" aria-label="集中講義の終了日">
+    <div id="cIntRow" hidden>
+      <span class="hint">授業の期間（空なら学期全体）</span>
+      <div class="dateRange">
+        <input type="date" id="cFrom" aria-label="授業の開始日">
+        <span class="hint">〜</span>
+        <input type="date" id="cTo" aria-label="授業の終了日">
+      </div>
     </div>
 
     <h3>持ち物</h3>
@@ -582,7 +604,7 @@
           <a href="yellow.html" target="_blank" rel="noopener"><img src="icon-yellow.png" alt="" loading="lazy">黄</a>
           <a href="gray.html" target="_blank" rel="noopener"><img src="icon-gray.png" alt="" loading="lazy">グレー</a>
         </div>
-        <p class="hint">アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
+        <p class="hint" data-keep>アイコンを変えるとデータが引き継がれないことがあるよ。先に「書き出し」して、新しいほうで「復元」してから古いほうを消してね</p>
       </details>
     </details>
     </div>
@@ -646,6 +668,12 @@
 <div id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">元に戻す</button></div>
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
-<script src="app.js?v=271"></script>
+<script src="ai-review.js?v=318"></script>
+<script src="app.js?v=335"></script>
+<script src="course-catalog.js?v=318"></script>
+<script src="community-courses.js?v=2"></script>
+<script src="grades.js?v=318"></script>
+<script src="agenda.js?v=325"></script>
+<script src="timeline.js?v=326"></script>
 </body>
 </html>

@@ -590,8 +590,27 @@ const newTerm = (name, start = '', end = '', courses = []) =>
 // day = -1 は集中講義
 const newCourse = (day, period, extra = {}) => ({
   id: uid(), day, period, name: '', short: '', teacher: '', room: '', syllabus: '', from: '', to: '',
-  items: [], memos: [], tasks: [], absences: [], maxAbsence: '', tag: '', notes: [], ...extra
+  items: [], memos: [], tasks: [], absences: [], maxAbsence: '', tag: '', notes: [], credits: '', ...extra
 });
+
+// 終了時限がない古い授業は、今までどおり1コマとして扱う
+function endPeriod(c) {
+  return Number.isInteger(c.periodEnd) && c.periodEnd >= c.period && c.periodEnd <= 10 ? c.periodEnd : c.period;
+}
+function periodLabel(c) {
+  return endPeriod(c) > c.period ? `${c.period}〜${endPeriod(c)}` : String(c.period);
+}
+function inPeriod(c, p) { return c.period <= p && p <= endPeriod(c); }
+
+// 同じ曜日に重なった授業があるときは、各コマに並べて全部見えるようにする
+function gridSlot(cs, day, p) {
+  const list = cs.filter(c => c.day === day);
+  const covering = list.filter(c => inPeriod(c, p));
+  const overlap = covering.some(c => list.some(x => x !== c && c.period <= endPeriod(x) && x.period <= endPeriod(c)));
+  if (overlap) return { courses: covering, span: 1 };
+  if (covering.some(c => c.period < p)) return null;
+  return { courses: covering, span: covering.length ? endPeriod(covering[0]) - p + 1 : 1 };
+}
 
 // 旧バージョン（学期なし）のデータを変換
 function fromV1(old) {
@@ -613,7 +632,14 @@ function fromV1(old) {
   return s;
 }
 
+function gradeNumber(v, max = 100) {
+  if ((typeof v !== 'number' && typeof v !== 'string') || String(v).trim() === '') return '';
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= max ? n : '';
+}
 function normalize(s) {
+  // 読み取りの理由表示は全画面で共通（確認を必須にはしない）
+  if (s) s.aiReviewReasons = s.aiReviewReasons !== false;
   // おかしなIDや重複したIDは作り直す
   const seen = new Set();
   const fixId = v => {
@@ -626,6 +652,9 @@ function normalize(s) {
   s.showSat ??= false;
   s.weekStart = s.weekStart === 'sun' ? 'sun' : 'mon'; // カレンダーの週のはじまり（最初は月曜）
   s.dayStart = DAY_STARTS.includes(+s.dayStart) ? +s.dayStart : 0; // 日付が変わる時刻（0なら夜中の0時）
+  // ToDoのアラーム（この端末だけ。同期しない）：ToDoのid → 鳴らす時刻（ms）
+  s.todoAlarm = Object.fromEntries(Object.entries(s.todoAlarm && typeof s.todoAlarm === 'object' ? s.todoAlarm : {})
+    .filter(([k, v]) => /^[\w-]{1,40}$/.test(k) && Number.isFinite(+v) && +v > 0).map(([k, v]) => [k, +v]));
   // お知らせ・新機能の紹介：読んだものの id
   s.newsSeen = [...new Set((Array.isArray(s.newsSeen) ? s.newsSeen : []).filter(x => typeof x === 'string' && /^[\w.-]{1,60}$/.test(x)))].slice(-300);
   // 共有グループの新着：見た時刻・開いた予定
@@ -650,6 +679,8 @@ function normalize(s) {
   // 締切トークの中身（課題ごと）
   for (const k of [...(s.terms || []).flatMap(t => (t.courses || []).flatMap(c => c.tasks || [])), ...(s.myTasks || []), ...(s.cats || []).flatMap(g => g.tasks || [])]) {
     if (!k || typeof k !== 'object') continue;
+    // 課題のメモ（予定のメモと同じく2000字まで）
+    if (typeof k.memo !== 'string' || !k.memo.trim()) delete k.memo; else k.memo = k.memo.slice(0, 2000);
     if (Array.isArray(k.talk)) k.talk = k.talk.filter(m => m && (m.who === 'd' || m.who === 'me') && typeof m.t === 'string').slice(-60);
     else delete k.talk;
     k.talkRead = Number.isInteger(k.talkRead) && k.talkRead >= 0 ? k.talkRead : 0;
@@ -661,6 +692,10 @@ function normalize(s) {
   s.calHide = Array.isArray(s.calHide) ? [...new Set(s.calHide.filter(x => typeof x === 'string' && x))].slice(0, 50) : [];
   if (!s.shiftDefaultOn) { s.shiftTimes = true; s.shiftDefaultOn = true; } // 時刻ずらしは最初ON
   s.syllabusSearch ??= '';
+  const cat = s.courseCatalog && typeof s.courseCatalog === 'object' ? s.courseCatalog : {};
+  const ranges = Object.fromEntries(Object.entries(cat.ranges || {}).filter(([k, r]) => /^(?:\d{4}-[3-6]|(?:isct|nitech|uec|utokyo|hiroshima|kyushu|yamanashi|nagasaki|niigata)-\d{4}-q[1-4]{1,4}|tsukuba-\d{4}-[sf](?:a|b|c|ab|bc|abc))$/.test(k) && r && isYmd(r.from) && isYmd(r.to) && r.from <= r.to));
+  s.courseCatalog = { school: ['aue', 'isct', 'tsukuba', 'nitech', 'uec', 'utokyo', 'hiroshima', 'kyoto', 'kyushu', 'yamanashi', 'nagasaki', 'niigata'].includes(cat.school) ? cat.school : '', year: Number.isInteger(cat.year) && cat.year >= 2000 && cat.year <= 2100 ? cat.year : 2026,
+    semester: ['前期', '後期', 'all'].includes(cat.semester) ? cat.semester : '', ranges };
   s.lastExport ??= 0;
   s.itemHistory = Array.isArray(s.itemHistory) ? s.itemHistory.filter(x => typeof x === 'string') : [];
   s.times ??= [];
@@ -781,6 +816,7 @@ function normalize(s) {
     for (const x of t.swaps) x.id = fixId(x.id);
     for (const c of t.courses) {
       c.id = fixId(c.id);
+      c.periodEnd = endPeriod(c);
       c.name ??= ''; c.short ??= ''; c.teacher ??= ''; c.room ??= ''; c.syllabus ??= '';
       c.from ??= ''; c.to ??= '';
       c.tag = typeof c.tag === 'string' ? c.tag : '';
@@ -788,6 +824,7 @@ function normalize(s) {
       c.absences = Array.isArray(c.absences) ? c.absences.filter(isYmd) : [];
       c.lates = Array.isArray(c.lates) ? c.lates.filter(isYmd) : [];
       c.maxAbsence ??= '';
+      c.credits = gradeNumber(c.credits);
       if (c.maxAbsence !== '' && !Number.isFinite(+c.maxAbsence)) c.maxAbsence = '';
       for (const i of c.items) {
         i.id = fixId(i.id);
@@ -803,6 +840,20 @@ function normalize(s) {
   t.ondemands = (Array.isArray(t.ondemands) ? t.ondemands : [])
     .filter(x => ids.has(x.courseId) && isYmd(x.date));
   for (const x of t.ondemands) x.id = fixId(x.id);
+  }
+  // 成績は時間割と別の記録。学期や授業を消しても残し、共有コードには含めない。
+  s.gradeEnabled = s.gradeEnabled === true;
+  s.gradeScheme = ['standard', 'aue', 'practice', 'custom'].includes(s.gradeScheme) ? s.gradeScheme : 'standard';
+  s.gradeRecords = Array.isArray(s.gradeRecords) ? s.gradeRecords.filter(r => r && typeof r === 'object' && !Array.isArray(r)) : [];
+  for (const r of s.gradeRecords) {
+    r.id = fixId(r.id);
+    for (const k of ['name', 'termId', 'termName']) r[k] = typeof r[k] === 'string' ? r[k].slice(0, 200) : '';
+    r.keys = Array.isArray(r.keys) ? [...new Set(r.keys.filter(k => typeof k === 'string' && k.length <= 600))].slice(0, 100) : [];
+    r.credits = gradeNumber(r.credits);
+    r.scheme = ['standard', 'aue', 'practice', 'custom'].includes(r.scheme) ? r.scheme : 'standard';
+    r.grade = ['S','A','B','C','D','認','棄','良','合','否','pass','fail','withdraw','custom'].includes(r.grade) ? r.grade : '';
+    r.gp = gradeNumber(r.gp, 10);
+    r.earned = r.earned === true; r.exclude = r.exclude === true; r.omit = r.omit === true;
   }
   // メモ・一言日記・消したバイト先の候補
   s.notes = Array.isArray(s.notes)
@@ -943,6 +994,11 @@ function effDay(date, t = term()) {
 }
 
 const isClassDay = (date, t = term()) => inTerm(date, t) && !offInfo(date, t);
+// 普通の授業も、前半・後半など授業ごとの期間を持てる
+function courseInRange(c, date) {
+  const k = ymd(date);
+  return (!c.from || k >= c.from) && (!c.to || k <= c.to);
+}
 
 // この授業だけ休講か
 const isCancelled = (c, date, t = term()) => {
@@ -961,7 +1017,7 @@ const isOnDemand = (c, date, t = term()) => {
 function coursesOn(date, t = term()) {
   if (!isClassDay(date, t)) return [];
   const d = effDay(date, t);
-  return t.courses.filter(c => c.day === d && !isCancelled(c, date, t)).sort((a, b) => a.period - b.period);
+  return t.courses.filter(c => c.day === d && courseInRange(c, date) && !isCancelled(c, date, t)).sort((a, b) => a.period - b.period);
 }
 
 // その日に教室へ行く授業（オンデマンドの回は除く）
@@ -975,30 +1031,31 @@ function attendOn(date, t = term()) {
 function cancelledOn(date, t = term()) {
   if (!isClassDay(date, t)) return [];
   const d = effDay(date, t);
-  return t.courses.filter(c => c.day === d && isCancelled(c, date, t));
+  return t.courses.filter(c => c.day === d && courseInRange(c, date) && isCancelled(c, date, t));
 }
 
 // 探し始める日（学期開始前なら開始日から）
-function searchBase(from, t = term()) {
+function searchBase(from, t = term(), c = null) {
   const s = parseYmd(t.start);
-  return s && s > from ? s : from;
+  const base = s && s > from ? s : from, cs = parseYmd(c?.from);
+  return cs && cs > base ? cs : base;
 }
 
 // 指定日の授業の開始・終了
 function occurrence(c, date) {
   const t = state.times[c.period - 1];
-  const s = toMin(t?.start), e = toMin(t?.end);
+  const s = toMin(t?.start), e = toMin(state.times[endPeriod(c) - 1]?.end);
   if (s == null || e == null) return null;
   const y = date.getFullYear(), mo = date.getMonth(), d = date.getDate();
   return { start: new Date(y, mo, d, 0, s), end: new Date(y, mo, d, 0, e) };
 }
 
 const hasClass = (c, date, t) =>
-  isClassDay(date, t) && effDay(date, t) === c.day && !isCancelled(c, date, t);
+  isClassDay(date, t) && courseInRange(c, date) && effDay(date, t) === c.day && !isCancelled(c, date, t);
 
 // from より後に始まる、いちばん近い回
 function nextOccurrence(c, t = term(), from = new Date()) {
-  const base = searchBase(from, t);
+  const base = searchBase(from, t, c);
   for (let k = 0; k < SEARCH_DAYS; k++) {
     const date = addDays(base, k);
     if (pastEnd(date, t)) break;
@@ -1011,7 +1068,7 @@ function nextOccurrence(c, t = term(), from = new Date()) {
 
 // この先の授業日（休講の候補用）
 function occurrencesAhead(c, n, t = term(), from = new Date()) {
-  const out = [], base = searchBase(from, t);
+  const out = [], base = searchBase(from, t, c);
   for (let k = 0; k < SEARCH_DAYS && out.length < n; k++) {
     const date = addDays(base, k);
     if (pastEnd(date, t)) break;
@@ -1212,7 +1269,7 @@ function renderNow() {
       '<button data-go="grid" class="primary">手入力で作る</button>' +
       '<button data-go="import" data-ico="camera">写真から読み込む</button>' +
       '<button data-go="share">共有コードから読み込む</button></div>' +
-      '<p class="hint startAlt">時間割はいらない？</p>' +
+      '<p class="hint startAlt" data-keep>時間割はいらない？</p>' +
       '<button data-go="nogrid" class="addEv">予定管理だけで使う</button>';
     return;
   }
@@ -1249,12 +1306,12 @@ function renderNow() {
   let body = '';
   if (curList.length) {
     const c = curList[0].c;
-    body += `<h2>今の授業 <small>${DAYS[c.day]}${c.period}・あと${fmtLeft(curList[0].end - now)}で終わり</small></h2>` +
+    body += `<h2>今の授業 <small>${DAYS[c.day]}${periodLabel(c)}・あと${fmtLeft(curList[0].end - now)}で終わり</small></h2>` +
       curList.map(courseLine).join('');
   }
   if (nxt.length) {
     const c = nxt[0].c;
-    body += `<h2>次の授業 <small>${DAYS[c.day]}${c.period}・${whenLabel(nxt[0].start, now)}</small></h2>` +
+    body += `<h2>次の授業 <small>${DAYS[c.day]}${periodLabel(c)}・${whenLabel(nxt[0].start, now)}</small></h2>` +
       nxt.map(courseLine).join('');
   }
   el.innerHTML = h + examLine(now) + camLine(now, t) + (body || '<h2>次の授業</h2><p class="muted">設定で各時限の時刻を入れると表示されるよ</p>') +
@@ -1292,8 +1349,8 @@ function todayFlow(now, t = term()) {
     const a = absInfo(c);
     rows.push({
       min: o ? o.start.getHours() * 60 + o.start.getMinutes() : 2000 + c.period,
-      time: o ? hm(o.start) : `${c.period}限`,
-      label: `${c.period}限 ${esc(nm(c))}` + odBtn(c, at) +
+      time: o ? hm(o.start) : `${periodLabel(c)}限`,
+      label: `${periodLabel(c)}限 ${esc(nm(c))}` + odBtn(c, at) +
         (c.room ? ` <small>${esc(c.room)}</small>` : '') +
         (a.left != null && a.left <= 1 ? ` <span class="absWarn">⚠欠席${a.n}/${a.max}</span>` : '') + absBtn(c),
       past: !!o && o.end <= now, id: c.id, cls: 'f-cls'
@@ -1397,13 +1454,13 @@ function renderPack() {
   let title = diff === 0 ? `今日 ${md(t.date)}` : diff === 1 ? `明日 ${md(t.date)}` : md(t.date);
   if (t.swapped != null) title += `（${DAYS[t.swapped]}曜授業）`;
   if (t.first) title += '（授業初日）';
-  const names = t.cs.map(c => `${c.day === -1 ? '集中' : c.period + '限'} ${esc(nm(c))}`).join('／');
-  const noteHint = t.notes.length ? `<p class="hint">${t.notes.map(esc).join('、')}</p>` : '';
+  const names = t.cs.map(c => `${c.day === -1 ? '集中' : periodLabel(c) + '限'} ${esc(nm(c))}`).join('／');
+  const noteHint = t.notes.length ? `<p class="hint" data-keep>${t.notes.map(esc).join('、')}</p>` : '';
 
   el.innerHTML =
     `<h2>${title}の持ち物 <small>${packList.length ? `${done}/${packList.length}` : ''}</small></h2>` +
     noteHint +
-    `<p class="hint">${names}</p>` +
+    `<p class="hint" data-keep>${names}</p>` +
     (packList.length
       ? '<ul>' + packList.map((e, idx) =>
           `<li><label><input type="checkbox" data-pack="${idx}" ${checks[e.text] ? 'checked' : ''}>` +
@@ -1442,23 +1499,74 @@ function renderTasks() {
 
 
 /* ===== 画面：時間割 ===== */
+let courseView = 'grid', courseOverviewFilter = 'all';
+function renderCourseOverview() {
+  const isList = courseView === 'list';
+  $('#view-grid').classList.toggle('showCourseOverview', isList);
+  $('#courseOverview').hidden = !isList;
+  $('#grid').hidden = isList;
+  $('#intCard').hidden = isList;
+  document.querySelectorAll('#courseViewSwitch button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.courseView === courseView)));
+  $('#overviewTerm').textContent = term().name;
+  window.renderGrades?.();
+  const all = courses().filter(c => c.name.trim());
+  const warn = c => { const a = absInfo(c); return a.left != null && a.left <= 1; };
+  const nWarn = all.filter(warn).length;
+  $('#overviewSummary').textContent = `${all.length}授業・要注意 ${nWarn}件` +
+    (state.lateRule ? `（遅刻${state.lateRule}回を欠席1回に換算して判定）` : '');
+  document.querySelectorAll('[data-course-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.courseFilter === courseOverviewFilter)));
+  const daySort = (a, b) => (a.day < 0 ? 7 : a.day) - (b.day < 0 ? 7 : b.day) || a.period - b.period || a.name.localeCompare(b.name, 'ja');
+  const list = all.filter(c => courseOverviewFilter !== 'warn' || warn(c)).sort((a, b) =>
+    ($('#courseOverviewSort').value === 'absence' ? absInfo(b).n - absInfo(a).n : 0) || daySort(a, b));
+  $('#courseOverviewRows').innerHTML = list.map(c => {
+    const a = absInfo(c), converted = a.n - c.absences.length;
+    const status = a.max == null ? '欠席上限は未設定' : a.left < 0 ? `上限を${-a.left}回超えている` :
+      a.left === 0 ? `上限${a.max}回に達している` : `上限${a.max}回まであと${a.left}回`;
+    const when = c.day < 0 ? `集中講義・${rangeLabel(c)}` : `${DAYS[c.day]}曜 ${periodLabel(c)}限`;
+    return `<button type="button" class="courseOverviewRow${warn(c) ? ' needsAttention' : ''}" data-overview-course="${esc(c.id)}">` +
+      `<span class="courseOverviewTitle"><b>${esc(c.name)}</b><span aria-hidden="true">›</span></span>` +
+      `<span class="courseOverviewWhen">${esc(when)}${c.room ? `・${esc(c.room)}` : ''}</span>` +
+      `<span class="courseOverviewCounts"><span>欠席 <b>${c.absences.length}</b>回</span><span>遅刻 <b>${a.late}</b>回</span></span>` +
+      (converted ? `<span class="courseOverviewWhen">遅刻換算を含む欠席：${a.n}回</span>` : '') +
+      `<span class="courseOverviewStatus">${warn(c) ? '要注意・' : ''}${status}</span></button>`;
+  }).join('') || `<p class="card muted">${all.length ? '要注意の授業はないよ' : 'まだ授業がないよ。時間割から授業を追加してね'}</p>`;
+}
+$('#courseViewSwitch').addEventListener('click', e => {
+  const b = e.target.closest('[data-course-view]');
+  if (!b) return;
+  courseView = b.dataset.courseView;
+  renderCourseOverview();
+});
+$('#courseOverview').addEventListener('click', e => {
+  const filter = e.target.closest('[data-course-filter]');
+  if (filter) { courseOverviewFilter = filter.dataset.courseFilter; renderCourseOverview(); return; }
+  const row = e.target.closest('[data-overview-course]');
+  if (!row) return;
+  openCourse(row.dataset.overviewCourse);
+  $('#cMore').open = true;
+});
+$('#courseOverviewSort').onchange = renderCourseOverview;
+
 function renderGrid() {
+  renderCourseOverview();
   const days = state.showSat || courses().some(c => c.day === 5) ? 6 : 5;
-  const periods = Math.max(state.periods, ...courses().filter(c => c.day >= 0).map(c => c.period));
-  // 授業がある一番遅い時限より後は、行を低くする（授業が1つもなければ全部ふつう）
-  const lastUsed = Math.max(0, ...courses().filter(c => c.day >= 0).map(c => c.period));
-  const idle = p => lastUsed && p > lastUsed ? ' idle' : '';
+  const periods = Math.max(state.periods, ...courses().filter(c => c.day >= 0).map(endPeriod));
+  // コマの大きさはそろえる（授業が2つ以上のコマだけ、入りきるように高くなる）
+  const idle = () => '';
   const today = effDay(new Date());
   const g = $('#grid');
   g.style.gridTemplateColumns = `34px repeat(${days},1fr)`;
+  g.style.gridTemplateRows = `auto repeat(${periods}, minmax(var(--cell-h), auto))`;
   let h = '<div class="head"></div>';
   for (let d = 0; d < days; d++) h += `<div class="head ${d === today ? 'today' : ''}">${DAYS[d]}</div>`;
   for (let p = 1; p <= periods; p++) {
     const t = state.times[p - 1];
-    h += `<div class="pnum${idle(p)}">${p}${t?.start ? `<small>${esc(t.start)}</small>` : ''}</div>`;
+    h += `<div class="pnum${idle(p)}" style="grid-row:${p + 1};grid-column:1">${p}${t?.start ? `<small>${esc(t.start)}</small>` : ''}</div>`;
     for (let d = 0; d < days; d++) {
-      const cs = courses().filter(c => c.day === d && c.period === p);
-      h += `<div class="cell ${d === today ? 'today' : ''}${idle(p)}" data-d="${d}" data-p="${p}">` +
+      const slot = gridSlot(courses(), d, p);
+      if (!slot) continue;
+      const cs = slot.courses;
+      h += `<div class="cell ${d === today ? 'today' : ''}${idle(p)}${slot.span > 1 ? ' joined' : ''}${cs.length > 1 ? '' : ' solo'}" style="grid-row:${p + 1} / span ${slot.span};grid-column:${d + 2}" data-d="${d}" data-p="${p}">` +
         cs.map(c => {
           const ni = c.items.filter(i => i.type === 'next').length;
           const nt = c.tasks.filter(t => !t.done).length;
@@ -1590,6 +1698,7 @@ $('#grid').addEventListener('click', e => {
   if (co) return openCourse(co.dataset.id);
   const cell = e.target.closest('.cell');
   if (!cell) return;
+  if (['aue', 'isct', 'tsukuba', 'nitech', 'uec', 'utokyo', 'hiroshima', 'kyoto', 'kyushu', 'yamanashi', 'nagasaki', 'niigata'].includes(state.courseCatalog.school) && window.openCourseCatalog && !window.courseCatalogPaused) return window.openCourseCatalog(+cell.dataset.d, +cell.dataset.p);
   const c = newCourse(+cell.dataset.d, +cell.dataset.p);
   courses().push(c);
   renderAll(); openCourse(c.id);
@@ -1635,6 +1744,7 @@ function courseSnap(c, t = term()) {
 $('#cDay').innerHTML = DAYS.map((d, i) => `<option value="${i}">${d}曜</option>`).join('') +
   '<option value="-1">集中講義</option>';
 $('#cPeriod').innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}限</option>`).join('');
+$('#cPeriodEnd').innerHTML = $('#cPeriod').innerHTML;
 
 function renderItemSuggest() {
   const set = new Set(state.itemHistory);
@@ -1646,7 +1756,13 @@ function renderItemSuggest() {
 function syncIntUI() {
   const isInt = cur()?.day === -1;
   $('#cPeriod').hidden = isInt;
-  $('#cIntRow').hidden = !isInt;
+  $('#cPeriodEnd').closest('label').hidden = isInt;
+  $('#cPeriod').closest('label').hidden = isInt;
+  if (!isInt) {
+    for (const o of $('#cPeriodEnd').options) o.disabled = +o.value < cur().period;
+    $('#cPeriodEnd').value = endPeriod(cur());
+  }
+  $('#cIntRow').hidden = false;
   $('#cCancelSec').hidden = isInt;
 }
 
@@ -1662,6 +1778,7 @@ function openCourse(id) {
   $('#cSyllabus').value = c.syllabus;
   $('#cDay').value = c.day;
   $('#cPeriod').value = c.period;
+  $('#cPeriodEnd').value = endPeriod(c);
   $('#cFrom').value = c.from;
   $('#cTo').value = c.to;
   syncIntUI();
@@ -1673,6 +1790,7 @@ function openCourse(id) {
   renderCTags();
   $('#tagNew').hidden = true;
   renderSyllabusHint();
+  window.renderCatalogDetail?.(c);
   $('#cMore').open = false; // 「詳細」は毎回閉じた状態から
   $('#courseDlg').showModal();
   if (!c.name) $('#cName').focus();
@@ -1731,7 +1849,7 @@ function renderDetail() {
   $('#cancelDate').innerHTML = ahead.length
     ? ahead.map((d, k) => `<option value="${ymd(d)}">${md(d)}${k === 0 ? '（次回）' : ''}</option>`).join('')
     : '<option value="">この先の授業が見つからない</option>';
-  $('#cancelAdd').disabled = !ahead.length;
+  setWhy($('#cancelAdd'), !ahead.length && 'この先の授業が見つからないので、休講にする日を選べないよ');
   window.renderOd?.();
 
 
@@ -1754,12 +1872,55 @@ for (const [id, key] of [['cName', 'name'], ['cShort', 'short'], ['cTeacher', 't
 }
 for (const [id, key] of [['cDay', 'day'], ['cPeriod', 'period']]) {
   $('#' + id).addEventListener('change', e => {
+    const oldEnd = endPeriod(cur());
     cur()[key] = +e.target.value;
+    if (key === 'period') cur().periodEnd = Math.max(cur().period, oldEnd);
     scheduleChanged();
     renderDetail();
     syncIntUI();
   });
 }
+// 同じ曜日・同じ名前（または略名）の授業が、つなげた時限に別に入っているとき（1.1.3 より前は1コマずつ登録していた）
+function sameCourseIn(c, end, t = term()) {
+  const name = c.name.trim(), short = nm(c).trim();
+  return t.courses.filter(x => x !== c && x.day === c.day && x.period >= c.period && x.period <= end &&
+    ((name && x.name.trim() === name) || (short && nm(x).trim() === short)));
+}
+// x の記録（欠席・遅刻・課題・持ち物・メモ・ノート・休講・オンデマンド・試験・成績のつながり）を c に移して、x を消す
+function mergeCourseInto(c, x, t = term()) {
+  const uniq = a => [...new Set(a)].sort();
+  c.absences = uniq([...c.absences, ...x.absences]);
+  c.lates = uniq([...(c.lates || []), ...(x.lates || [])]);
+  for (const k of ['items', 'memos', 'tasks', 'notes']) c[k] = [...(c[k] || []), ...(x[k] || [])];
+  for (const k of ['teacher', 'room', 'syllabus', 'tag', 'short']) if (!c[k] && x[k]) c[k] = x[k];
+  if (c.maxAbsence === '' && x.maxAbsence !== '') c.maxAbsence = x.maxAbsence;
+  for (const k of ['cancels', 'ondemands']) {
+    const list = t[k] || [];
+    const has = new Set(list.filter(o => o.courseId === c.id).map(o => o.date));
+    t[k] = list.filter(o => o.courseId !== x.id || !has.has(o.date));
+    for (const o of t[k]) if (o.courseId === x.id) o.courseId = c.id;
+  }
+  for (const e of state.events) if (e.cid === x.id) e.cid = c.id;
+  for (const r of state.gradeRecords || []) if (r.keys.includes(x.id)) r.keys = [...new Set(r.keys.map(k => k === x.id ? c.id : k))];
+  t.courses = t.courses.filter(y => y !== x);
+}
+$('#cPeriodEnd').addEventListener('change', e => {
+  const c = cur();
+  const end = Math.min(10, Math.max(c.period, +e.target.value || c.period));
+  const dup = sameCourseIn(c, end);
+  const where = dup.map(x => `${DAYS[x.day]}${periodLabel(x)}限`).join('・');
+  if (dup.length && confirm(`${where}の「${nm(dup[0])}」を、この授業にまとめる？\n欠席・課題・持ち物・メモ・ノートはこの授業に移して、あちらは消すよ（元に戻せる）`)) {
+    withUndo(`「${nm(c)}」を1つにまとめたよ`, () => {
+      c.periodEnd = Math.min(10, Math.max(end, ...dup.map(endPeriod)));
+      for (const x of dup) mergeCourseInto(c, x);
+    });
+    courseBackup = courseSnap(c); // 閉じるときの「変更を捨てる」で、まとめたものが消えないように
+  } else {
+    c.periodEnd = end;
+    scheduleChanged();
+  }
+  renderDetail(); syncIntUI();
+});
 // 集中講義の日程
 {
   const fromEl = $('#cFrom'), toEl = $('#cTo');
@@ -2050,6 +2211,7 @@ function findCourse(id) {
 }
 
 function renderCal() {
+  window.renderAgenda?.();
   const y = calMonth.getFullYear(), m = calMonth.getMonth(), t = term(), today = todayStr();
   $('#calTitle').textContent = `${y}年${m + 1}月`;
   const cp = $('#calPick');
@@ -2068,7 +2230,7 @@ function renderCal() {
     const pending = calTasks(k).filter(({ x }) => !x.done);
     const labels = [];
     // 課題をいちばん先に並べて、「+1」に隠れないようにする
-    for (const { x } of pending) labels.push(`<span class="ev task">${esc(x.title)}</span>`);
+    for (const { c, x } of pending) labels.push(`<span class="ev task" data-taskid="${esc(x.id)}" data-cid="${esc(c.id)}">${esc(x.title)}</span>`);
     if (off) labels.push(`<span class="ev off">${esc(off.note || '休み')}</span>`);
     for (const c of intensiveOn(k)) labels.push(`<span class="ev int">${esc(nm(c) || '集中講義')}</span>`);
     for (const e of calEvents(k)) labels.push(`<span class="ev ${e.kind}${e.gid ? ' shared' : ''}${grIsNew(e) ? ' isNew' : ''}" data-evid="${e.id}">${esc(e.title || EV_LABEL[e.kind])}</span>`);
@@ -2088,6 +2250,7 @@ function renderCal() {
 }
 
 function renderDay() {
+  window.renderAgenda?.();
   const date = parseYmd(calSel), k = calSel, t = term(), rows = [];
   $('#dayTitle').textContent = `${md(date)}の予定`;
   const off = inTerm(date, t) ? offInfo(date, t) : null;
@@ -2095,14 +2258,14 @@ function renderDay() {
   else {
     const cs = state.useGrid ? coursesOn(date, t) : [];
     const at = new Set(attendOn(date, t));
-    if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${c.period}限 ${esc(nm(c))}${at.has(c) ? '' : '（オンデマ）'}`).join('／')}</span></li>`);
+    if (cs.length) rows.push(`<li><span class="muted">授業：${cs.map(c => `${periodLabel(c)}限 ${esc(nm(c))}${at.has(c) ? '' : '（オンデマ）'}`).join('／')}</span></li>`);
   }
   for (const c of intensiveOn(k)) rows.push(`<li><span><span class="tag">集中</span>${esc(nm(c))}</span></li>`);
   for (const { c, x } of calTasks(k)) rows.push(
     `<li class="ctRow ${ctEdit && ctEdit.id === x.id ? 'editing' : ''}">` +
     `<input type="checkbox" data-caltask="${x.id}" data-cid="${c.id}" ${x.done ? 'checked' : ''} aria-label="完了">` +
     `<button type="button" class="evText" data-taskedit="${x.id}" data-cid="${c.id}">` +
-    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span> <span class="from">${esc(nm(c))}・締切</span></button></li>`);
+    `<span class="${x.done ? 'done' : ''}">${esc(x.title)}</span> <span class="from">${esc(nm(c))}・締切</span>${x.memo ? '<span class="evMemoMk" aria-label="メモあり">📝</span>' : ''}</button></li>`);
   for (const e of calEvents(k)) rows.push(
     `<li class="${e.id === evEditId ? 'editing' : ''}">` +
     `<button type="button" class="evText" data-evedit="${e.id}"><span class="tag">${EV_LABEL[e.kind]}</span>${esc(evTime(e))} ${esc(e.title)}${e.gid ? grLabel(e) : ''}${placeOf(e.memo) ? ` <span class="from evPlace">${PIN}${esc(placeOf(e.memo))}</span>` : ''}${e.memo ? '<span class="evMemoMk" aria-label="メモあり">📝</span>' : ''}</button>` +
@@ -2132,7 +2295,7 @@ function renderEvSuggest() {
 function renderPicks(msg = '') {
   const ds = [...calPicks].sort();
   $('#calMulti').checked = calMulti;
-  $('#evWeekly').disabled = calMulti;   // 複数選択中は「4週分」は使わない
+  setWhy($('#evWeekly'), calMulti && '日をいくつか選んでいるときは使えないよ（1日だけなら使える）');   // 複数選択中は「4週分」は使わない
   if (calMulti) $('#evWeekly').checked = false;
   $('#evHead').textContent = calMulti ? '選んだ日に予定を追加' : 'この日に予定を追加';
   $('#evAdd').textContent = calMulti ? `${ds.length}日に追加` : EV_ADD_TEXT;
@@ -2350,7 +2513,7 @@ function endEvEdit() {
 $('#evCancel').onclick = endEvEdit;
 
 /* ===== カレンダーから課題 ===== */
-const slotLabel = c => (Number.isInteger(c.day) && c.day >= 0 && c.period) ? `（${DAYS[c.day]}${c.period}）` : '';
+const slotLabel = c => (Number.isInteger(c.day) && c.day >= 0 && c.period) ? `（${DAYS[c.day]}${periodLabel(c)}）` : '';
 
 function renderTaskForm() {
   const box = $('#taskBox');
@@ -2375,6 +2538,7 @@ function startTaskEdit(cid, id) {
   if (evEditId) endEvEdit();
   ctEdit = { cid, id, to: '' };
   $('#ctTitle').value = x.title;
+  $('#ctMemo').value = x.memo || '';
   $('#ctDue').value = dueOf(x) || calSel;setLeadUI('ct', x.lead);
   renderDay();
   $('#ctHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2383,6 +2547,7 @@ function startTaskEdit(cid, id) {
 function endTaskEdit() {
   ctEdit = null;
   $('#ctTitle').value = '';
+  $('#ctMemo').value = '';
   renderDay();
 }
 
@@ -2405,9 +2570,10 @@ $('#ctAdd').onclick = () => {
   if (!title) return alert('課題の内容を入れてね');
   const c = findCourse($('#ctCourse').value);
   if (!c) return;
-  c.tasks.push({ id: uid(), title, due: calSel, done: false });
+  const memo = $('#ctMemo').value.trim().slice(0, 2000);
+  c.tasks.push({ id: uid(), title, due: calSel, done: false, ...(memo ? { memo } : {}) });
   ctLastCid = c.id;
-  $('#ctTitle').value = '';
+  $('#ctTitle').value = ''; $('#ctMemo').value = '';
   save(); renderAll(); renderCal(); renderDay();
   // 自己申告補正の「あなたの1時間は…」が出るときは、そっちを優先（トーストは1つしか出ない）
   if (state.fun?.saba && !(state.fun.est && window.parseEst?.(title))) toast('🐟 サバ読み中：本当の締切より何日か前に出るよ');
@@ -2421,6 +2587,8 @@ $('#ctSave').onclick = () => {
   const title = $('#ctTitle').value.trim();
   if (!title) return alert('課題の内容を入れてね');
   x.title = title;
+  const memo = $('#ctMemo').value.trim().slice(0, 2000);
+  if (memo) x.memo = memo; else delete x.memo;
   x.due = dueFromShown(x, $('#ctDue').value);x.lead = getLeadUI('ct');
   const to = findCourse($('#ctCourse').value);
   if (to && to !== from) {
@@ -2457,7 +2625,13 @@ function showTab(name) {
 }
 $('#tabbar').addEventListener('click', e => {
   const b = e.target.closest('[data-tab]');
-  if (b) showTab(b.dataset.tab);
+  if (!b) return;
+  // 下のタブを押したら、その画面のいちばん基本の表示に戻す（カレンダー＝月、時間割＝時間割の表）。
+  // 予定一覧・時間軸・授業一覧はそれぞれの画面の上の切り替えから。ほかの入口（お知らせ・機能をさがす…）から開いたときはそのまま
+  if (b.dataset.tab === 'cal') window.agendaReset?.();
+  if (b.dataset.tab === 'grid' && courseView !== 'grid') courseView = 'grid';
+  showTab(b.dataset.tab);
+  if (b.dataset.tab === 'grid') renderCourseOverview();
 });
 $('#shareBtn').onclick = () => openTermDlg('shareSec');
 
@@ -2482,9 +2656,10 @@ document.querySelectorAll('dialog').forEach(d =>
 
 /* ===== 画像読み込み ===== */
 const PROMPT = `これは大学の時間割表の画像です。各授業を読み取り、JSON配列だけを出力してください。説明文やコードブロック記号は書かないでください。
-形式: [{"day":"月","period":1,"name":"授業名","teacher":"教員名","room":"教室"}]
+形式: [{"day":"月","period":1,"periodEnd":2,"name":"授業名","teacher":"教員名","room":"教室"}]
 ルール:
 - dayは「月火水木金土」のいずれか1文字。periodは時限の数字。
+- 1つの授業の枠が縦に何コマもつながっているとき（例：1〜2限、5〜8限）は、1つの要素にして、periodに始まりの時限、periodEndに終わりの時限を入れる。枠の左にある時限の数字の位置で、どこからどこまでかを決める。1コマだけならperiodEndはperiodと同じ。
 - 授業名の先頭の区分記号(S, F, E, M2など)と、末尾のクラス番号((01)など)は除く。改行で途切れた授業名はつなげる。
 - 教員名の先頭の「非)」と末尾の「他」は除く。
 - 手書きで書き込まれた教室番号などがあれば、印字より手書きを優先する。
@@ -2673,6 +2848,7 @@ async function requestOnce(p, key, model, b64, prompt = PROMPT) {
 
 // 混雑時は自動でやり直し、予備のモデルがあれば切り替える
 async function callVision(b64, prompt = PROMPT, st = $('#ocrStatus')) {
+  if (b64) { aiReviewRemember(st, b64); prompt = aiReviewPrompt(prompt); }
   const p = state.provider, key = state.keys[p], main = p === 'gaku' ? 'がくログのAI' : modelOf(p);
   if (!aiOk(p)) throw new Error('設定でAPIキーを入れてね');
   if (!main) throw new Error('設定でモデルIDを入れてね');
@@ -2702,6 +2878,7 @@ async function callVision(b64, prompt = PROMPT, st = $('#ocrStatus')) {
 }
 
 $('#importBtn').onclick = () => {
+  aiReviewReset($('#ocrStatus'));
   $('#ocrResult').innerHTML = '';
   $('#ocrStatus').textContent = '';
   $('#importTarget').textContent = `保存先：${term().name}`;
@@ -2740,6 +2917,29 @@ function friendlyError(err) {
   return err.message;
 }
 
+// 読み取った授業のうち、同じ曜日・同じ授業名で時限が続いているもの（教室・教員が同じか片方が空）は1つの授業（○〜○限）にまとめる
+function joinSpans(list) {
+  const day = c => String(c?.day ?? '').trim().charAt(0);
+  const same = (a, b) => !a || !b || a === b;
+  const rows = list.map(c => {
+    const p = Math.min(10, Math.max(1, Math.round(+c.period) || 1));
+    const e = Math.min(10, Math.max(p, Math.round(+c.periodEnd) || p));
+    return { ...c, period: p, periodEnd: e, name: String(c.name ?? '').trim(), teacher: String(c.teacher ?? '').trim(), room: String(c.room ?? '').trim() };
+  }).sort((a, b) => day(a).localeCompare(day(b)) || a.name.localeCompare(b.name) || a.period - b.period);
+  const out = [];
+  for (const c of rows) {
+    const last = out[out.length - 1];
+    if (last && c.name && day(last) === day(c) && last.name === c.name && c.period <= last.periodEnd + 1 &&
+        same(last.room, c.room) && same(last.teacher, c.teacher)) {
+      last.periodEnd = Math.max(last.periodEnd, c.periodEnd);
+      last.room ||= c.room; last.teacher ||= c.teacher;
+      continue;
+    }
+    out.push(c);
+  }
+  return out;
+}
+
 let ocrRunning = false;
 $('#runOcr').onclick = async () => {
   if (ocrRunning) return;
@@ -2749,6 +2949,7 @@ $('#runOcr').onclick = async () => {
   $('#runOcr').disabled = true;
   aiBegin('#runOcr');
   const st = $('#ocrStatus');
+  aiReviewReset(st);
   // 何枚でも読んで1つの表にする。同じ曜日・時限・授業名は1つにまとめる（スクショが重なってても大丈夫なように）
   const all = [], seen = new Set();
   let done = 0;
@@ -2756,21 +2957,23 @@ $('#runOcr').onclick = async () => {
     for (const [i, f] of fs.entries()) {
       if (i > 0) await aiSleep(2000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中…（${PROVIDERS[state.provider].label}${fs.length > 1 ? `・${i + 1}/${fs.length}枚目` : ''}）`;
+      st.dataset.aiPage = String(i + 1);
       const txt = await callVision(await fileToJpegBase64(f), PROMPT, st);
       const s = txt.indexOf('['), e = txt.lastIndexOf(']');
       if (s < 0 || e < s) throw new Error(`${fs.length > 1 ? `${i + 1}枚目の` : ''}結果がうまく読めなかった。別のモデルで試してみて`);
       for (const c of JSON.parse(txt.slice(s, e + 1))) {
         const key = [String(c?.day ?? '').trim().charAt(0), +c?.period || 1, String(c?.name ?? '').trim()].join('|');
         if (seen.has(key)) continue;
-        seen.add(key); all.push(c);
+        seen.add(key); all.push({ ...c, _page: i + 1 });
       }
       done++;
     }
-    showRows(all);
-    st.textContent = `${fs.length > 1 ? `${fs.length}枚から` : ''}${all.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
+    const joined = joinSpans(all);
+    showRows(joined);
+    st.textContent = `${fs.length > 1 ? `${fs.length}枚から` : ''}${joined.length}件読み取ったよ。間違いがあれば直してから保存してね。`;
   } catch (err) {
     // 途中まで読めた分は出しておく
-    if (all.length) showRows(all);
+    if (all.length) showRows(joinSpans(all));
     const part = done && fs.length > 1 ? `（${done}枚目までは読めたので下に出したよ）` : '';
     st.textContent = (isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err)) + part;
   } finally {
@@ -2785,18 +2988,27 @@ function showRows(arr) {
   // 「月曜」「月曜日」で返ってきても先頭1文字で判定
   const dayOf = c => Math.max(0, DAYS.indexOf(String(c.day ?? '').trim().charAt(0)));
   // 曜日→時限の順に並べる
-  const rows = arr.map(c => ({ ...c, _d: dayOf(c), _p: +c.period || 1 }))
+  const rows = arr.map(c => ({ ...c, _d: dayOf(c), _p: +c.period || 1, _e: Math.max(+c.period || 1, +c.periodEnd || 0) }))
     .sort((a, b) => (a._d - b._d) || (a._p - b._p));
   $('#ocrResult').innerHTML =
-    '<table><tr><td>曜</td><td>限</td><td>授業名</td><td>教員</td><td>教室</td><td>除外</td></tr>' +
+    '<table><tr><td>曜</td><td>限</td><td>〜</td><td>授業名</td><td>教員</td><td>教室</td><td>除外</td></tr>' +
     rows.map(c =>
       `<tr class="r"><td><select class="d" aria-label="曜日">${dayOpts(c._d)}</select></td>` +
       `<td><input class="p" type="number" min="1" max="10" value="${c._p}" aria-label="時限"></td>` +
+      `<td><input class="pe" type="number" min="1" max="10" value="${c._e}" aria-label="終了の時限"></td>` +
       `<td><input class="n" value="${esc(c.name)}" aria-label="授業名"></td>` +
       `<td><input class="t" value="${esc(c.teacher)}" aria-label="教員"></td>` +
       `<td><input class="rm" value="${esc(c.room)}" aria-label="教室"></td>` +
       `<td><input type="checkbox" class="skip" aria-label="除外"></td></tr>`
     ).join('') + '</table>';
+  aiReviewShow($('#ocrStatus'), rows.map((c, i) => {
+    const tr = $('#ocrResult').querySelectorAll('tr.r')[i];
+    const extra = {};
+    if (!DAYS.includes(String(c.day ?? '').trim().charAt(0))) extra.day = '曜日が読めず、月曜を仮に入れたよ';
+    if (!Number.isInteger(+c.period) || +c.period < 1 || +c.period > 10) extra.period = '時限が1〜10の範囲に収まっていないよ';
+    if (!String(c.name || '').trim()) extra.name = '授業名が読み取れなかったよ';
+    return { data: c, extra, fields: { day: tr.querySelector('.d'), period: tr.querySelector('.p'), periodEnd: tr.querySelector('.pe'), name: tr.querySelector('.n'), teacher: tr.querySelector('.t'), room: tr.querySelector('.rm') } };
+  }));
 }
 
 function applyImport(replace) {
@@ -2805,6 +3017,7 @@ function applyImport(replace) {
     .map(tr => ({
       day: +tr.querySelector('.d').value,
       period: Math.min(10, Math.max(1, +tr.querySelector('.p').value || 1)),
+      periodEnd: Math.min(10, Math.max(1, +tr.querySelector('.p').value || 1, +tr.querySelector('.pe').value || 1)),
       name: tr.querySelector('.n').value.trim(),
       teacher: tr.querySelector('.t').value.trim(),
       room: tr.querySelector('.rm').value.trim()
@@ -2837,7 +3050,7 @@ function applyImport(replace) {
       `今の授業 ${keep.length}件 → 読み込んだ授業 ${rows.length}件になるよ`;
     if (gone.length) msg += `\n今の授業のうち ${gone.length}件は時間割から消える`;
     if (lost.length) msg += '\n\n次の授業のメモ・持ち物・課題・欠席は消えるよ（授業名・曜日・時限が全部同じものだけ引き継ぐ）\n' +
-      lost.map(c => `・${DAYS[c.day]}${c.period} ${nm(c)}`).join('\n');
+      lost.map(c => `・${DAYS[c.day]}${periodLabel(c)} ${nm(c)}`).join('\n');
     if (!confirm(msg)) return;
     // 読み込んだ数が今の半分より少ないときは、もう1回聞く
     if (rows.length < keep.length / 2 &&
@@ -2850,7 +3063,7 @@ function applyImport(replace) {
       console.warn('undoSnap', e);
     }
   }
-  const added = pairs.map(([r, prev]) => prev ? Object.assign(prev, r) : newCourse(r.day, r.period, r));
+  const added = pairs.map(([r, prev]) => prev ? Object.assign(prev, r) : newCourse(r.day, r.period, { ...r, shareOrigin: 'photo' }));
   // 置き換えても集中講義は残す
   t.courses = replace ? added.concat(old.filter(c => c.day === -1)) : old.concat(added);
   if (replace) {
@@ -2862,6 +3075,7 @@ function applyImport(replace) {
   scheduleChanged();
   $('#importDlg').close();
   clearImportImgs(); // 次に開いたとき、同じ画像をまた読み取って二重に入れないように
+  window.communityRegistrationFinished?.();
   if (!backup && skipped) toast(`もう登録してある${skipped}件は飛ばしたよ`);
   if (backup) toast('時間割を置き換えたよ', () => {
     t.courses = backup.courses;
@@ -3032,7 +3246,7 @@ $('#termCreate').onclick = () => {
   const start = $('#newTermStart').value, end = $('#newTermEnd').value;
   if (start && end && end < start) return alert('終了日が開始日より前になってるよ');
   const copied = $('#newTermCopy').checked ? courses().filter(c => c.day !== -1).map(c => newCourse(c.day, c.period, {
-    name: c.name, short: c.short, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence, tag: c.tag,
+    name: c.name, short: c.short, teacher: c.teacher, room: c.room, syllabus: c.syllabus, maxAbsence: c.maxAbsence, tag: c.tag, periodEnd: endPeriod(c),
     items: c.items.filter(i => i.type === 'always').map(i => ({ ...i, id: uid() }))
   })) : [];
   const t = newTerm(name, start, end, copied);
@@ -3367,7 +3581,7 @@ function shareJSON() {
     c: t.courses.filter(c => c.name.trim()).map(c => [
       c.day, c.period, c.name, c.short, c.teacher, c.room, c.syllabus, c.from, c.to,
       withItems ? c.items.filter(i => i.type === 'always').map(i => i.text) : [],
-      tagOf(c) ? [tagOf(c).name, tagOf(c).color] : 0
+      tagOf(c) ? [tagOf(c).name, tagOf(c).color] : 0, endPeriod(c)
     ])
   };
   if ($('#shareOff').checked) {
@@ -3497,9 +3711,10 @@ function parseShare(d) {
   const okPeriod = v => Number.isInteger(v) && v >= 1 && v <= 10;
 
   const cs = d.c.slice(0, 200).filter(Array.isArray).map(
-    ([day, period, name, short, teacher, room, syllabus, from, to, items, tag]) => ({
+    ([day, period, name, short, teacher, room, syllabus, from, to, items, tag, periodEnd]) => ({
       day: okDay(day) ? day : 0,
       period: okPeriod(period) ? period : 1,
+      periodEnd: okPeriod(periodEnd) && periodEnd >= (okPeriod(period) ? period : 1) ? periodEnd : (okPeriod(period) ? period : 1),
       name: str(name).trim(), short: str(short), teacher: str(teacher), room: str(room),
       syllabus: isHttp(syllabus) ? str(syllabus) : '',
       from: isYmd(from) ? from : '', to: isYmd(to) ? to : '',
@@ -3550,7 +3765,7 @@ function renderSharePreview() {
     (d.swaps.length ? `・振替${d.swaps.length}件` : '') +
     (nItems ? `・持ち物${nItems}件` : '');
   $('#shareList').innerHTML = list.map(c =>
-    `<li><span><span class="tag">${c.day < 0 ? '集中' : DAYS[c.day] + c.period}</span>${esc(c.short.trim() || c.name)}</span>` +
+    `<li><span><span class="tag">${c.day < 0 ? '集中' : DAYS[c.day] + periodLabel(c)}</span>${esc(c.short.trim() || c.name)}</span>` +
     `<span class="from">${esc([c.teacher, c.room].filter(Boolean).join('・'))}</span></li>`).join('');
   const diff = !!d.times && d.times.some((x, i) =>
     x.start !== state.times[i].start || x.end !== state.times[i].end);
@@ -3559,7 +3774,7 @@ function renderSharePreview() {
 }
 
 const fromShare = c => newCourse(c.day, c.period, {
-  name: c.name, short: c.short, teacher: c.teacher, room: c.room,
+  name: c.name, short: c.short, teacher: c.teacher, room: c.room, periodEnd: endPeriod(c),
   syllabus: c.syllabus, from: c.from, to: c.to,
   tag: shareTag(c.tag),
   items: c.items.map(text => ({ id: uid(), text, type: 'always', added: Date.now(), until: null }))
@@ -3567,7 +3782,7 @@ const fromShare = c => newCourse(c.day, c.period, {
 
 function applyShareCommon(d) {
   if (!$('#shareTimesBox').hidden && $('#shareTimes').checked) state.times = structuredClone(d.times);
-  state.periods = Math.max(state.periods, d.periods, ...d.courses.filter(c => c.day >= 0).map(c => c.period));
+  state.periods = Math.max(state.periods, d.periods, ...d.courses.filter(c => c.day >= 0).map(endPeriod));
   if (d.courses.some(c => c.day === 5)) state.showSat = true;
 }
 
@@ -3645,7 +3860,7 @@ function renderIncome() {
   for (const x of xs) jobs.set(x.job || '未設定', (jobs.get(x.job || '未設定') || 0) + grossOf(x));
   $('#inSummary').innerHTML =
     `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(n)}</small></p>` +
-    (est ? `<p class="hint">総支給がわからない${est}件は手取りで数えてるよ（*の月）。本当の総支給はこれより少し多いはず</p>` : '') +
+    (est ? `<p class="hint" data-keep>総支給がわからない${est}件は手取りで数えてるよ（*の月）。本当の総支給はこれより少し多いはず</p>` : '') +
     lim +
     jobPie(jobs, g);
 
@@ -3848,19 +4063,28 @@ function syncInForm() {
   $('#inCancel').hidden = !inEditId;
 }
 function resetInForm() {
+  aiReviewReset($('#scanStatus'));
   inEditId = null;
   $('#inDate').value = todayStr();
   for (const id of ['inMonth', 'inJob', 'inGross', 'inNet']) $('#' + id).value = '';
   syncInForm();
 }
 
+// 収入・支出は開いた画面の先頭へ。フォーカスによる自動スクロールも防ぐ。
+function resetMoneyScroll(dlg) {
+  const tab = dlg.querySelector('.moneyTabs .on');
+  const focus = tab?.getClientRects().length ? tab : dlg.querySelector('.dlgHead h2');
+  focus?.focus({ preventScroll: true });
+  dlg.scrollTop = 0;
+  requestAnimationFrame(() => { if (dlg.open) dlg.scrollTop = 0; });
+}
 $('#incomeBtn').onclick = () => {
   inYear = new Date().getFullYear();
   $('#inLimit').value = state.incomeLimit;
   resetInForm(); resetScan(); renderJobChips(); renderIncome();
   $('#inScan').open = false;
   $('#incomeDlg').showModal();
-  $('#incomeDlg').scrollTop = 0;
+  resetMoneyScroll($('#incomeDlg'));
 };
 $('#inX').onclick = () => $('#incomeDlg').close();
 $('#inPrev').onclick = () => { inYear--; renderIncome(); };
@@ -3950,6 +4174,7 @@ $('#modeCrop').onclick = () => setScanMode('crop');
 $('#modeMask').onclick = () => setScanMode('mask');
 
 function resetScan() {
+  aiReviewReset($('#scanStatus'));
   if (scanUrl) URL.revokeObjectURL(scanUrl);
   scanImg = null; scanUrl = ''; scanCrop = null; scanMasks = []; scanHist = []; scanDrag = null;
   scanQueue = []; scanTotal = 0; syncScanQueue();
@@ -4101,6 +4326,7 @@ function scanToBase64(max = 1568) {
 $('#scanRun').onclick = async () => {
   if (scanRunning || !scanImg) return;
   const st = $('#scanStatus');
+  aiReviewReset(st);
   scanRunning = true;
   $('#scanRun').disabled = true;
   aiBegin('#scanRun');
@@ -4119,6 +4345,11 @@ $('#scanRun').onclick = async () => {
     st.textContent = got.length
       ? `${got.join('・')}を読み取ったよ。下の欄を確認して「${$('#inSave').textContent}」を押してね`
       : '金額が見つからなかった。範囲を変えてもう一回試してみて';
+    const extra = {};
+    if (!isYmd(d.payDate)) extra.payDate = '支給日が読めず、入力欄の日付をそのままにしたよ';
+    if (g == null && n == null) extra.gross = '総支給も手取りも読み取れなかったよ';
+    if (g != null && n != null && n > g) extra.net = '手取りが総支給より多くなっているよ';
+    aiReviewShow(st, [{ data: d, extra, fields: { payDate: $('#inDate'), month: $('#inMonth'), gross: $('#inGross'), net: $('#inNet') } }]);
   } catch (err) {
     st.textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
   } finally {
@@ -4155,6 +4386,26 @@ function toast(msg, undo, label = '元に戻す') {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { hideToastEl(); toastUndo = null; }, 10000);
 }
+
+/* ===== 押せない理由 ===== */
+// 条件がそろうまで押せないボタン・チェックは disabled にせず、見た目は今までどおり薄くして、押したら理由を一言出す
+// （disabled だと押しても何も起きず、なぜ押せないか分からない。デジタル庁デザインシステムのボタンの決まり）
+// why が空なら押せる状態に戻す。読み取り中など、処理の間だけ止めるものは今までどおり disabled
+function setWhy(el, why) {
+  if (!el) return;
+  if (why) { el.setAttribute('aria-disabled', 'true'); el.dataset.why = why; }
+  else { el.removeAttribute('aria-disabled'); delete el.dataset.why; }
+}
+// キーボードで操作しているかどうか：Tab を押したら html.kbd を付け、画面に触れたら外す（フォーカスの枠はこの間だけ）
+addEventListener('keydown', e => { if (e.key === 'Tab') document.documentElement.classList.add('kbd'); }, true);
+addEventListener('pointerdown', () => document.documentElement.classList.remove('kbd'), true);
+const whyOff = el => !!el && (el.disabled || el.getAttribute('aria-disabled') === 'true');
+document.addEventListener('click', e => {
+  const el = e.target.closest?.('[aria-disabled="true"][data-why]');
+  if (!el) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  toast(el.dataset.why);
+}, true);
 
 // 消す・置き換える操作を取り消せるようにする（直前の1回は端末にも残す）
 function restoreSnap(snap) {
@@ -4193,7 +4444,7 @@ photoDlg.innerHTML =
   '<div class="dlgHead"><h2 id="phTitle">写真から追加</h2>' +
   '<button type="button" class="x" id="phX" aria-label="閉じる">×</button></div>' +
   '<div id="phPick">' +
-  '<p class="hint">何の写真か選んでね。AIが読み取って、確認してから保存するよ</p>' +
+  '<p class="hint" data-keep>何の写真か選んでね。AIが読み取って、確認してから保存するよ</p>' +
   '<button type="button" class="phOpt" data-ph="grid"><b data-ico="course">時間割</b><small>時間割の画像から授業をまとめて登録</small></button>' +
   '<button type="button" class="phOpt" data-ph="pay"><b data-ico="wallet">給与明細</b><small>支給日と金額を読み取って収入に記録</small></button>' +
   '<button type="button" class="phOpt" data-ph="shift"><b data-ico="job">シフト表</b><small>PDFや写真から自分の勤務をカレンダーに追加</small></button>' +
@@ -4346,7 +4597,7 @@ function gridToRows(o) {
       const m = String(d).match(/(\d{1,2})\s*[\/／月]\s*(\d{1,2})/);
       const c = cs[j];
       if (!m || !Array.isArray(c) || !c[0]) return;
-      out.push({ month: +m[1], day: +m[2], start: c[0], end: c[1] || '' });
+      out.push({ month: +m[1], day: +m[2], start: c[0], end: c[1] || '', warnings: aiReviewNotes({ warnings: c[2] }) });
     });
   }
   return { out, bad };
@@ -4373,8 +4624,8 @@ shiftDlg.innerHTML =
   '<label class="fileBtn">PDF・写真を選ぶ<input type="file" id="shFile" accept="application/pdf,image/*" multiple class="vh"></label>' +
   '<p class="hint">PDFは全ページ、写真は何枚でもまとめて選べるよ</p>' +
   '<div id="shPages" class="shPages"></div>' +
-  '<p class="hint">チェックしたページは丸ごとAIに送られる（ほかの人の名前も入る）。いらないページはチェックを外してね</p>' +
-  '<button type="button" class="primary" id="shRun" disabled>読み取る</button>' +
+  '<p class="hint" data-keep>チェックしたページは丸ごとAIに送られる（ほかの人の名前も入る）。いらないページはチェックを外してね</p>' +
+  '<button type="button" class="primary" id="shRun" aria-disabled="true" data-why="先にPDFか写真を選んでね">読み取る</button>' +
   '<p id="shStatus" class="hint" aria-live="polite"></p>' +
   '<div id="shResult"></div>' +
   '</div>';
@@ -4405,6 +4656,7 @@ function syncShName() {
 $('#shName').addEventListener('input', syncShName);
 
 function shReset() {
+  aiReviewReset($('#shStatus'));
   shDoc?.destroy?.();
   shDoc = null; shSrc = []; shRows = [];
   shDone.clear();
@@ -4412,7 +4664,7 @@ function shReset() {
   $('#shPages').innerHTML = '';
   $('#shResult').innerHTML = '';
   $('#shStatus').textContent = '';
-  $('#shRun').disabled = true;
+  setWhy($('#shRun'), '先にPDFか写真を選んでね');
   $('#shRun').textContent = '読み取る';
 }
 
@@ -4486,7 +4738,7 @@ $('#shFile').onchange = async e => {
     st.textContent = '準備中…';
     await renderShPages();
     st.textContent = `${shSrc.length}ページ。読み取るページにチェックを入れてね`;
-    $('#shRun').disabled = false;
+    setWhy($('#shRun'), '');
   } catch (err) {
     shReset();
     st.textContent = 'ファイルが開けなかった：' + (err?.message || err);
@@ -4545,6 +4797,7 @@ $('#shRun').onclick = async () => {
     for (const [k, i] of todo.entries()) {
       if (k > 0) await aiSleep(4000); // 回数制限にかからないように間をあける
       st.textContent = `読み取り中… ${k + 1}/${todo.length}（${i + 1}ページ目）`;
+      st.dataset.aiPage = String(i + 1);
       const cv = await shCut(i, grid || auto ? 2400 : 1800);
       const b64 = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
       cv.width = cv.height = 0;
@@ -4593,11 +4846,13 @@ $('#shRun').onclick = async () => {
 const SH_JOIN_GAP = 15; // 分
 function showShRows() {
   const map = new Map();
+  let omitted = 0;
   for (const [page, arr] of shDone) for (const r of Array.isArray(arr) ? arr : []) {
     const date = shYmd(r?.month, r?.day), start = shTime(r?.start), end = shTime(r?.end);
-    if (!date || !start) continue;
+    if (!date || !start) { omitted++; continue; }
     const k = `${date} ${start}`;
-    if (!map.has(k)) map.set(k, { date, start, end, page, place: String(r?.place || '').trim().slice(0, 60) });
+    r._reviewChecked ||= [];
+    if (!map.has(k)) map.set(k, { date, start, end, page, _page: page + 1, place: String(r?.place || '').trim().slice(0, 60), _review: aiReviewNotes(r), _reviewChecked: r._reviewChecked });
   }
   // 同じ日で、終わりと次の始まりがつながってる勤務は1つにする。
   // 「まとめる」がオンなら、塾のコマみたいに間が SH_JOIN_GAP 分以内の勤務（17:00-17:50、18:00-18:50 など）もつなげる
@@ -4607,7 +4862,7 @@ function showShRows() {
   for (const r of list) {
     const p = shRows[shRows.length - 1];
     const d = p && p.date === r.date && p.end ? toMin(r.start) - toMin(p.end) : -1;
-    if (d >= 0 && d <= gap) { p.end = r.end || p.end; p.n++; p.place ||= r.place; }
+    if (d >= 0 && d <= gap) { p.end = r.end || p.end; p.n++; p.place ||= r.place; p._review = { ...p._review, ...r._review }; }
     else shRows.push({ ...r, on: true, n: 1 });
   }
   // 間があいてるコマがあるときだけ「まとめる」のチェックを出す（ぴったり続いてるのはいつもつなげる）
@@ -4619,6 +4874,7 @@ function showShRows() {
     ? (canJoin ? `<label class="inline shJoin"><input type="checkbox" id="shJoin"${state.shiftJoin ? ' checked' : ''}> 続いてるコマは1つにまとめる（間が${SH_JOIN_GAP}分以内）</label>` : '') +
       '<ul class="shList">' + shRows.map((r, i) =>
         `<li><label class="shDay"><input type="checkbox" data-shr="${i}" checked>${md(parseYmd(r.date))}</label>` +
+        `<input type="date" data-shdate="${i}" value="${r.date}" aria-label="勤務日">` +
         `<input type="time" data-sht="${i}" data-k="start" value="${r.start}" aria-label="入り">〜` +
         `<input type="time" data-sht="${i}" data-k="end" value="${r.end}" aria-label="退き">` +
         (r.n > 1 ? `<small class="muted">${r.n}コマ</small>` : '') +
@@ -4629,6 +4885,12 @@ function showShRows() {
     : shDone.size
       ? `<p class="muted">${shDoneName === '|mine' ? '勤務が見つからなかった。何人分も書いてある表なら、自分の名前を入れてね' : '勤務が見つからなかった。名前が表の書き方と同じか確認してね'}</p>`
       : '';
+  aiReviewShow($('#shStatus'), shRows.map((r, i) => {
+    const li = $('#shResult').querySelectorAll('.shList li')[i];
+    const extra = {};
+    if (r.end && toMin(r.end) <= toMin(r.start)) extra.end = '終了が開始より前か同じだよ。日付をまたぐ勤務か確認してね';
+    return { data: r, extra, fields: { date: li.querySelector('[data-shdate]'), start: li.querySelector('[data-k="start"]'), end: li.querySelector('[data-k="end"]'), place: li.querySelector('[data-shpl]') } };
+  }), omitted ? `日付や開始時刻が読めず、一覧に出せなかった勤務が${omitted}件あるよ。元画像も確認してね` : '');
 }
 
 $('#shResult').addEventListener('change', e => {
@@ -4636,6 +4898,7 @@ $('#shResult').addEventListener('change', e => {
   if (t.id === 'shJoin') { state.shiftJoin = t.checked; save(); return showShRows(); }
   if (t.dataset.shr != null) shRows[+t.dataset.shr].on = t.checked;
   if (t.dataset.sht != null) shRows[+t.dataset.sht][t.dataset.k] = t.value;
+  if (t.dataset.shdate != null) shRows[+t.dataset.shdate].date = t.value;
   if (t.dataset.shpl != null) shRows[+t.dataset.shpl].place = t.value.trim();
   const n = shRows.filter(r => r.on && r.start).length;
   if ($('#shAdd')) $('#shAdd').textContent = `${n}件をカレンダーに追加`;
@@ -4649,6 +4912,7 @@ $('#shResult').addEventListener('click', async e => {
   setEvPlace(title, $('#shPlace').value);
   const picks = shRows.filter(r => r.on && r.start);
   if (!picks.length) return alert('追加する勤務を選んでね');
+  if (picks.some(r => !isYmd(r.date))) return alert('勤務日を入れるか、その勤務のチェックを外してね');
   // 同じ日・同じ名前・同じ時刻のバイトは二重に入れない
   const findDup = r => state.events.find(x => x.date === r.date && x.kind === 'job' &&
     x.title === title && x.start === r.start && x.end === r.end);
@@ -4983,21 +5247,21 @@ function renderForecast() {
   const known = fcNames.filter(k => state.wages[k]?.w != null);
   const total = known.reduce((a, k) => a + by.get(k).pay, 0);
   const head =
-    `<div class="fcHead"><button type="button" id="fcPrev" aria-label="前の月">‹</button>` +
+    `<div class="fcHead calNav"><button type="button" id="fcPrev" aria-label="前の月">‹</button>` +
     `<b>${d0.getMonth() + 1}月の見込み</b>` +
     `<button type="button" id="fcNext" aria-label="次の月">›</button></div>`;
   if (!fcNames.length) {
-    fcBox.innerHTML = head + '<p class="hint">この月のバイト予定はまだないよ。カレンダーに入れるかシフト表を読み取ると、ここに見込みが出るよ</p>';
+    fcBox.innerHTML = head + '<p class="hint" data-keep>この月のバイト予定はまだないよ。カレンダーに入れるかシフト表を読み取ると、ここに見込みが出るよ</p>';
     return;
   }
   fcBox.innerHTML = head +
     `<p class="inTotal">${known.length ? yen(total) : '—'}<small>${fcOffset < 0 ? '働いた分' : '予定どおり働いたら'}</small></p>` +
-    (known.length < fcNames.length ? '<p class="hint">時給が未入力のバイトは合計に入ってないよ</p>' : '') +
+    (known.length < fcNames.length ? '<p class="hint" data-keep>時給が未入力のバイトは合計に入ってないよ</p>' : '') +
     '<ul class="fcList">' + fcNames.map((k, i) => {
       const r = by.get(k), wg = state.wages[k] || {};
       return `<li><div class="fcRow"><span>${esc(k)}<small> ${r.n}回・${hrs(r.min)}</small></span>` +
         `<b>${wg.w != null ? yen(r.pay) : '時給を入れてね'}</b></div>` +
-        (r.noTime ? `<p class="hint">時刻のない予定${r.noTime}件は数えてないよ</p>` : '') +
+        (r.noTime ? `<p class="hint" data-keep>時刻のない予定${r.noTime}件は数えてないよ</p>` : '') +
         `<div class="fcIn"><label>時給<input type="number" inputmode="numeric" min="0" data-fw="${i}" value="${wg.w ?? ''}">円</label>` +
         `<label>休憩<input type="number" inputmode="numeric" min="0" data-fb="${i}" value="${wg.brk || ''}">分</label></div></li>`;
     }).join('') + '</ul>' +
@@ -5178,7 +5442,7 @@ function buildIcs() {
       const its = itemsFor(c, o ? o.start : date).map(x => x.text.trim()).filter(Boolean);
       if (!its.length) continue;
       for (const x of its) if (!all.includes(x)) all.push(x);
-      desc.push(`${c.day === -1 ? '集中' : c.period + '限'} ${nm(c)}：${its.join('、')}`);
+      desc.push(`${c.day === -1 ? '集中' : periodLabel(c) + '限'} ${nm(c)}：${its.join('、')}`);
     }
     if (!all.length) continue;
     lines.push(...icsEvent(`pack-${ymd(date)}`, date, `持ち物：${all.join('、')}`, desc.join('\n'), stamp, seq));
@@ -5580,14 +5844,19 @@ async function syncNotify() {
   try {
     const p = await LN.getPending();
     if (p.notifications.length) await LN.cancel({ notifications: p.notifications.map(x => ({ id: x.id })) });
-    if (!state.notify.on) return;
+    // ToDoの「○分後に知らせる」（アラームにできない端末・目覚ましの機能がオフのとき）は、「通知を使う」がオフでも出す（押した＝知らせてほしい）
+    const todo = window.todoNotifs?.() || [];
+    if (!state.notify.on && !todo.length) return;
     if ((await LN.checkPermissions()).display !== 'granted') return;
-    const list = notifyPlan().map((x, i) => ({
+    // ToDoの分だけ、「アラームとリマインダー」が許可されてれば時間ぴったりに（数分後の用事なので、ずれると困る）
+    let exact = false;
+    if (todo.length) try { exact = (await LN.checkExactNotificationSetting?.())?.exact_alarm === 'granted'; } catch { }
+    const list = todo.map(x => ({ ...x, exact })).concat(state.notify.on ? notifyPlan() : []).slice(0, NOTIFY_MAX).map((x, i) => ({
       id: i + 1, title: x.title, body: x.body,
       schedule: { at: x.at, allowWhileIdle: true },
-      // Android：正確な時刻じゃなくていい（数分ずれてもいい）。true のままだと Android 14 以降は
+      // Android：ふだんは正確な時刻じゃなくていい（数分ずれてもいい）。許可がないのに true にすると Android 14 以降は
       // 予約するたびに「アラームとリマインダー」の設定画面が開いてしまう
-      isExactNotification: false
+      isExactNotification: !!x.exact
     }));
     if (list.length) await LN.schedule({ notifications: list });
   } catch (err) {
@@ -5936,37 +6205,55 @@ $('#calGrid').addEventListener('pointerdown', e => {
   if (!ev) return;
   endDrag();
   const x0 = e.clientX, y0 = e.clientY;
-  drag = { ev, x0, y0, on: false, over: null, ghost: null };
+  drag = { ev, x0, y0, on: false, armed: false, over: null, ghost: null };
+  // 長押しになったら「移動・複製」のメニュー。押したまま動かし始めたら、メニューは閉じてそのまま移動
   drag.timer = setTimeout(() => {
     if (!drag) return;
-    drag.on = true;
+    drag.armed = true;
     navigator.vibrate?.(15);
-    const g = document.createElement('div');
-    g.className = 'dragGhost ev ' + ev.kind;
-    g.textContent = ev.title || EV_LABEL[ev.kind];
-    document.body.append(g);
-    drag.ghost = g;
-    dragTrash.classList.add('on');
-    moveGhost(x0, y0);
+    evActOpen(ev, x0, y0, {
+      ev,
+      // 変更：その日を選んで、変更の画面
+      edit: () => { calSel = ev.date; renderCal(); renderDay(); startEvEdit(ev.id); },
+      place: {
+        where: '行き先の日',
+        pick: t => { const c = t.closest('#calGrid .cd'); return c && { date: c.dataset.date }; },
+        apply: (to, mode) => mode === 'copy' ? copyEv(ev, { date: to.date }) : dropMove(ev, to.date)
+      }
+    });
   }, 400);
 });
+function beginDrag() {
+  drag.on = true;
+  evActClose();
+  const g = document.createElement('div');
+  g.className = 'dragGhost ev ' + drag.ev.kind;
+  g.textContent = drag.ev.title || EV_LABEL[drag.ev.kind];
+  document.body.append(g);
+  drag.ghost = g;
+  dragTrash.classList.add('on');
+}
 document.addEventListener('pointermove', e => {
   if (!drag) return;
   if (!drag.on) {
-    // 長押しになる前に指が動いたら、ふつうのスクロール
-    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 10) endDrag();
-    return;
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) <= 10) return;
+    // 長押しの前に指が動いたら、ふつうのスクロール。長押しのあとなら、つかんで移動
+    if (!drag.armed) return endDrag();
+    beginDrag();
   }
   moveGhost(e.clientX, e.clientY);
 });
 document.addEventListener('pointerup', () => {
   if (!drag) return;
-  const { on, over, ev, trash } = drag;
+  const { on, armed, over, ev, trash } = drag;
   endDrag();
+  if (armed) dragSkipClick = evActUp = Date.now(); // 長押しで指を離したらメニューが残る（あとの「タップ」では何もしない）
   if (!on) return;
-  dragSkipClick = Date.now();
   if (trash) return dropTrash(ev);
-  const to = over?.dataset.date;
+  dropMove(ev, over?.dataset.date);
+});
+// 予定をほかの日へ移す（共有した予定はロックを確かめて、取り込んだ予定は元のカレンダーで）
+function dropMove(ev, to) {
   if (!to || to === ev.date) return;
   if (ev.gid) {
     if (grLocked(ev)) return alert(grLockMsg(ev));
@@ -5975,7 +6262,7 @@ document.addEventListener('pointerup', () => {
   if (ev.src === 'cal') return alert(CAL_SRC_MSG);
   calSel = to;
   moveEvents(new Set([ev.id]), evDayDiff(ev.date, to), `${md(parseYmd(to))}に移動したよ`);
-});
+}
 // ゴミ箱に落とした予定を消す（くり返しの予定もこの1件だけ。共有した予定は今の削除と同じく確かめてから）
 function dropTrash(ev) {
   if (ev.gid) {
@@ -5995,7 +6282,7 @@ function dropTrash(ev) {
 }
 document.addEventListener('pointercancel', () => endDrag());
 // つかんでる間は画面をスクロールさせない
-document.addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchmove', e => { if (drag?.on || drag?.armed) e.preventDefault(); }, { passive: false });
 // 長押しメニューと、離したあとの「日付タップ」を止める
 $('#calGrid').addEventListener('contextmenu', e => {
   if (e.target.closest('[data-evid]')) e.preventDefault();
@@ -6003,6 +6290,91 @@ $('#calGrid').addEventListener('contextmenu', e => {
 $('#calGrid').addEventListener('click', e => {
   if (Date.now() - dragSkipClick < 500) e.stopImmediatePropagation();
 }, true);
+
+/* ===== 予定を長押し：変更・移動・複製を選ぶ ===== */
+// 長押しして指を離すと、小さいメニュー（変更・移動・複製）。移動・複製を選んだら、上に帯を出して行き先をタップしてもらう。
+// 長押ししたまま指を動かしたら、メニューは閉じてそのまま移動（月のカレンダー・時間軸のそれぞれのつかむ処理）
+const evActMenu = document.createElement('div');
+evActMenu.id = 'evActMenu'; evActMenu.hidden = true; evActMenu.setAttribute('role', 'menu');
+// iPhone の長押しメニューのように、すりガラスの上にアイコンと名前を縦に並べる（アイコンは線の絵、色は文字と同じ）
+const evActIco = d => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+evActMenu.innerHTML = [
+  ['edit', '変更', 'M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4'],
+  ['move', '移動', 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3'],
+  ['copy', '複製', 'M9 9h11v11H9zM5 15H4V4h11v1']
+].map(([k, n, d]) => `<button type="button" role="menuitem" data-act="${k}">${evActIco(d)}<span>${n}</span></button>`).join('');
+document.body.append(evActMenu);
+const evPlaceBar = document.createElement('div');
+evPlaceBar.id = 'evPlaceBar'; evPlaceBar.hidden = true; evPlaceBar.setAttribute('role', 'status');
+evPlaceBar.innerHTML = '<span></span><button type="button" id="evPlaceX">やめる</button>';
+document.body.append(evPlaceBar);
+let evActH = null, evActUp = 0, evPlacing = null;
+// h = { edit(), place: { where, pick(target, e) → 行き先 or null, apply(行き先, 'move'|'copy') } }
+function evActOpen(ev, x, y, h) {
+  evPlaceEnd();
+  evActH = h;
+  evActMenu.hidden = false;
+  const w = evActMenu.offsetWidth, hh = evActMenu.offsetHeight;
+  evActMenu.style.left = Math.min(Math.max(8, x - w / 2), innerWidth - w - 8) + 'px';
+  // 指で隠れないように、指の上に出す（上に入らなければ下）
+  evActMenu.style.top = (y - hh - 28 >= 8 ? y - hh - 28 : Math.min(y + 28, innerHeight - hh - 8)) + 'px';
+}
+function evActClose() { evActMenu.hidden = true; evActH = null; }
+function evPlaceStart(ev, mode, o) {
+  evPlacing = { ev, mode, ...o };
+  evPlaceBar.querySelector('span').textContent = `「${ev.title || EV_LABEL[ev.kind] || '予定'}」を${mode === 'copy' ? '複製' : '移動'}：${o.where}をタップしてね`;
+  evPlaceBar.hidden = false;
+  document.documentElement.classList.add('evPlacing');
+}
+function evPlaceEnd() {
+  evPlacing = null;
+  evPlaceBar.hidden = true;
+  document.documentElement.classList.remove('evPlacing');
+}
+document.addEventListener('click', e => {
+  if (!evActMenu.hidden) {
+    // 長押しで指を離したときの「タップ」は、メニューを閉じない
+    if (Date.now() - evActUp < 500) { e.preventDefault(); e.stopPropagation(); return; }
+    const b = e.target.closest('#evActMenu [data-act]');
+    const h = evActH;
+    evActClose();
+    e.preventDefault(); e.stopPropagation(); // メニューの外を押したら閉じるだけ（その下のものは押さない）
+    if (!b || !h) return;
+    if (b.dataset.act === 'edit') return h.edit();
+    return evPlaceStart(h.ev, b.dataset.act, h.place);
+  }
+  if (!evPlacing) return;
+  if (e.target.closest('#evPlaceBar')) { if (e.target.closest('#evPlaceX')) evPlaceEnd(); return; }
+  const to = evPlacing.pick(e.target, e);
+  if (!to) return; // 行き先でなければ、ふつうに押せる（月をめくる・時間軸をめくるなど）
+  e.preventDefault(); e.stopPropagation();
+  const p = evPlacing;
+  evPlaceEnd();
+  p.apply(to, p.mode);
+}, true);
+addEventListener('keydown', e => { if (e.key === 'Escape') { evActClose(); evPlaceEnd(); } });
+// 下のタブでほかの画面に移ったら、行き先選びはやめる
+$('#tabbar')?.addEventListener('click', () => { evActClose(); evPlaceEnd(); });
+
+// 予定を複製（新しい id で、行き先の日・時刻に）。共有した予定は同じグループに、ほかは自分の予定として
+function copyEv(ev, patch) {
+  const v = { ...ev, ...patch };
+  for (const k of ['id', 'gid', 'doc', 'src', 'ext', 'lock', 'own', 'by', 'byName', 'at']) delete v[k];
+  const msg = `${md(parseYmd(v.date))}${patch.start ? ' ' + patch.start : ''}に複製したよ`;
+  if (ev.gid) {
+    grAdd(ev.gid, { ...v, lockSet: false }).catch(grFail);
+    return toast(msg);
+  }
+  v.id = uid();
+  state.events.push(v);
+  save(); renderAll(); renderCal(); renderDay();
+  document.dispatchEvent(new Event('evEditDone')); // 時間軸を描き直す
+  toast(msg, () => {
+    state.events = state.events.filter(x => x.id !== v.id);
+    save(); renderAll(); renderCal(); renderDay();
+    document.dispatchEvent(new Event('evEditDone'));
+  });
+}
 
 /* ===== 機能をさがす ===== */
 const goSet = sel => {
@@ -6021,6 +6393,8 @@ const goTerm = sel => {
   if (d) { d.open = true; el.scrollIntoView({ block: 'center' }); }
 };
 const FEATURES = [
+  { id: 'grades', name: '成績・単位とGPA', where: '時間割 → 上の「一覧」（授業一覧） → 成績・単位', desc: '単位数と成績をまとめて入力し、学期・通算GPAと修得単位を確認。使う人だけ有効にできる', kw: 'GPA 成績 単位 評価 修得 通算', grid: 1, go: () => window.openGrades?.() },
+  { id: 'courseOverview', name: '授業一覧・欠席と遅刻', where: '時間割 → 上の「一覧」（授業一覧）', desc: '今の学期の授業と欠席・遅刻を一覧で見る。上限が近い授業だけに絞ったり、欠席が多い順にも並べられる', kw: '欠席 遅刻 上限 一覧 出席 要注意', grid: 1, go: () => { courseView = 'list'; showTab('grid'); } },
   { id: 'grid', name: '時間割', where: '下の「時間割」タブ', desc: '授業を曜日と時限で並べる。マスをタップすると授業の詳細', kw: '時間割 授業 科目 登録', grid: 1, go: () => showTab('grid') },
   { id: 'photoGrid', name: '写真から時間割を読み込む', where: '＋ →「写真から追加」→ 時間割', desc: '大学サイトの時間割のスクショから、AIが授業を入れる', kw: '写真 画像 スクショ 読み取り 読み込み 自動', grid: 1, go: () => startPhoto('grid') },
   { id: 'photoPay', name: '給与明細を読み取る', where: '＋ →「写真から追加」→ 給与明細', desc: '明細の写真から支給日・総支給・手取りを読み取る。いらない所は塗りつぶせる', kw: '給与 明細 給料 写真 読み取り', go: () => openPhoto('pick') },
@@ -6032,7 +6406,7 @@ const FEATURES = [
   { id: 'cal', name: 'カレンダー', where: '下の「カレンダー」タブ', desc: '課題・バイト・予定・休みを月の表で見る。上の年月をタップすると飛べる', kw: 'カレンダー 予定 スケジュール 月', go: () => showTab('cal') },
   { id: 'job', name: 'バイトの予定', where: 'カレンダーで日付をタップ →「＋ 予定」→ 種類を「バイト」', desc: '同じ曜日に4週分まとめて追加できる。夜勤もOK', kw: 'バイト アルバイト 勤務 塾', go: () => showTab('cal') },
   { id: 'income', name: '収入', where: '「収入」ボタン', desc: '月ごと・バイト先ごとの収入、1年と1か月の目標額の円グラフ、年間の上限まであといくら、時給からの見込み', kw: '収入 給料 お金 扶養 見込み 時給 上限', go: () => $('#incomeBtn').click() },
-  { id: 'calDrag', name: '予定を動かす・ゴミ箱で消す', where: 'カレンダーで予定を長押し', desc: '長押しでつかんで別の日に落とすと移動。つかんでいる間に下に出るゴミ箱に落とすと消える（元に戻せる）', kw: '移動 動かす ドラッグ 長押し 日付を変える 削除 消す ゴミ箱 スワイプ', go: () => showTab('cal') },
+  { id: 'calDrag', name: '予定の変更・移動・複製・ゴミ箱で消す', where: 'カレンダーで予定を長押し（上の「時間」でも）', desc: '長押しして離すと「変更・移動・複製」を選べる。移動・複製は行き先の日（時間軸なら時刻も）をタップ。長押ししたまま動かすとそのまま移動、下に出るゴミ箱に落とすと消える（元に戻せる）', kw: '移動 動かす ドラッグ 長押し 日付を変える 削除 消す ゴミ箱 スワイプ 複製 コピー 同じ予定 変更 編集', go: () => showTab('cal') },
   { id: 'term', name: '学期', where: '時間割タブの上の「学期・休み」／上の学期の選択', desc: '前期・後期の切り替え、新しい学期づくり、開始日と終了日', kw: '学期 前期 後期 年度 新学期 開始日', grid: 1, go: () => goTerm('#termList') },
   { id: 'offday', name: '授業がない日・曜日の振替', where: '時間割タブの上の「学期・休み」', desc: '祝日や行事で授業がない日、ほかの曜日の授業をする日', kw: '祝日 振替 授業がない 休み', grid: 1, go: () => goTerm('#offFrom') },
   { id: 'intensive', name: '集中講義', where: '時間割の下', desc: '期間だけ決まってる授業を登録', kw: '集中講義 集中', grid: 1, go: () => showTab('grid') },
@@ -6061,7 +6435,7 @@ const FEATURES = [
 const FEAT_NEED = {
   job: ['job'], income: ['job'], calSync: ['job'], photoPay: ['job', 'ai'], photoShift: ['job', 'ai'],
   photoGrid: ['grid', 'ai'], photoMemo: ['ai'], ai: ['ai'], aiMore: ['ai'], group: ['group'], grNews: ['group'], calShow: ['group'],
-  spend: ['spend'], todo: ['todo'], habit: ['habit'], alarm: ['alarm'], alarmEar: ['alarm'], exam: ['exam'], mood: ['diary'],
+  spend: ['spend'], todo: ['todo'], todoAlarm: ['todo'], habit: ['habit'], alarm: ['alarm'], alarmEar: ['alarm'], exam: ['exam'], mood: ['diary'],
   share: ['grid', 'share'], friendGrid: ['grid', 'share'], points: ['points'], miniNote: ['grid']
 };
 const featShown = id => id === 'notes' ? featOn('memo') || featOn('diary') : (FEAT_NEED[id] || []).every(featOn);
@@ -6624,7 +6998,7 @@ $('#gList').addEventListener('click', async e => {
       const { code, exp } = await makeInvite(gid);
       const g = grGroups.find(x => x.id === gid);
       box.innerHTML = `<p class="gCode">${code}</p>` +
-        `<p class="hint">${md(new Date(exp))}まで使えるよ。相手の「共有グループ」→「招待コードで入る」に入れてもらってね</p>` +
+        `<p class="hint" data-keep>${md(new Date(exp))}まで使えるよ。相手の「共有グループ」→「招待コードで入る」に入れてもらってね</p>` +
         `<div class="row"><button type="button" data-gcopy="${code}">コードをコピー</button>` +
         `<button type="button" data-gshare="${code}" data-gname="${esc(g?.name || '')}">送る</button></div>`;
     } catch (err) { box.textContent = fbErr(err); }
@@ -6670,8 +7044,18 @@ $('#gList').addEventListener('click', async e => {
             await b.commit();
           }
         } catch (err) { console.warn('変更の記録', err); }
+        // 空きコママッチに出してもらった時間割も消す
+        try {
+          const gs = await F.getDocs(F.collection(db, 'groups', g.id, 'grids'));
+          for (const d of gs.docs) await F.deleteDoc(d.ref);
+        } catch (err) { console.warn('空きコマの時間割', err); }
         await F.deleteDoc(ref);
-      } else await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
+      } else {
+        // 空きコママッチに出した自分の時間割は、抜ける前に消す（抜けたあとは消せない）
+        try { await F.deleteDoc(F.doc(db, 'groups', g.id, 'grids', uid)); } catch (err) { console.warn('空きコマの時間割', err); }
+        await F.updateDoc(ref, { members: F.arrayRemove(uid), [`names.${uid}`]: F.deleteField() });
+      }
+      if (state.grGridOn?.[g.id]) { delete state.grGridOn[g.id]; save(); }
       await refreshGroups(`「${g.name}」から抜けたよ`);
     } catch (err) { gSay(fbErr(err)); }
   }
@@ -7331,7 +7715,7 @@ function renderPushHead() {
   gPush.hidden = !FM || !grGroups.length;
   if (gPush.hidden) return;
   gPush.innerHTML = pushPerm === 'granted' ? ''
-    : pushPerm === 'denied' ? '<p class="hint">通知が届かない設定になってるよ。スマホの「設定」→ がくログ → 通知 でオンにしてね</p>'
+    : pushPerm === 'denied' ? '<p class="hint" data-keep>通知が届かない設定になってるよ。スマホの「設定」→ がくログ → 通知 でオンにしてね</p>'
     : '<button type="button" id="gPushAsk" data-ico="bell">グループの通知をオンにする</button><p class="hint">ほかの人が予定を足したり変えたりしたら、まとめて知らせるよ（夜は朝にまとめて）</p>';
 }
 gPush.addEventListener('click', async e => {
@@ -7418,7 +7802,7 @@ function syncLockUI() {
   if (!row) return;
   const e = evEditId ? findAnyEv(evEditId) : null;
   row.hidden = $('#evShareRow').hidden || !$('#evShare').value;
-  $('#evLock').disabled = !!e?.gid && !grIsMine(e);
+  setWhy($('#evLock'), !!e?.gid && !grIsMine(e) && 'ロックは予定を入れた人だけが変えられるよ');
 }
 $('#evShare').addEventListener('change', syncLockUI);
 syncLockUI();
@@ -7588,7 +7972,7 @@ function examLine(now) {
     return `<div class="examLine"><p data-ico="exam"><b>${when}</b> ${esc(e.title || '試験')}` +
       ` <small>${md(parseYmd(e.date))}${e.start ? ' ' + esc(e.start) : ''}</small></p>` +
       (prep && n < EXAM_PREP_DAYS ? examActs(e) : '') + '</div>';
-  }).join('') + (xs.length > 3 ? `<p class="hint">ほかに試験${xs.length - 3}件</p>` : '');
+  }).join('') + (xs.length > 3 ? `<p class="hint" data-keep>ほかに試験${xs.length - 3}件</p>` : '');
 }
 
 // 試験前の見返しボタン（授業がわからなければ「授業とつなぐ」）
@@ -7623,8 +8007,8 @@ function renderTomorrow() {
     const o = occurrence(c, tm);
     rows.push({
       min: o ? o.start.getHours() * 60 + o.start.getMinutes() : 2000 + c.period,
-      time: o ? hm(o.start) : `${c.period}限`, id: c.id, cls: 'f-cls',
-          label: `${c.period}限 ${esc(nm(c))}` + (at.has(c) ? '' : ' <span class="odTag">オンデマ</span>') +
+      time: o ? hm(o.start) : `${periodLabel(c)}限`, id: c.id, cls: 'f-cls',
+          label: `${periodLabel(c)}限 ${esc(nm(c))}` + (at.has(c) ? '' : ' <span class="odTag">オンデマ</span>') +
             (c.room ? ` <small>${esc(c.room)}</small>` : '')
     });
   }
@@ -8292,7 +8676,7 @@ function shopItem(s, p, short) {
   return `<li>${s.img ? `<img class="shopImg" src="${s.img}" alt="">` : ''}<div class="shopName"><b>${esc(nm)}</b>${s.desc ? `<small>${esc(s.desc)}</small>` : ''}</div>` +
     (s.img ? '' : `<button type="button" class="wgPrevBtn" data-wgprev="${s.id}">見る</button>`) +
     (got ? '<span class="ptGot">交換済み</span>'
-      : `<button type="button" data-buy="${s.id}"${p.pt < s.cost ? ' disabled' : ''}>${s.cost}p</button>`) + '</li>';
+      : `<button type="button" data-buy="${s.id}"${p.pt < s.cost ? ` aria-disabled="true" data-why="ポイントが足りないよ（あと${s.cost - p.pt}p）"` : ''}>${s.cost}p</button>`) + '</li>';
 }
 function shopHTML(p) {
   if (!SHOP.length) return '<p class="muted">交換できるものは準備中。ポイントは貯めておけるよ</p>';
@@ -8887,7 +9271,7 @@ if ($('#nSign')) {
     '<select id="abR"><option value="3">1/3</option><option value="4">1/4</option>' +
     '<option value="5">1/5</option><option value="0">回数で決める</option></select> ' +
     '<span id="abCBox" hidden><input type="number" id="abC" min="0" max="40" value="5"> 回まで</span></div>' +
-    '<p class="hint" id="abInfo"></p>' +
+    '<p class="hint" id="abInfo" data-fold></p>' +
     '<label class="row"><input type="checkbox" id="abOver"> 設定済みの授業も上書きする</label>' +
     '<button type="button" id="abRun">今の学期の授業に反映</button>';
   ($('#setGrid') || $('#settingsDlg')).append(box);
@@ -9171,14 +9555,14 @@ renderAll();
   syDlg.id = 'syDlg';
   syDlg.innerHTML = '<h3>シラバスから読み取り</h3>' +
     '<p class="hint" id="syStatus"></p><div id="syRows"></div>' +
-    '<div class="row syBtns"><button type="button" class="primary" id="syAdd" disabled>チェックした分を追加</button>' +
+    '<div class="row syBtns"><button type="button" class="primary" id="syAdd" aria-disabled="true" data-why="追加する行にチェックを入れてね">チェックした分を追加</button>' +
     '<button type="button" id="syClose">閉じる</button></div>';
   document.body.append(syDlg);
   $('#cSyllabusHint').insertAdjacentHTML('afterend',
     '<button type="button" id="syBtn" data-ico="camera">シラバスの画像から課題・試験を読む</button>' +
     '<input type="file" id="syFile" accept="image/*" multiple hidden>');
 
-  let syList = [];
+  let syList = [], syOmitted = 0;
   const syRender = () => {
     $('#syRows').innerHTML = syList.map((r, i) =>
       `<div class="syRow" data-i="${i}">` +
@@ -9188,13 +9572,18 @@ renderAll();
       `<input data-f="title" value="${esc(r.title)}" maxlength="40" aria-label="名前">` +
       `<input type="date" data-f="date" value="${r.date}" aria-label="日付">` +
       (r.dup ? '<small class="muted">登録済み</small>' : '') + '</div>').join('');
-    $('#syAdd').disabled = !syList.some(r => r.on);
+    setWhy($('#syAdd'), !syList.some(r => r.on) && '追加する行にチェックを入れてね');
+    aiReviewShow($('#syStatus'), syList.map((r, i) => {
+      const row = $('#syRows').children[i];
+      return { data: r, extra: !r.date ? { date: '日付が読み取れなかったよ' } : {},
+        fields: { title: row.querySelector('[data-f="title"]'), date: row.querySelector('[data-f="date"]') } };
+    }), syOmitted ? `名前が読めず、一覧に出せなかった課題・試験が${syOmitted}件あるよ。元画像も確認してね` : '');
   };
   const syEdit = e => {
     const row = e.target.closest('.syRow'), f = e.target.dataset.f;
     if (!row || !f) return;
     syList[+row.dataset.i][f] = f === 'on' ? e.target.checked : e.target.value;
-    $('#syAdd').disabled = !syList.some(r => r.on);
+    setWhy($('#syAdd'), !syList.some(r => r.on) && '追加する行にチェックを入れてね');
   };
   $('#syRows').addEventListener('input', syEdit);
   $('#syRows').addEventListener('change', syEdit);
@@ -9205,20 +9594,22 @@ renderAll();
     e.target.value = '';
     const c = cur();
     if (!files.length || !c) return;
-    syList = []; syRender();
+    syList = []; syOmitted = 0; syRender();
     const st = $('#syStatus');
+    aiReviewReset(st);
     syDlg.showModal();
     try {
       for (const [i, f] of files.entries()) {
         st.textContent = `${i + 1}/${files.length}枚目を読み取り中…`;
+        st.dataset.aiPage = String(i + 1);
         const txt = await callVision(await fileToJpegBase64(f), SY_PROMPT(c), st);
         const s = txt.indexOf('['), en = txt.lastIndexOf(']');
         if (s < 0 || en < s) throw new Error(`${i + 1}枚目の結果がうまく読めなかった`);
         for (const x of JSON.parse(txt.slice(s, en + 1))) {
-          if (!x || typeof x.title !== 'string' || !x.title.trim()) continue;
+          if (!x || typeof x.title !== 'string' || !x.title.trim()) { syOmitted++; continue; }
           const kind = x.kind === 'exam' ? 'exam' : 'task';
           const date = syMdDate(+x.month, +x.day) || (+x.lesson > 0 ? syLessonDate(c, +x.lesson) : '');
-          const r = { kind, title: x.title.trim().slice(0, 40), date };
+          const r = { kind, title: x.title.trim().slice(0, 40), date, _review: aiReviewNotes(x, !syMdDate(+x.month, +x.day) && +x.lesson > 0 ? { date: '第何回の授業かをもとに日付を計算したよ' } : {}), _page: i + 1 };
           if (syList.some(y => y.kind === r.kind && y.title === r.title && y.date === r.date)) continue;
           r.dup = syDup(c, r);
           r.on = !r.dup && (kind === 'task' || !!date);
@@ -9287,11 +9678,11 @@ function wgData() {
       const tm = state.times[c.period - 1] || {};
       const od = !at.has(c);
       return {
-        period: c.period,
+        period: c.period, periodEnd: endPeriod(c),
         name: nm(c) + (od ? '（オンデマ）' : ''),
         room: od ? '' : (c.room || ''),
         start: o ? tm.start : '',
-        end: o ? tm.end : '',
+        end: o ? state.times[endPeriod(c) - 1].end : '',
         items: od ? [] : itemsFor(c, o ? o.start : d).map(x => x.text.trim()).filter(Boolean)
       };
     });
@@ -9637,45 +10028,118 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
 }
 
 /* ===== 空きコママッチ ===== */
+// 上に「空き／授業」の切り替えと、人のチップ（全員・自分・友達…。押した人だけで比べる）。
+// 表は左に時限と始まる時刻。「空き」はマスに「授業がある人数／対象の人数」（だれも授業がなければ「空き」）、授業がある人が多いほど濃く。
+// 「授業」はマスに授業がある人の名前。右上の「＋」で、グループ（自分だけのまとまり・共有グループ）と保存してある友達を選ぶ。
+// 共有グループは、メンバーが「自分の時間割を出す」をオンにすると、授業があるコマだけ（授業名・教室は出さない）を
+// groups/{gid}/grids/{uid} に置く。新しく入った人も、出せばみんなの空きコママッチに入る
+if (!Array.isArray(state.fmGroups)) state.fmGroups = [];
+state.fmGroups = state.fmGroups.filter(g => g && typeof g.id === 'string' && typeof g.name === 'string' && Array.isArray(g.members))
+  .map(g => ({ id: g.id, name: g.name.slice(0, 20), members: g.members.filter(m => typeof m === 'string').slice(0, 50) }));
+if (!state.grGridOn || typeof state.grGridOn !== 'object' || Array.isArray(state.grGridOn)) state.grGridOn = {};
+const fmBusyOf = cs => new Set(cs.filter(c => c.day >= 0).flatMap(c => Array.from({ length: endPeriod(c) - c.period + 1 }, (_, i) => c.day + '-' + (c.period + i))));
 {
   const fmDlg = document.createElement('dialog');
   fmDlg.id = 'freeDlg';
-  fmDlg.innerHTML =
-    '<b>空きコママッチ</b>' +
-    '<p class="hint">緑はみんな空いてるコマ。数字は空いてる人数。マスをタップすると名前が出るよ</p>' +
-    '<div class="fmPeople" id="fmPeople"></div>' +
-    '<div class="fmWrap"><table class="fmTbl" id="fmTbl"></table></div>' +
-    '<button type="button" id="fmClose">閉じる</button>';
+  fmDlg.innerHTML = '<div class="dlg">' +
+    '<div class="dlgHead"><h2 id="fmTitle"></h2>' +
+    '<button type="button" id="fmPlus" class="fmPlus" aria-label="グループ・人を選ぶ" aria-expanded="false">' +
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM3 21c0-3.9 3.1-7 7-7s7 3.1 7 7M19 8v6M16 11h6"/></svg></button>' +
+    '<button type="button" class="x big" id="fmClose" aria-label="閉じる">×</button></div>' +
+    '<div class="fmAddList" id="fmAddList" hidden></div>' +
+    '<label class="inline fmMine" id="fmMine" hidden><input type="checkbox" id="fmMineOn"> このグループに自分の時間割を出す（授業があるコマだけ）</label>' +
+    '<div class="fmSeg" role="group" aria-label="表示"><button type="button" data-fmview="free" aria-pressed="true">空き</button>' +
+    '<button type="button" data-fmview="busy" aria-pressed="false">授業</button></div>' +
+    '<div class="fmPeople" id="fmPeople" role="group" aria-label="比べる人"></div>' +
+    '<p class="hint" id="fmNote"></p>' +
+    '<div class="fmWrap"><table class="fmTbl" id="fmTbl"></table></div></div>';
   document.body.append(fmDlg);
   $('#shareRead').insertAdjacentHTML('afterend',
     '<button type="button" id="fmAdd">空きコマを比べる</button>');
 
-  let fmList = [];
-  const busyOf = cs => new Set(cs.filter(c => c.day >= 0).map(c => c.day + '-' + c.period));
+  // src：今見ているグループ（null＝その場で集めた人、{ type: 'local' | 'shared', id }）
+  let fmList = [], view = 'free', pick = new Set(), src = null, waiting = []; // pick が空なら全員。waiting＝共有グループでまだ出してない人
+  const people = () => [{ key: 'me', name: '自分', busy: fmBusyOf(courses()) }, ...fmList];
+  const frEntry = g => ({ key: 'fr-' + g.id, name: g.name, busy: fmBusyOf(g.courses) });
 
   const renderFree = () => {
-    const all = [{ name: '自分', busy: busyOf(courses()) }, ...fmList];
+    const all = people();
+    for (const k of pick) if (!all.some(p => p.key === k)) pick.delete(k);
+    if (pick.size >= all.length) pick.clear();
+    const sel = pick.size ? all.filter(p => pick.has(p.key)) : all, m = sel.length;
     const sat = state.showSat || all.some(p => [...p.busy].some(k => k.startsWith('5-')));
     const days = sat ? 6 : 5;
-    const maxP = Math.max(state.periods,
-      ...all.flatMap(p => [...p.busy].map(k => +k.split('-')[1])));
-    $('#fmPeople').innerHTML = all.map((p, i) =>
-      `<span class="fmChip">${esc(p.name)}` +
-      (i ? `<button type="button" data-fmdel="${i - 1}" aria-label="外す">×</button>` : '') +
-      '</span>').join('');
+    const maxP = Math.max(state.periods, ...all.flatMap(p => [...p.busy].map(k => +k.split('-')[1])));
+    const g = src?.type === 'local' ? (state.fmGroups ||= []).find(x => x.id === src.id) : src?.type === 'shared' ? grGroups.find(x => x.id === src.id) : null;
+    $('#fmTitle').innerHTML = g ? `${esc(g.name || 'グループ')}<small>${src.type === 'shared' ? '共有グループの空きコマ' : '空きコママッチ'}</small>` : '空きコママッチ<small>時間割の共有</small>';
+    $('#fmMine').hidden = src?.type !== 'shared';
+    if (src?.type === 'shared') $('#fmMineOn').checked = !!(state.grGridOn ||= {})[src.id];
+    fmDlg.querySelectorAll('[data-fmview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmview === view)));
+    $('#fmPeople').innerHTML = `<button type="button" class="fmChip" data-fmp="" aria-pressed="${!pick.size}">${pick.size ? '' : '✓ '}全員</button>` +
+      all.map(p => `<button type="button" class="fmChip" data-fmp="${esc(p.key)}" aria-pressed="${pick.has(p.key)}">${pick.has(p.key) ? '✓ ' : ''}${esc(p.name)}</button>`).join('');
+    $('#fmNote').textContent = (all.length < 2 ? '右上のボタンでグループや友達を選ぶか、共有の画面で友達の共有コードを読んで「空きコマを比べる」を押すと、人が増えるよ'
+      : view === 'free' ? '数字は授業がある人数／比べる人数。マスを押すと名前が出るよ' : 'マスには授業がある人の名前が出るよ') +
+      (waiting.length ? `（まだ時間割を出してない人：${waiting.join('、')}）` : '');
     let h = '<tr><th></th>' + DAYS.slice(0, days).map(d => `<th>${d}</th>`).join('') + '</tr>';
     for (let p = 1; p <= maxP; p++) {
-      h += `<tr><th>${p}</th>`;
+      const t = state.times[p - 1]?.start;
+      h += `<tr><th class="fmP">${p}${t ? `<small>${esc(t)}</small>` : ''}</th>`;
       for (let d = 0; d < days; d++) {
-        const free = all.filter(x => !x.busy.has(d + '-' + p));
-        const cls = free.length === all.length ? 'all' : free.length ? 'some' : '';
-        h += `<td class="${cls}" data-fm="${esc(`${DAYS[d]}${p}限：` +
-          (free.length ? free.map(x => x.name).join('、') : '空いてる人はいないよ'))}">${free.length}</td>`;
+        const busy = sel.filter(x => x.busy.has(d + '-' + p)), n = busy.length;
+        const tip = `${DAYS[d]}${p}限：` + (n ? `授業 ${busy.map(x => x.name).join('、')}` : '') +
+          (n < m ? `${n ? '／' : ''}空き ${sel.filter(x => !busy.includes(x)).map(x => x.name).join('、')}` : '');
+        const body = view === 'free' ? (n ? `${n}/${m}` : '空き')
+          : busy.slice(0, 3).map(x => `<span>${esc(x.name)}</span>`).join('') + (n > 3 ? `<span>+${n - 3}</span>` : '');
+        h += `<td class="${n ? 'busy' : 'free'}${view === 'busy' ? ' names' : ''}" style="--fm:${n ? Math.round(12 + 26 * n / m) : 0}%" data-fm="${esc(tip)}">${body}</td>`;
       }
       h += '</tr>';
     }
     $('#fmTbl').innerHTML = h;
   };
+  // 右上：グループ（自分だけ・共有グループ）と、保存してある友達の時間割を選ぶ
+  const renderAdd = () => {
+    const saved = state.friendGrids || [], shared = featOn('group') ? grGroups : [];
+    $('#fmAddList').innerHTML =
+      '<p class="fmAddHead">グループ</p><div class="fmAddRow">' +
+      (state.fmGroups ||= []).map(g => `<span class="fmGChip"><button type="button" class="fmChip" data-fmg="${esc(g.id)}" aria-pressed="${src?.id === g.id}">${esc(g.name)}</button>` +
+        `<button type="button" class="fmGDel" data-fmgdel="${esc(g.id)}" aria-label="グループ「${esc(g.name)}」を消す">×</button></span>`).join('') +
+      shared.map(g => `<button type="button" class="fmChip" data-fmsg="${esc(g.id)}" aria-pressed="${src?.id === g.id}">${esc(g.name || 'グループ')}<small>共有</small></button>`).join('') +
+      '<button type="button" class="fmChip fmNew" data-fmgnew>＋ 今の人でグループを作る</button></div>' +
+      '<p class="fmAddHead">友達の時間割</p><div class="fmAddRow">' +
+      saved.map(f => {
+        const on = fmList.some(x => x.key === 'fr-' + f.id);
+        return `<button type="button" class="fmChip" data-fmfr="${esc(f.id)}" aria-pressed="${on}">${on ? '✓ ' : '＋ '}${esc(f.name)}</button>`;
+      }).join('') +
+      fmList.filter(x => x.key.startsWith('c')).map(x => `<button type="button" class="fmChip" data-fmdel="${esc(x.key)}">− ${esc(x.name)}</button>`).join('') +
+      '</div><p class="hint fmAddHint" data-keep>' + (saved.length ? '友達は押すと足す・外すができるよ。' : '') +
+      'ほかの人は、共有の画面で共有コードを読んで「空きコマを比べる」を押してね。共有グループは、メンバーが時間割を出すとここで見られるよ</p>';
+  };
+  const openFm = withFriends => {
+    if (withFriends === true) for (const g of state.friendGrids || [])
+      if (!fmList.some(x => x.key === 'fr-' + g.id)) fmList.push(frEntry(g));
+    renderFree(); if (!fmDlg.open) fmDlg.showModal();
+  };
+  window.openFreeMatch = openFm;
+
+  // 共有グループのみんなの時間割を読む
+  async function loadShared(gid) {
+    const g = grGroups.find(x => x.id === gid);
+    if (!g) return;
+    try {
+      const { db, uid, F } = await fbInit();
+      const snap = await F.getDocs(F.collection(db, 'groups', gid, 'grids'));
+      const has = new Set();
+      fmList = snap.docs.filter(d => okFbId(d.id) && d.id !== uid).map(d => {
+        has.add(d.id);
+        const busy = new Set((Array.isArray(d.data().busy) ? d.data().busy : []).filter(k => /^[0-5]-\d{1,2}$/.test(k)));
+        return { key: 's-' + d.id, name: String(g.names?.[d.id] || 'メンバー').slice(0, 20), busy };
+      });
+      has.add(uid);
+      waiting = (g.members || []).filter(m => !has.has(m)).map(m => String(g.names?.[m] || 'メンバー').slice(0, 20));
+      src = { type: 'shared', id: gid }; pick.clear();
+      renderAdd(); renderFree();
+    } catch (err) { alert('グループの時間割を読めなかった：' + fbErr(err)); }
+  }
 
   $('#fmAdd').onclick = async () => {
     if (!$('#shareIn').value.trim()) return alert('先に友だちの共有コードを貼るか、QRコードを読んでね');
@@ -9684,19 +10148,216 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     catch (e) { return alert(shareErr(e)); }
     const name = (prompt('誰の時間割？', `友だち${fmList.length + 1}`) || '').trim().slice(0, 10);
     if (!name) return;
-    fmList.push({ name, busy: busyOf(d.courses) });
+    fmList.push({ key: 'c' + uid(), name, busy: fmBusyOf(d.courses) });
     $('#shareIn').value = '';
-    renderFree();
-    if (!fmDlg.open) fmDlg.showModal();
+    openFm();
   };
 
-  fmDlg.onclick = e => {
+  fmDlg.addEventListener('click', e => {
+    const v = e.target.closest('[data-fmview]');
+    if (v) { view = v.dataset.fmview; return renderFree(); }
+    const c = e.target.closest('[data-fmp]');
+    if (c) {
+      const k = c.dataset.fmp;
+      if (!k) pick.clear(); else if (pick.has(k)) pick.delete(k); else pick.add(k);
+      return renderFree();
+    }
+    if (e.target.closest('#fmPlus')) {
+      const box = $('#fmAddList'), open = box.hidden;
+      box.hidden = !open; $('#fmPlus').setAttribute('aria-expanded', String(open));
+      if (open) renderAdd();
+      return;
+    }
+    // 自分だけのグループ：開く・消す・作る
+    const lg = e.target.closest('[data-fmg]');
+    if (lg) {
+      const g = (state.fmGroups ||= []).find(x => x.id === lg.dataset.fmg);
+      if (!g) return;
+      fmList = g.members.map(id => (state.friendGrids || []).find(f => f.id === id)).filter(Boolean).map(frEntry);
+      src = { type: 'local', id: g.id }; waiting = []; pick.clear();
+      renderAdd(); return renderFree();
+    }
+    const gd = e.target.closest('[data-fmgdel]');
+    if (gd) {
+      const g = (state.fmGroups ||= []).find(x => x.id === gd.dataset.fmgdel);
+      if (!g || !confirm(`グループ「${g.name}」を消す？（友達の時間割は消えないよ）`)) return;
+      withUndo(`グループ「${g.name}」を消したよ`, () => { state.fmGroups = (state.fmGroups ||= []).filter(x => x.id !== g.id); });
+      if (src?.id === g.id) src = null;
+      renderAdd(); return renderFree();
+    }
+    if (e.target.closest('[data-fmgnew]')) {
+      const members = fmList.filter(x => x.key.startsWith('fr-')).map(x => x.key.slice(3));
+      if (!members.length) return alert('先に下の「友達の時間割」から、グループに入れる人を選んでね（共有コードで足した人は、友達の時間割として保存してから）');
+      const name = (prompt('グループの名前（例：軽音 バンドA）') || '').trim().slice(0, 20);
+      if (!name) return;
+      const g = { id: uid(), name, members };
+      (state.fmGroups ||= []).push(g); save();
+      src = { type: 'local', id: g.id };
+      toast(`グループ「${name}」を作ったよ`);
+      renderAdd(); return renderFree();
+    }
+    const sg = e.target.closest('[data-fmsg]');
+    if (sg) return loadShared(sg.dataset.fmsg);
+    const fr = e.target.closest('[data-fmfr]');
+    if (fr) {
+      const key = 'fr-' + fr.dataset.fmfr, i = fmList.findIndex(x => x.key === key);
+      const g = (state.friendGrids || []).find(f => f.id === fr.dataset.fmfr);
+      if (i >= 0) fmList.splice(i, 1); else if (g) fmList.push(frEntry(g));
+      if (src?.type === 'shared') { src = null; waiting = []; }
+      renderAdd(); return renderFree();
+    }
     const del = e.target.closest('[data-fmdel]');
-    if (del) { fmList.splice(+del.dataset.fmdel, 1); renderFree(); return; }
+    if (del) { fmList = fmList.filter(x => x.key !== del.dataset.fmdel); renderAdd(); return renderFree(); }
     const td = e.target.closest('td[data-fm]');
     if (td) alert(td.dataset.fm);
+  });
+  // 共有グループに自分の時間割を出す・やめる
+  $('#fmMineOn').addEventListener('change', async e => {
+    if (src?.type !== 'shared') return;
+    const gid = src.id, on = e.target.checked;
+    if (on) (state.grGridOn ||= {})[gid] = true; else delete (state.grGridOn ||= {})[gid];
+    save();
+    try {
+      if (on) await grGridPush(true); else await grGridDrop(gid);
+      toast(on ? 'このグループに時間割を出したよ（授業があるコマだけ）' : 'このグループに出した時間割を消したよ');
+    } catch (err) { alert('できなかった：' + fbErr(err)); }
+  });
+  $('#fmClose').onclick = () => fmDlg.close();
+  fmDlg.addEventListener('close', () => {
+    fmList = []; pick.clear(); view = 'free'; src = null; waiting = [];
+    $('#fmAddList').hidden = true; $('#fmPlus').setAttribute('aria-expanded', 'false');
+  });
+}
+
+// 共有グループに出す自分の時間割（授業があるコマだけ）。中身が変わったときだけ書く
+const GR_GRID_KEY = 'gakulog-grgrid-v1';
+async function grGridPush(force) {
+  const on = Object.keys(state.grGridOn || {}).filter(g => (state.grGridOn ||= {})[g] && grGroups.some(x => x.id === g));
+  if (!on.length || !featOn('group')) return;
+  const busy = [...fmBusyOf(courses())].sort(), h = strHash(JSON.stringify(busy) + term().name);
+  let memo = {};
+  try { memo = JSON.parse(localStorage.getItem(GR_GRID_KEY)) || {}; } catch {}
+  const { db, uid, F } = await fbInit();
+  for (const gid of on) {
+    if (!force && memo[gid] === h) continue;
+    await F.setDoc(F.doc(db, 'groups', gid, 'grids', uid), { busy, term: term().name.slice(0, 40), at: F.serverTimestamp() });
+    memo[gid] = h;
+  }
+  try { localStorage.setItem(GR_GRID_KEY, JSON.stringify(memo)); } catch {}
+}
+async function grGridDrop(gid) {
+  let memo = {};
+  try { memo = JSON.parse(localStorage.getItem(GR_GRID_KEY)) || {}; } catch {}
+  delete memo[gid];
+  try { localStorage.setItem(GR_GRID_KEY, JSON.stringify(memo)); } catch {}
+  const { db, uid, F } = await fbInit();
+  await F.deleteDoc(F.doc(db, 'groups', gid, 'grids', uid));
+}
+window.grGridDrop = grGridDrop;
+// 時間割を変えたら、出しているグループにも（少し待ってまとめて）
+{
+  let t = 0;
+  const sv = window.save;
+  window.save = function () {
+    const r = sv.apply(this, arguments);
+    if (Object.values(state.grGridOn || {}).some(Boolean)) { clearTimeout(t); t = setTimeout(() => grGridPush().catch(err => console.warn('時間割を出す', err)), 3000); }
+    return r;
   };
-  $('#fmClose').onclick = () => { fmDlg.close(); fmList = []; };
+}
+
+/* ===== QRを読まれた側にも届ける（返事） ===== */
+// 共有コード（GK-）を読んだ人が「相手にも送る」を押すと、自分の共有コードと名前を shares/{相手のコード}/replies に置く。
+// コードを作った人（QRを出している人）だけがそれを読める（ルール）。共有の画面を開いている間は見張っていて、届いたら出す
+{
+  const SEEN = 'gakulog-share-back-v1';
+  const seen = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN)) || []); } catch { return new Set(); } };
+  const markSeen = id => { const s = [...seen(), id].slice(-200); try { localStorage.setItem(SEEN, JSON.stringify(s)); } catch {} };
+  let fromCode = '', unsub = null, listenCode = '';
+
+  // 読む側：「相手にも送る」
+  $('#sharePreview').insertAdjacentHTML('beforeend',
+    '<div class="shareBack" id="shareBack" hidden><b>相手にも自分の時間割を送る</b>' +
+    '<p class="hint" data-keep>コードをくれた人の画面に、あなたの時間割（「時間割を共有」と同じ中身）が届くよ</p>' +
+    '<div class="row"><input id="shareBackName" maxlength="20" placeholder="自分の名前（相手に見える）" aria-label="自分の名前" autocomplete="off">' +
+    '<button type="button" id="shareBackBtn" class="primary">送る</button></div></div>');
+  $('#shareRead').addEventListener('click', () => {
+    const raw = $('#shareIn').value.replace(/\s+/g, '');
+    fromCode = (raw.match(SHORT_RE) || raw.match(/^()([A-HJ-NP-Z2-9]{8})$/i)?.slice(1) || [])[1]?.toUpperCase() || '';
+  }, true);
+  const rsp = window.renderSharePreview;
+  window.renderSharePreview = function () {
+    const r = rsp.apply(this, arguments);
+    const show = !!shareData && !!fromCode && fromCode !== shareShort?.code;
+    $('#shareBack').hidden = !show;
+    if (show) {
+      if (!$('#shareBackName').value) $('#shareBackName').value = grMe() || '';
+      $('#shareBackBtn').disabled = false; $('#shareBackBtn').textContent = '送る';
+    }
+    return r;
+  };
+  $('#shareBackBtn').onclick = async () => {
+    const b = $('#shareBackBtn'), name = $('#shareBackName').value.trim().slice(0, 20), to = fromCode;
+    if (!name) return alert('名前を入れてね（相手の画面に出るよ）');
+    if (!to) return;
+    b.disabled = true; b.textContent = '送ってるよ…';
+    try {
+      if (!shareShort) await renderShareCode();
+      if (!shareShort) throw new Error('nocode');
+      const { db, uid: me, F } = await fbInit();
+      await F.setDoc(F.doc(db, 'shares', to, 'replies', uid()), {
+        share: shareShort.code, name, by: me, exp: F.Timestamp.fromMillis(Date.now() + SHARE_DAYS * 864e5)
+      });
+      b.textContent = '送ったよ';
+      toast(`相手に「${name}」の時間割を送ったよ`);
+    } catch (err) {
+      b.disabled = false; b.textContent = '送る';
+      alert(err.message === 'nocode' ? '自分の共有コードが作れなかった。授業が入ってるか、ネットにつながってるか確かめてね' : '送れなかった：' + fbErr(err));
+    }
+  };
+
+  // 出した側：届いたものを出す
+  const got = document.createElement('div');
+  got.id = 'shareGot'; got.className = 'shareGot'; got.setAttribute('role', 'status');
+  $('#shareSend').parentElement.append(got); // 送るの段のいちばん下（「QRコードを読み取る」はあとで QR の下に入る）
+  const add = (id, d) => {
+    if (!okFbId(id) || seen().has(id) || got.querySelector(`[data-sgid="${id}"]`)) return;
+    if (typeof d.share !== 'string' || !/^[A-HJ-NP-Z2-9]{8}$/.test(d.share) || typeof d.name !== 'string') return;
+    const name = d.name.slice(0, 20);
+    got.insertAdjacentHTML('beforeend', `<div class="shareGotItem" data-sgid="${esc(id)}"><span>「${esc(name)}」の時間割が届いたよ</span>` +
+      `<button type="button" class="primary" data-sgopen="${esc(d.share)}" data-sgname="${esc(name)}">見る</button>` +
+      `<button type="button" class="x" data-sgx aria-label="閉じる">×</button></div>`);
+    navigator.vibrate?.(30);
+    toast(`「${name}」の時間割が届いたよ`);
+  };
+  got.addEventListener('click', e => {
+    const item = e.target.closest('[data-sgid]');
+    if (!item) return;
+    const o = e.target.closest('[data-sgopen]');
+    if (!o && !e.target.closest('[data-sgx]')) return;
+    markSeen(item.dataset.sgid); item.remove();
+    if (!o) return;
+    $('#shareIn').value = 'GK-' + o.dataset.sgopen;
+    if ($('#frName')) $('#frName').value = o.dataset.sgname;
+    $('#shareRead').click();
+    setTimeout(() => $('#sharePreview').scrollIntoView({ block: 'start', behavior: 'smooth' }), 300);
+  });
+  const stop = () => { unsub?.(); unsub = null; listenCode = ''; };
+  const listen = async () => {
+    const code = shareShort?.code;
+    if (!code || code === listenCode || !$('#termDlg').open || !$('#shareSec').open) return;
+    stop(); listenCode = code;
+    try {
+      const { db, F } = await fbInit();
+      if (listenCode !== code) return;
+      unsub = F.onSnapshot(F.collection(db, 'shares', code, 'replies'),
+        snap => snap.docs.forEach(d => add(d.id, d.data())),
+        err => console.warn('共有の返事', err));
+    } catch (err) { console.warn('共有の返事', err); listenCode = ''; }
+  };
+  const rsc = window.renderShareCode;
+  window.renderShareCode = async function () { const r = await rsc.apply(this, arguments); listen(); return r; };
+  $('#termDlg').addEventListener('close', stop);
+  $('#shareSec').addEventListener('toggle', e => { if (!e.target.open) stop(); });
 }
 
 /* ===== 他のアプリから共有された画像・PDFを受け取る（アプリ版だけ） ===== */
@@ -9833,7 +10494,7 @@ var WG_LOOK = {
     dlg.innerHTML =
       `<div class="dlgHead"><h2>${esc(s[1])}</h2><button type="button" class="x big" data-wpclose aria-label="閉じる">×</button></div>` +
       '<div class="wpWrap">' + prevHTML(s[0], 's') + prevHTML(s[0], 'm') + '</div>' +
-      `<p class="hint">今日の中身で表示してるよ。${s[3]}pで交換できる</p>`;
+      `<p class="hint" data-keep>今日の中身で表示してるよ。${s[3]}pで交換できる</p>`;
     dlg.showModal();
   });
   dlg.addEventListener('click', e => {
@@ -9893,7 +10554,7 @@ var WG_LOOK = {
     '<button type="button" class="x big" id="mmX" aria-label="閉じる">×</button></div>' +
     '<label class="fileBtn">写真を選ぶ<input type="file" id="mmFile" accept="image/*" multiple class="vh"></label>' +
     '<p class="hint" id="mmPicked">手帳・プリント・LINEやメールのスクショなど。文字が読めるように写してね</p>' +
-    '<button type="button" class="primary" id="mmRun" disabled>読み取る</button>' +
+    '<button type="button" class="primary" id="mmRun" aria-disabled="true" data-why="先に写真を選んでね">読み取る</button>' +
     '<p id="mmStatus" class="hint" aria-live="polite"></p>' +
     '<div id="mmResult"></div>' +
     '</div>';
@@ -9903,14 +10564,15 @@ var WG_LOOK = {
   $('#phPick').insertAdjacentHTML('beforeend',
     '<button type="button" class="phOpt" data-ph="memo"><b data-ico="memo">予定が書いてある画像</b><small>手帳・プリント・LINEやメールのスクショなどから予定をカレンダーに追加</small></button>');
 
-  let mmRows = [];
+  let mmRows = [], mmOmitted = 0;
   window.openMemo = () => {
     $('#mmFile').value = '';
-    $('#mmRun').disabled = true;
+    setWhy($('#mmRun'), '先に写真を選んでね');
     $('#mmPicked').textContent = '手帳・プリント・LINEやメールのスクショなど。文字が読めるように写してね';
     $('#mmStatus').textContent = '';
     $('#mmResult').innerHTML = '';
     mmRows = [];
+    mmOmitted = 0;
     if (!mmDlg.open) mmDlg.showModal();
     mmDlg.scrollTop = 0;
   };
@@ -9918,31 +10580,34 @@ var WG_LOOK = {
 
   $('#mmFile').onchange = e => {
     const n = e.target.files.length;
-    $('#mmRun').disabled = !n;
+    setWhy($('#mmRun'), !n && '先に写真を選んでね');
     $('#mmPicked').textContent = n ? `${n}枚選んだよ` : '手帳・プリント・LINEやメールのスクショなど。文字が読めるように写してね';
   };
 
   $('#mmRun').onclick = async () => {
     const files = [...$('#mmFile').files], st = $('#mmStatus');
     if (!files.length) return;
+    aiReviewReset(st);
     $('#mmRun').disabled = true;
     $('#mmResult').innerHTML = '';
     mmRows = [];
+    mmOmitted = 0;
     try {
       for (let i = 0; i < files.length; i++) {
         st.textContent = `読み取り中…（${i + 1}/${files.length}枚目）`;
+        st.dataset.aiPage = String(i + 1);
         const txt = await callVision(await fileToJpegBase64(files[i], 2000), memoPrompt(), st);
         const s = txt.indexOf('['), e = txt.lastIndexOf(']');
         if (s < 0 || e < s) throw new Error('結果がうまく読めなかった。明るい所で撮り直すか、別のモデルで試してみて');
         for (const r of JSON.parse(txt.slice(s, e + 1))) {
           const date = memoYmd(r?.month, r?.day);
-          if (!date) continue;
+          if (!date) { mmOmitted++; continue; }
           mmRows.push({
             on: true, date,
             start: memoTime(r.start), end: memoTime(r.end),
             title: String(r.title || '').trim().slice(0, 60),
             kind: kindIds().includes(r.kind) ? r.kind : 'other',
-            place: String(r.place || '').trim().slice(0, 60)
+            place: String(r.place || '').trim().slice(0, 60), _review: aiReviewNotes(r), _page: i + 1
           });
         }
       }
@@ -9971,8 +10636,17 @@ var WG_LOOK = {
           `<div class="mmTitle"><input data-i="${i}" data-f="place" value="${esc(r.place)}" maxlength="60" aria-label="場所" ` +
           `placeholder="${esc(evPlaceDefault(r.title) ? `${PIN} いつもの場所：${evPlaceDefault(r.title)}` : `${PIN} 場所（なくてもOK）`)}"></div>` +
           '</li>').join('') + '</ul>' +
-        `<button type="button" class="primary" id="mmAdd"${n ? '' : ' disabled'}>${n}件をカレンダーに追加</button>`
+        `<button type="button" class="primary" id="mmAdd"${n ? '' : ' aria-disabled="true" data-why="追加する予定にチェックを入れてね"'}>${n}件をカレンダーに追加</button>`
       : '';
+    aiReviewShow($('#mmStatus'), mmRows.map((r, i) => {
+      const li = $('#mmResult').querySelectorAll('.mmList > li')[i];
+      const extra = {};
+      if (!r.title) extra.title = '予定の名前が読み取れなかったよ';
+      if (r.end && r.start && toMin(r.end) <= toMin(r.start)) extra.end = '終了が開始より前か同じだよ。日付をまたぐ予定か確認してね';
+      const fields = {};
+      for (const key of ['date', 'start', 'end', 'title', 'place', 'kind']) fields[key] = li.querySelector(`[data-f="${key}"]`);
+      return { data: r, extra, fields };
+    }), mmOmitted ? `日付が読めず、一覧に出せなかった予定が${mmOmitted}件あるよ。元画像も確認してね` : '');
   }
 
   $('#mmResult').addEventListener('change', e => {
@@ -10024,8 +10698,12 @@ var WG_LOOK = {
   const VOL_K = { l: 1, m: 0.5, s: 0.25 };
   const okV = v => VOL_K[v] ? v : '';
   const volName = v => (AL_VOLS.find(([k]) => k === v) || AL_VOLS[0])[1];
-  const volOpts = (v, withDef = true) => (withDef ? `<option value=""${!v ? ' selected' : ''}>いつもの（${volName(state.alarm?.vol || 'l')}）</option>` : '') +
-    AL_VOLS.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('');
+  // 授業・バイトごとの音量は「大・中・小」だけ見せる（「いつもの（大）」は長くて見にくかった）。
+  // いつもの音量と同じ段は value="" にしておくので、それを選ぶと今までどおり「いつもの」（あとで変えたら一緒に変わる）
+  const volOpts = (v, withDef = true) => {
+    const def = okV(state.alarm?.vol) || 'l', cur = okV(v) || def;
+    return AL_VOLS.map(([k, n]) => `<option value="${withDef && k === def ? '' : k}"${k === (withDef ? cur : v) ? ' selected' : ''}>${n}</option>`).join('');
+  };
   const lvlOf = v => okV(state.alarm?.all) || okV(v) || okV(state.alarm?.vol) || 'l';
   const sndId = (snd, v) => !snd ? '' : lvlOf(v) === 'l' ? snd : `${snd}_${lvlOf(v)}`;
   const AL_SNOOZE = [0, 5, 9, 10, 15];
@@ -10058,6 +10736,8 @@ var WG_LOOK = {
     const today = todayStr(), now = new Date();
     state.alarm = {
       on: !!a.on,
+      onDemand: a.onDemand === true,
+      cancelled: a.cancelled === true,
       sound: okS(a.sound), // 授業・バイトの日の音
       vol: okV(a.vol) || 'l', // いつもの音量
       all: okV(a.all), // 今は全部この音量（空なら、それぞれの音量）
@@ -10100,9 +10780,12 @@ var WG_LOOK = {
     for (let i = 0; i < days; i++) {
       const day = addDays(base, i), k = ymd(day), hits = [];
       if (state.useGrid) {
-        const c = attendOn(day, t)[0];
+        const c = isClassDay(day, t) && t.courses
+          .filter(c => c.day === effDay(day, t) && courseInRange(c, day) &&
+            (a.cancelled || !isCancelled(c, day, t)) && (a.onDemand || !isOnDemand(c, day, t)))
+          .sort((x, y) => x.period - y.period)[0];
         const at = c && a.cls[c.period - 1];
-        if (at) hits.push({ min: toMin(at), why: `${c.period}限 ${nm(c)}`, vol: a.clsVol[c.period - 1] });
+        if (at) hits.push({ min: toMin(at), why: `${periodLabel(c)}限 ${nm(c)}`, vol: a.clsVol[c.period - 1] });
       }
       for (const e of eventsOn(k)) {
         if (e.kind !== 'job' || !grIsMine(e)) continue;
@@ -10139,9 +10822,13 @@ var WG_LOOK = {
     return x ? new Date(x.at) : null;
   };
 
+  // ToDoのアラームも入れた、これから鳴る全部（ToDoのは「アラームを使う」がオフでも鳴る）
+  const alAll = () => alItems().concat(window.todoAlItems?.() || []).sort((x, y) => x.at - y.at);
   // ウィジェットに出す、これから鳴るアラーム（鳴らせる端末で、オンのときだけ）
   window.alNext = () => !alReady || !featOn('alarm') ? [] :
-    alItems().filter(x => x.at > Date.now()).slice(0, 12).map(x => ({ at: x.at, title: x.title }));
+    alAll().filter(x => x.at > Date.now()).slice(0, 12).map(x => ({ at: x.at, title: x.title }));
+  // カレンダーの時間軸に出すアラーム（鳴らせる端末で、オンのときだけ。この先2週間ぶん）
+  window.alTimeline = () => !alReady || !featOn('alarm') ? [] : alAll().map(x => ({ at: x.at, title: x.title }));
 
   // アラーム画面
   const dlg = document.createElement('dialog');
@@ -10175,6 +10862,9 @@ var WG_LOOK = {
     '<h4>授業がある日</h4>' +
     '<p class="hint">その日の最初の授業で決まるよ。空欄の時限からの日は鳴らない</p>' +
     '<div id="alCls"></div>' +
+    '<label class="alSw"><input type="checkbox" id="alOnDemand"> オンデマンドの授業でも鳴らす</label>' +
+    '<label class="alSw"><input type="checkbox" id="alCancelled"> 休講の授業でも鳴らす</label>' +
+    '<p class="hint">どちらも最初はオフ。オンにした授業も含めて、その日の最初の授業で時刻を決めるよ。両方に当てはまる授業は両方オンのときだけ対象。学期の休みの日は対象外だよ</p>' +
     '<h4>バイトがある日</h4>' +
     '<p class="hint">バイト先を空欄にすると全部のバイトに使うよ。どれにも当てはまらない日は鳴らない</p>' +
     '<div id="alJobs"></div>' +
@@ -10283,12 +10973,14 @@ var WG_LOOK = {
       : !alReady ? 'このiPhoneはiOS 26より前なので、アラームは使えないよ'
       : alAndroid ? 'マナーモードでも、アラームの音量で鳴るよ' : 'マナーモードや集中モードでも鳴るよ';
     $('#alOn').checked = a.on;
-    $('#alOn').disabled = !!AL && !alReady;
+    $('#alOnDemand').checked = a.onDemand;
+    $('#alCancelled').checked = a.cancelled;
+    setWhy($('#alOn'), !!AL && !alReady && 'このiPhoneはiOS 26より前なので、アラームは使えないよ');
     $('#alAutoSnd').innerHTML = sndOpts(a.sound);
     $('#alVol').innerHTML = volOpts(a.vol, false);
     $('#alAll').value = a.all;
     // 追加するところは1行に収めたいので短く（いつもの音量は上に出てる）
-    $('#alNewVol').innerHTML = volOpts($('#alNewVol').value).replace(/いつもの（.）/, 'いつもの');
+    $('#alNewVol').innerHTML = volOpts($('#alNewVol').value);
     $('#alCls').innerHTML = Array.from({ length: state.periods }, (_, i) =>
       `<div class="alRow"><span>${i + 1}限からの日は</span>` +
       `<input type="time" data-alp="${i}" value="${a.cls[i]}"><span>に鳴らす</span>` +
@@ -10317,6 +11009,7 @@ var WG_LOOK = {
     if (!dlg.open) dlg.showModal();
     dlg.scrollTop = 0;
   }
+  window.openAlarm = openAlarm;
 
   // アプリに予約を渡す（全部消してから入れ直す）
   window.alPush = () => {
@@ -10335,7 +11028,9 @@ var WG_LOOK = {
       const items = alItems(), a = alCfg(), ear = a.on && a.ear && earOk();
       const gap = a.earGap * 60000;
       try {
-        await AL.sync({ items: ear ? items.map(x => ({ ...x, at: x.at + gap, title: '（予備）' + x.title })) : items });
+        // ToDoのアラームは、イヤホンのときもずらさずにふつうに鳴らす（イヤホンは夜の目覚まし用）
+        const todo = window.todoAlItems?.() || [];
+        await AL.sync({ items: (ear ? items.map(x => ({ ...x, at: x.at + gap, title: '（予備）' + x.title })) : items).concat(todo) });
         if (earOk()) await AL.earArm({ items: ear ? items.map(x => ({ ...x, backup: x.at + gap })) : [] });
       } catch (err) { toast('アラームを入れられなかった：' + (err.message || err)); }
     }, 300);
@@ -10362,7 +11057,8 @@ var WG_LOOK = {
 
   const alSave = () => { save(); syncAlUI(); };
 
-  async function alEnable() {
+  // 鳴らす許可だけ聞く（「アラームを使う」はオンにしない。ToDoのアラームはこれだけで鳴らせる）
+  async function alAsk() {
     if (AL) {
       let r = {};
       try { r = await AL.requestPermission() || {}; } catch {}
@@ -10376,9 +11072,17 @@ var WG_LOOK = {
         return false;
       }
     }
+    return true;
+  }
+  async function alEnable() {
+    if (!(await alAsk())) return false;
     alCfg().on = true;
     return true;
   }
+  window.alAsk = () => AL ? alAsk() : Promise.resolve(false);
+  // ToDoのアラームを、アラームとして鳴らせるか（アプリ版で、鳴らせる端末で、目覚ましの機能がオン）。だめなら通知にする
+  window.alCanRing = () => !!AL && alReady && featOn('alarm');
+  window.alSnd = () => sndId(alCfg().sound, '');
 
   async function addOnce() {
     const t = $('#alOnceT').value;
@@ -10404,6 +11108,8 @@ var WG_LOOK = {
     }
     const a = alCfg();
     if (el.id === 'alNewSnd' || el.id === 'alNewVol') return alPlay($('#alNewSnd').value, $('#alNewVol').value);
+    if (el.id === 'alOnDemand') { a.onDemand = el.checked; return alSave(); }
+    if (el.id === 'alCancelled') { a.cancelled = el.checked; return alSave(); }
     if (el.id === 'alAutoSnd') { a.sound = okS(el.value); alPlay(a.sound); return alSave(); }
     if (el.id === 'alVol') { a.vol = okV(el.value) || 'l'; alPlay(a.sound || 'pipipi'); return alSave(); }
     if (el.id === 'alSnooze') { a.snooze = +el.value || 0; return alSave(); }
@@ -10541,7 +11247,8 @@ var WG_LOOK = {
     }
     window.alPush();
     if (alReady) wgPush();
-    if (alReady && state.notify?.mAlarm) scheduleNotify(); // 朝の通知をアラームに合わせてるなら、鳴らせるとわかってから組み直す
+    // 朝の通知をアラームに合わせてるとき・ToDoを通知かアラームのどちらで知らせるか決まったときに、組み直す
+    scheduleNotify(); window.renderTodo?.();
     // ウィジェットのアラームを押したら（gakulog://alarm）、アラームの画面を開く
     const APP = window.Capacitor?.Plugins?.App;
     const fromUrl = u => { if (/^gakulog:\/\/alarm/.test(u || '')) openAlarm(); };
@@ -10606,7 +11313,7 @@ $('#termList')?.addEventListener('focusin', e => {
     $('#odDate').innerHTML = ahead.length
       ? ahead.map(d => `<option value="${ymd(d)}">${md(d)}</option>`).join('')
       : '<option value="">この先の授業が見つからない</option>';
-    $('#odAdd').disabled = !ahead.length;
+    setWhy($('#odAdd'), !ahead.length && 'この先の授業が見つからないので、日を選べないよ');
   };
 
   $('#odAll').onchange = e => {
@@ -10678,7 +11385,7 @@ $('#termList')?.addEventListener('focusin', e => {
     const all = $('#odAll');
     all.checked = list.length > 0 && n === list.length;
     all.indeterminate = n > 0 && n < list.length;
-    all.disabled = !list.length;
+    setWhy(all, !list.length && 'この学期の授業の日が見つからないよ。学期の始まりと終わりを入れると選べる');
     $('#odTotal').value = c.sessions || '';
     const today = ymd(new Date());
     $('#odNote').textContent = !t.start ? '学期の始まりの日を入れると回が出るよ'
@@ -10859,6 +11566,8 @@ document.addEventListener('click', e => {
       if (!b) return;
       try {
         b.dataset.icon ? await AI.setIcon({ icon: b.dataset.icon }) : await AI.resetIcon();
+        state.lookChanged = true;
+        save();
       } catch (err) {
         alert('アイコンを変えられなかった：' + (err.message || err));
       }
@@ -10986,7 +11695,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       if (!isApp) return;
       const box = document.querySelector('.wgBox');
       if (box && box.parentElement !== wg) wg.append(box);
-      if (!wg.children.length) wg.innerHTML = '<p class="hint">ウィジェットの設定が見つからなかった</p>';
+      if (!wg.children.length) wg.innerHTML = '<p class="hint" data-keep>ウィジェットの設定が見つからなかった</p>';
     };
     moveWg();
     new MutationObserver(() => {
@@ -11022,12 +11731,32 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const home = $('#nowCard').parentElement;
   const cardOf = el => { while (el && el.parentElement !== home) el = el.parentElement; return el; };
 
+  // ===== ToDoのアラーム（この端末だけ） =====
+  // iOS 26以降・Android は目覚ましと同じアラームで鳴らす（マナーモードでも鳴る）。鳴らせない端末・目覚ましの機能がオフなら通知。Web版は出さない
+  const TA = () => (state.todoAlarm && typeof state.todoAlarm === 'object' ? state.todoAlarm : (state.todoAlarm = {}));
+  const taMode = () => window.alCanRing?.() ? 'alarm' : LN ? 'notify' : '';
+  const hm = ms => { const d = new Date(ms); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const taWhen = ms => (ymd(new Date(ms)) === ymd(new Date()) ? '' : `${md(new Date(ms))} `) + hm(ms);
+  const taOn = x => { const at = TA()[x.id]; return !x.done && at > Date.now() ? at : 0; };
+  const taList = () => todos().filter(taOn).map(x => ({ x, at: TA()[x.id] }));
+  // 目覚まし（GakuAlarm.sync）と通知（syncNotify）が予約に足す分。完了・削除したものは入らないので、そのまま解除される
+  window.todoAlItems = () => taMode() !== 'alarm' ? [] : taList().map(({ x, at }) => ({ at, title: x.text, sound: window.alSnd?.() || '', snooze: 5 }));
+  window.todoNotifs = () => taMode() !== 'notify' ? [] : taList().map(({ x, at }) => ({ at: new Date(at), title: x.text, body: 'ToDoの時間だよ' }));
+  const taBtn = x => {
+    const mode = taMode();
+    if (x.done || !mode) return '';
+    const at = taOn(x), what = mode === 'alarm' ? 'アラーム' : '通知';
+    return `<button type="button" class="todoAl${at ? ' on' : ''}" data-todoal="${x.id}" data-ico="${mode === 'alarm' ? 'alarm' : 'bell'}" ` +
+      `aria-label="${at ? `${taWhen(at)}に${what}。押すと時間を変える` : `5分後に${what}`}">${at ? taWhen(at) : '5分'}</button>`;
+  };
+
+  // 本文とチェックは label（どこを押しても完了）。アラームと削除は label の外なので、押しても完了にならない
   const row = (x, from, tag) =>
     `<li class="todoRow"><label><input type="checkbox" data-todo="${x.id}" ${x.done ? 'checked' : ''}>` +
     (tag ? '<span class="tag">ToDo</span>' : '') +
     `<span class="${x.done ? 'done' : ''}">${esc(x.text)}</span>` +
     (from ? ` <small class="muted">${md(parseYmd(x.date))}から</small>` : '') +
-    `</label><button type="button" class="x" data-tododel="${x.id}" aria-label="削除">×</button></li>`;
+    `</label>${taBtn(x)}<button type="button" class="x" data-tododel="${x.id}" aria-label="削除">×</button></li>`;
 
   // 今日タブのカード（メモの上）
   const card = document.createElement('section');
@@ -11073,18 +11802,144 @@ if (window.Capacitor?.isNativePlatform?.()) {
     save();
     redraw();
   });
+  // 削除：アラームのボタンが隣にあるので、押し間違えても戻せるように
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-tododel]');
     if (!b) return;
-    state.todos = todos().filter(t => t.id !== b.dataset.tododel);
-    save();
+    const id = b.dataset.tododel, x = todos().find(t => t.id === id);
+    withUndo(`「${(x?.text || 'ToDo').slice(0, 14)}」を消したよ`, () => {
+      state.todos = todos().filter(t => t.id !== id);
+      delete TA()[id];
+    });
     redraw();
   });
 
+  // アラーム：1回押すと5分後。もう決まってるときは時間を選ぶ画面。長押しでも時間を選べる
+  const taDlg = document.createElement('dialog');
+  taDlg.id = 'todoAlDlg';
+  taDlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2 tabindex="-1" autofocus id="taHead">アラーム</h2>' +
+    '<button type="button" class="x big" data-taclose aria-label="閉じる">×</button></div>' +
+    '<p class="taText" id="taText"></p><p class="hint" id="taNow"></p>' +
+    '<div class="taQuick">' + [5, 10, 30, 60].map(m => `<button type="button" data-tamin="${m}">${m < 60 ? m + '分後' : '1時間後'}</button>`).join('') + '</div>' +
+    '<div class="row taAtRow"><input type="time" id="taTime" aria-label="知らせる時刻"><button type="button" id="taAt">この時刻に</button></div>' +
+    '<p class="hint" id="taWhy"></p>' +
+    '<div class="row end"><button type="button" class="danger" id="taOff">取り消す</button></div></div>';
+  document.body.append(taDlg);
+  let taId = '';
+  function taPick(id) {
+    const x = todos().find(t => t.id === id);
+    if (!x) return;
+    taId = id;
+    const mode = taMode(), at = taOn(x);
+    $('#taHead').textContent = mode === 'alarm' ? 'アラーム' : '通知';
+    $('#taText').textContent = x.text;
+    $('#taNow').textContent = at ? `${taWhen(at)}に${mode === 'alarm' ? '鳴る' : '知らせる'}よ` : 'いつ知らせる？';
+    $('#taOff').hidden = !at;
+    const d = new Date(at || Date.now() + 30 * 60000);
+    $('#taTime').value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    // アラームにできないときは、なぜ通知なのか
+    $('#taWhy').textContent = mode === 'alarm' ? 'マナーモードでも鳴るよ。鳴ったら「スヌーズ」で5分後にもう一度'
+      : !featOn('alarm') ? '目覚ましの機能がオフなので、通知で知らせるよ（マナーモードだと音は出ない）'
+      : 'この端末ではアラームを使えないので、通知で知らせるよ（マナーモードだと音は出ない）';
+    if (!taDlg.open) taDlg.showModal();
+  }
+  const taPerm = async () => {
+    try { if ((await LN.checkPermissions()).display === 'granted') return true; } catch { }
+    return askPerm();
+  };
+  async function taSet(id, at) {
+    const x = todos().find(t => t.id === id);
+    if (!x) return;
+    const mode = taMode();
+    if (!(mode === 'alarm' ? await window.alAsk?.() : mode === 'notify' ? await taPerm() : false)) return;
+    TA()[id] = at;
+    save();
+    redraw();
+    toast(`${taWhen(at)}に${mode === 'alarm' ? '鳴る' : '知らせる'}よ`, () => taPick(id), '時間を変える');
+  }
+  let taLong = false, taTimer = 0;
+  document.addEventListener('pointerdown', e => {
+    const b = e.target.closest('[data-todoal]');
+    if (!b) return;
+    taLong = false;
+    clearTimeout(taTimer);
+    taTimer = setTimeout(() => { taLong = true; taPick(b.dataset.todoal); }, 550);
+  });
+  for (const t of ['pointerup', 'pointercancel']) document.addEventListener(t, () => clearTimeout(taTimer));
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-todoal]');
+    if (!b) return;
+    if (taLong) { taLong = false; return; } // 長押しで画面を開いたあとの「離した」は無視
+    const id = b.dataset.todoal;
+    if (TA()[id] > Date.now()) return taPick(id);
+    taSet(id, Date.now() + 5 * 60000);
+  });
+  taDlg.addEventListener('click', e => {
+    if (e.target.closest('[data-taclose]') || e.target === taDlg) return taDlg.close();
+    const m = e.target.closest('[data-tamin]')?.dataset.tamin;
+    if (m) { taDlg.close(); return taSet(taId, Date.now() + m * 60000); }
+    if (e.target.id === 'taAt') {
+      const v = $('#taTime').value;
+      if (!/^\d{2}:\d{2}$/.test(v)) return toast('時刻を入れてね');
+      const d = new Date(); d.setHours(+v.slice(0, 2), +v.slice(3), 0, 0);
+      if (d <= new Date()) d.setDate(d.getDate() + 1); // 過ぎた時刻なら明日
+      taDlg.close();
+      return taSet(taId, d.getTime());
+    }
+    if (e.target.id === 'taOff') {
+      delete TA()[taId];
+      save(); redraw(); taDlg.close();
+      toast('取り消したよ');
+    }
+  });
+
+  // 鳴ったあと：アプリを開いたら「終わった？」（アラームの画面からは完了にできないので）
+  const askDlg = document.createElement('dialog');
+  askDlg.id = 'todoAlAsk';
+  askDlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2 tabindex="-1" autofocus>ToDoの時間だよ</h2>' +
+    '<button type="button" class="x big" data-taclose aria-label="閉じる">×</button></div>' +
+    '<ul id="taAskList" class="taAskList"></ul><div class="row end"><button type="button" data-taclose>あとで</button></div></div>';
+  document.body.append(askDlg);
+  function taCheck() {
+    if (!state || document.hidden) return;
+    const now = Date.now(), hits = [];
+    let changed = false;
+    for (const [id, at] of Object.entries(TA())) {
+      if (at > now) continue;
+      const x = todos().find(t => t.id === id);
+      if (x && !x.done && now - at < 12 * 3600e3) hits.push({ x, at });
+      delete TA()[id];
+      changed = true;
+    }
+    if (changed) { save(); redraw(); }
+    if (!hits.length) return;
+    $('#taAskList').innerHTML = hits.map(({ x, at }) => `<li><span class="taAskText">${esc(x.text)} <small class="muted">${taWhen(at)}</small></span>` +
+      `<span class="taAskBtns"><button type="button" class="primary" data-tadone="${x.id}">完了</button>` +
+      `<button type="button" data-taagain="${x.id}">5分後にもう一度</button></span></li>`).join('');
+    if (!askDlg.open) askDlg.showModal();
+  }
+  askDlg.addEventListener('click', e => {
+    if (e.target.closest('[data-taclose]') || e.target === askDlg) return askDlg.close();
+    const done = e.target.closest('[data-tadone]')?.dataset.tadone, again = e.target.closest('[data-taagain]')?.dataset.taagain;
+    const id = done || again;
+    if (!id) return;
+    e.target.closest('li')?.remove();
+    if (!$('#taAskList').children.length) askDlg.close();
+    if (done) {
+      const x = todos().find(t => t.id === done);
+      if (x) { x.done = true; save(); redraw(); toast(`「${x.text.slice(0, 14)}」を完了にしたよ`); }
+    } else taSet(again, Date.now() + 5 * 60000);
+  });
+  // ほかの画面（最初の質問・お知らせ）が開いてるときは待つ
+  const taTick = () => { if (!document.querySelector('dialog[open]')) taCheck(); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(taTick, 600); });
+  setInterval(taTick, 20000);
+  setTimeout(taTick, 1500);
+
   // カレンダーの日付にも出す
   $('#dayList').insertAdjacentHTML('afterend',
-    '<div class="todoAdd" id="dayTodo"><input id="dayTodoIn" maxlength="60" placeholder="この日のToDo">' +
-    '<button type="button" id="dayTodoBtn">追加</button></div>');
+    '<div id="dayTodo"><input id="dayTodoIn" maxlength="60" placeholder="この日のToDo" aria-label="この日のToDo">' +
+    '<div class="ctBtns"><button type="button" id="dayTodoBtn" class="primary">ToDoを追加</button></div></div>');
   $('#dayTodoBtn').onclick = () => add(calSel, $('#dayTodoIn'));
   $('#dayTodoIn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); add(calSel, $('#dayTodoIn')); } };
 
@@ -11113,7 +11968,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 /* ===== 今日に出すものを選ぶ ===== */
 {
   const home = $('#nowCard').parentElement;
-  const NAMES = { nowCard: '次の授業・今日の流れ', todoCard: 'ToDo', packCard: '持ち物', taskCard: '課題', diaryCard: '一言日記', tmrBox: '明日の予定',
+  const NAMES = { nowCard: '次の授業・今日の流れ', todoCard: 'ToDo', packCard: '持ち物', taskCard: '課題', diaryCard: '一言日記', tmrBox: '明日の予定', agendaHome: 'この先の予定を見る（ボタン）',
     talkCard: '💬 締切トーク', moodCard: '☔ やる気天気予報' };
   const hide = () => (state.homeHide = Array.isArray(state.homeHide) ? state.homeHide : []);
   const keyOf = el => el.id || el.dataset.hk ||
@@ -11276,7 +12131,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     }
     $('#mnText').value = note.text;
     $('#mnNext').checked = !!note.until;
-    $('#mnNext').disabled = !note.until && !nextDate(c);
+    setWhy($('#mnNext'), !note.until && !nextDate(c) && 'この先の授業が見つからないので「次回も」にできないよ');
     $('#mnDel').hidden = isNew;
     $('#mnToday').hidden = !again;
     drawPics();
@@ -11790,8 +12645,8 @@ if (window.Capacitor?.isNativePlatform?.()) {
   const FR_MAX = 30;
   let frCur = '';
 
-  // 共有の読み込み画面に「友達として保存」を足す
-  $('#shareAdd').insertAdjacentHTML('afterend',
+  // 共有の読み込み画面に「友達として保存」を足す（追加のボタンの段の下に。同じ段に入れたら横にはみ出していた）
+  $('#shareNew').closest('.row').insertAdjacentHTML('afterend',
     '<div class="frSaveBox">' +
     '<input id="frName" maxlength="20" placeholder="友達の名前（例：たけし）">' +
     '<button type="button" id="frSave" data-ico="group">友達の時間割として保存</button>' +
@@ -11813,7 +12668,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       id: old?.id || uid(), name, term: d.name, at: Date.now(),
       periods: d.periods, times: d.times,
       courses: d.courses.map(c => ({
-        day: c.day, period: c.period, name: c.name, short: c.short,
+        day: c.day, period: c.period, periodEnd: endPeriod(c), name: c.name, short: c.short,
         teacher: c.teacher, room: c.room, from: c.from, to: c.to,
         color: c.tag?.color || ''
       }))
@@ -11847,10 +12702,12 @@ if (window.Capacitor?.isNativePlatform?.()) {
     '<div class="frBtns">' +
     '<button type="button" id="frRename">名前を変える</button>' +
     '<button type="button" id="frDel">この人を消す</button>' +
+    '<button type="button" id="frFree" class="frFree">みんなと空きコマを比べる</button>' +
     '</div>' +
     '<p class="hint">新しくしたいときは、もう一回共有コードをもらって同じ名前で保存してね</p>';
   document.body.append(dlg);
   $('#frX').onclick = () => dlg.close();
+  $('#frFree').onclick = () => { dlg.close(); window.openFreeMatch?.(true); };
 
   const cur = () => state.friendGrids.find(f => f.id === frCur);
 
@@ -11873,16 +12730,19 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
     const cs = f.courses.filter(c => c.day >= 0);
     const days = cs.some(c => c.day === 5) ? 6 : 5;
-    const periods = Math.max(f.periods || 5, ...cs.map(c => c.period));
+    const periods = Math.max(f.periods || 5, ...cs.map(endPeriod));
     const g = $('#frGrid');
     g.style.gridTemplateColumns = `30px repeat(${days},1fr)`;
+    g.style.gridTemplateRows = `auto repeat(${periods}, minmax(64px,auto))`;
     let h = '<div class="frHead"></div>';
     for (let i = 0; i < days; i++) h += `<div class="frHead">${DAYS[i]}</div>`;
     for (let p = 1; p <= periods; p++) {
       const t = f.times?.[p - 1]?.start || state.times[p - 1]?.start || '';
-      h += `<div class="frNum">${p}${t ? `<small>${esc(t)}</small>` : ''}</div>`;
+      h += `<div class="frNum" style="grid-row:${p + 1};grid-column:1">${p}${t ? `<small>${esc(t)}</small>` : ''}</div>`;
       for (let i = 0; i < days; i++) {
-        h += '<div class="frCell">' + cs.filter(c => c.day === i && c.period === p).map(c =>
+        const slot = gridSlot(cs, i, p);
+        if (!slot) continue;
+        h += `<div class="frCell${slot.span > 1 ? ' joined' : ''}" style="grid-row:${p + 1} / span ${slot.span};grid-column:${i + 2}">` + slot.courses.map(c =>
           `<div class="frCo"${c.color ? ` style="--tag:${c.color}"` : ''}>` +
           `<b>${esc(c.short?.trim() || c.name)}</b>` +
           (c.room ? `<small>${esc(c.room)}</small>` : '') + '</div>').join('') + '</div>';
@@ -11939,15 +12799,16 @@ if (window.Capacitor?.isNativePlatform?.()) {
 {
   const qIn = $('#shareQrIn');
   if (qIn) {
-    // 今のボタンは「画像から読む」に名前を変える
+    // 「カメラで読む」「画像から読む」は1つの「QRコードを読み取る」にまとめて、送る側の「コピー」「QRコードを出す」の下に置く。
+    // 押すとカメラが開いて自動で読む。画像から読むのはカメラの画面の中（カメラが使えない端末では、すぐ画像を選ぶ）
     const lb = qIn.closest('label');
-    if (lb?.firstChild?.nodeType === 3) lb.firstChild.textContent = '画像から読む';
+    if (lb?.firstChild?.nodeType === 3) lb.firstChild.textContent = '画像から選ぶ';
 
     const cBtn = document.createElement('button');
     cBtn.type = 'button';
     cBtn.id = 'qrCamBtn';
-    cBtn.dataset.ico = 'camera'; cBtn.textContent = 'カメラで読む';
-    (lb || qIn).before(cBtn);
+    cBtn.dataset.ico = 'camera'; cBtn.textContent = 'QRコードを読み取る';
+    ($('#shareQr') || $('#shareSend')).after(cBtn);
 
     const dlg = document.createElement('dialog');
     dlg.id = 'qrCamDlg';
@@ -11956,6 +12817,8 @@ if (window.Capacitor?.isNativePlatform?.()) {
       '<div class="qrCamWrap"><video id="qrCamV" playsinline muted autoplay></video><div class="qrCamFrame"></div></div>' +
       '<p class="hint" id="qrCamMsg">QRコードを枠の中に映してね</p>';
     document.body.append(dlg);
+    if (lb) { lb.id = 'qrPickBtn'; dlg.append(lb); }
+    qIn.addEventListener('change', () => { if (dlg.open) dlg.close(); });
 
     const v = $('#qrCamV');
     const cv = document.createElement('canvas');
@@ -11995,9 +12858,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
     cBtn.onclick = async () => {
       if (typeof jsQR !== 'function') return alert('QRコードの部品が読み込めてないみたい');
-      if (!navigator.mediaDevices?.getUserMedia) {
-        return alert('この端末だとカメラで読めないみたい。「画像から読む」を使ってね');
-      }
+      if (!navigator.mediaDevices?.getUserMedia) return qIn.click(); // カメラで読めない端末は、画像を選ぶ
       $('#qrCamMsg').textContent = 'QRコードを枠の中に映してね';
       dlg.showModal();
       try {
@@ -12009,11 +12870,11 @@ if (window.Capacitor?.isNativePlatform?.()) {
         await v.play();
         raf = requestAnimationFrame(scan);
       } catch (e) {
+        // 開けなかったら、画面は閉じずに理由を出す（下の「画像から選ぶ」は使える）
         stop();
-        dlg.close();
-        alert(e.name === 'NotAllowedError'
-          ? 'カメラが許可されてないよ。スマホの設定 → アプリ → がくログ → カメラ をONにしてね'
-          : 'カメラを開けなかった。「画像から読む」を使ってね');
+        $('#qrCamMsg').textContent = e.name === 'NotAllowedError'
+          ? 'カメラが許可されてないよ。スマホの設定 → アプリ → がくログ → カメラ をONにするか、下の「画像から選ぶ」を使ってね'
+          : 'カメラを開けなかった。下の「画像から選ぶ」を使ってね';
       }
     };
 
@@ -12199,7 +13060,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     $('#evPreEdit').textContent = editing ? '完了' : '✎ 編集';
     $('#evPreAll').hidden = $('#evPreDel').hidden = !editing;
     $('#evPreDel').textContent = `選んだ${picked.size}件を消す`;
-    $('#evPreDel').disabled = !picked.size;
+    setWhy($('#evPreDel'), !picked.size && '消すものを選んでね');
     $('#evPreAll').textContent = picked.size === state.evPresets.length && picked.size ? '全部外す' : '全部選ぶ';
   };
 
@@ -12208,7 +13069,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
     _rs.apply(this, arguments);
     const n = state.evPresets.length;
     $('#evPreN').textContent = n ? `${n}件` : '';
-    $('#evPreEdit').disabled = !n;
+    setWhy($('#evPreEdit'), !n && 'まだ登録されてないよ');
     if (!n) editing = false;
     if (editing) {
       chips.innerHTML = state.evPresets.map((p, i) =>
@@ -12398,7 +13259,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
       `<div class="dlgHead"><h2>${esc(s.name)}</h2><button type="button" class="x big" data-tpclose aria-label="閉じる">×</button></div>` +
       `<p class="tpLbl">いま</p>${set(now)}` +
       `<p class="tpLbl">交換すると</p>${set(s.id)}` +
-      `<p class="hint">${ptOwned(s.id) ? 'もう持ってるよ。その他 → 見た目 → テーマ・文字で切り替えられる' : `${s.cost}pで交換できる`}</p>`;
+      `<p class="hint" data-keep>${ptOwned(s.id) ? 'もう持ってるよ。その他 → 見た目 → テーマ・文字で切り替えられる' : `${s.cost}pで交換できる`}</p>`;
     dlg.showModal();
   });
   dlg.addEventListener('click', e => {
@@ -12425,14 +13286,14 @@ const apply = id => {
     box.querySelector('.tbPickList').innerHTML = rows.map(s => {
       const has = !s.id || ptOwned(s.id);
       const nm = s.name.replace(/^タブバー「(.+)」$/, '$1');
-      return `<button type="button" data-tbpick="${s.id}" class="${s.id === cur ? 'on' : ''}" ${has ? '' : 'disabled'}>` +
+      return `<button type="button" data-tbpick="${s.id}" class="${s.id === cur ? 'on' : ''}"${has ? '' : ' aria-disabled="true" data-why="ポイントの交換所で手に入れると使えるよ"'}>` +
         `${esc(nm)}${has ? '' : `<small>🔒 ${s.cost}p</small>`}</button>`;
     }).join('');
   };
 
   box.addEventListener('click', e => {
     const b = e.target.closest('[data-tbpick]');
-    if (!b || b.disabled) return;
+    if (!b || whyOff(b)) return;
     state.tabTheme = b.dataset.tbpick;
     save(); apply(state.tabTheme); draw();
   });
@@ -12533,7 +13394,7 @@ const apply = id => {
       ? '<div class="wsList">' + own.map(b =>
           `<button type="button" data-wshop="${b[0]}" class="${state.wallShop === b[0] ? 'on' : ''}">` +
           `<i style='background-image:${url(b)}'></i>${b[1]}</button>`).join('') + '</div>'
-      : '<p class="hint">ポイント交換所で背景を交換すると、ここに出てくるよ</p>');
+      : '<p class="hint" data-keep>ポイント交換所で背景を交換すると、ここに出てくるよ</p>');
   };
   const _render = renderWall;
   renderWall = function (...a) { const r = _render.apply(this, a); draw(); return r; };
@@ -12646,8 +13507,8 @@ const apply = id => {
     // マスをタップしただけの空の授業は数えない（保存せずに閉じると消えるので）
     ['course', '授業を1つ入れる', 10, () => !state.useGrid || courses().some(c => !courseEmpty(c)), () => { showTab('grid'); toast('空いてるマスをタップして入れてね'); }],
     ['event', '予定を1つ入れる', 5, () => state.events.length > 0, () => { showTab('cal'); toast('日付を選んで「＋ 予定」から追加してね'); }],
-    ['look', '見た目を変える', 5, () => !!state.tabTheme || !!state.wallShop || wallState().type !== 'none', () => openLook('bg')],
-    ['ai', 'AIの準備をする', 15, () => hasKey(), () => openPhoto('guide')],
+    ['look', '見た目を変える', 5, () => !!state.lookChanged || (state.theme?.color || 'blue') !== 'blue' || (state.theme?.font || 'system') !== 'system' || !!state.tabTheme || !!state.wallShop || wallState().type !== 'none', () => openLook('bg')],
+    ['ai', 'AIの準備をする（がくログのAI・自分のキー）', 15, () => hasKey(), () => openPhoto('guide')],
     ['shop', 'ポイントで何か交換する', 5, () => ptState().owned.length > 0, () => openPoints()],
   ];
   // オフの機能のクエストは出さない（AIがオフなら「AIの準備」はなし）
@@ -13208,10 +14069,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   function sync() {
     // 共有グループの機能がオンなら、まだグループがなくても出す（ここから作れる）
     btn.hidden = !featOn('group');
-    btn.textContent = groups().length ? `表示：${label()}` : '共有';
+    // 1段に並ぶので、グループの名前が長いときは6文字まで（全部の名前は読み上げと、押した先の一覧で分かる）
+    const lb = label();
+    btn.textContent = groups().length ? `表示：${lb.length > 6 ? lb.slice(0, 6) + '…' : lb}` : '共有';
     btn.setAttribute('aria-label', groups().length ? `カレンダーに出す予定（今は${label()}）` : '共有グループ');
-    // 半分の幅のときは短く
-    $('#evPhoto').textContent = btn.hidden ? '画像から予定を追加' : '画像から追加';
+    // 切り替えと同じ1段に並ぶので、見える名前は短く（読み上げは下の長い名前）
+    $('#evPhoto').textContent = '画像';
     $('#evPhoto').setAttribute('aria-label', '画像から予定を追加');
     // 画像から（AIオフで隠れる）も、これも出ないときは段ごと隠す
     const bar = $('#calBar');
@@ -13968,7 +14831,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       const s = survive();
       surv.innerHTML = '<h3>🎓 1限生存率シミュレーター</h3>' + (!s ? '<p class="muted">授業を入れると計算するよ</p>'
         : `<p class="funLead">この時間割だと、${esc(term().name)}の単位取得見込みは <b>${s.rate}%</b></p>` +
-          `<p class="hint">1限が週${s.ones}コマ。あなたが1限（${hmOf(s.t1)}）に間に合う確率は${s.wake}%` +
+          `<p class="hint" data-keep>1限が週${s.ones}コマ。あなたが1限（${hmOf(s.t1)}）に間に合う確率は${s.wake}%` +
           (s.days < 5 ? '（起きた時刻のデータがまだ少ないから、ふつうの大学生くらいで計算してる）' : `（${s.days}日ぶんの起きた時刻から）`) +
           '。休めるのは15回のうち授業ごとの欠席の上限まで（決めてなければ5回）</p>');
     }
@@ -14070,7 +14933,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       ? `<div class="tb tbD"><span class="talkAv">📄</span><p>${esc(m.t)}</p></div>`
       : `<div class="tb tbMe"><small>既読</small><p>${esc(m.t)}</p></div>`).join('');
     const closed = x.done;
-    $('#talkReplies').innerHTML = closed ? '<p class="hint">この課題は終わったよ</p>'
+    $('#talkReplies').innerHTML = closed ? '<p class="hint" data-keep>この課題は終わったよ</p>'
       : REPLIES.map(([k, t]) => `<button type="button" data-rep="${k}">${t}</button>`).join('');
     const b = $('#talkBody');
     b.scrollTop = b.scrollHeight;
@@ -14160,7 +15023,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 
   // この端末だけのもの（同期しない）
   const LOCAL = new Set(['notify', 'widget', 'alarm', 'calSync', 'wakeLog', 'lastExport', 'onboarded', 'tourDone', 'tourAt',
-    'evTapSeen', 'geminiDefault35', 'shiftDefaultOn', 'mnRemote', 'mnCourses']);
+    'evTapSeen', 'geminiDefault35', 'shiftDefaultOn', 'mnRemote', 'mnCourses', 'todoAlarm']);
   // 見た目（「この端末だけ」にもできる）
   const LOOK = new Set(['theme', 'tabTheme', 'wall', 'homeHide']);
   // 中身を1つずつまとめる文字列の並び（2台で別々の日にチェックしても両方残る）
@@ -14668,9 +15531,10 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   //   この端末のデータは「いちばん古い」扱い（同じものならドライブの方が勝つ）
   const hasData = () => state.terms.some(t => t.courses.length) || state.events.some(e => !skip('events', e)) ||
     state.notes.length || Object.keys(state.diary).length || state.myTasks.length || (state.todos || []).length ||
-    state.incomes.length || (typeof hb === 'object' && hb.list.length);
+    state.incomes.length || state.gradeRecords.length || (typeof hb === 'object' && hb.list.length);
   // 同じものかどうか見る項目（ないものは中身が全部同じなら同じ）
   const SAME = {
+    gradeRecords: ['termId', 'keys'],
     terms: ['name'], courses: ['day', 'period', 'name'], tags: ['name'], evKinds: ['name'], cats: ['name'], '~hb': ['name'],
     events: ['date', 'kind', 'title', 'start', 'end'], tasks: ['title', 'due'], myTasks: ['title', 'due'],
     incomes: ['date', 'job', 'net'], annivs: ['name', 'md'], todos: ['text', 'date'], notes: ['date', 'text'], items: ['name']
@@ -14694,12 +15558,19 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     // こっちの id → ドライブの id（親から順に。親が置きかわったら、子は置きかわった親の下で探す）
     const map = new Map();
     const local = flat();
-    const keys = [...local.keys()].filter(k => k.includes('/')).sort((a, b) => a.split('/').length - b.split('/').length);
+    // 成績は学期・授業の参照IDをそろえてから照合する。手入力の独立科目は自動でまとめない。
+    const keys = [...local.keys()].filter(k => k.includes('/')).sort((a, b) =>
+      (a.startsWith('gradeRecords/') ? 100 : a.split('/').length) - (b.startsWith('gradeRecords/') ? 100 : b.split('/').length));
     for (const key of keys) {
       const sg = key.split('/').map((p, i) => i % 2 === 1 ? map.get(p) || p : p);
       const id = key.split('/').pop();
       if (map.has(id)) continue;
-      const hit = idx.get(sg.slice(0, -1).join('/') + '|' + sig(local.get(key), sg[sg.length - 2]));
+      let fields = local.get(key);
+      if (sg[sg.length - 2] === 'gradeRecords') {
+        if (!fields.keys?.length) continue;
+        fields = { ...fields, termId: map.get(fields.termId) || fields.termId, keys: fields.keys.map(k => map.get(k) || k) };
+      }
+      const hit = idx.get(sg.slice(0, -1).join('/') + '|' + sig(fields, sg[sg.length - 2]));
       if (hit && hit !== id) map.set(id, hit);
     }
     if (!map.size) return;
@@ -15213,7 +16084,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (pv) { pv.className = ''; pv.innerHTML = '<b>プライバシーポリシー</b><small>集めるデータと使い方</small>'; }
     const help = card('moreHelp', h2('困ったとき'), ...['#tourBtn', '#helpBtn', '#feedbackBtn', sup, pv].map(pick));
     // 空になった古いカードを片づける（JS から使うボタンが入った隠しカードは残す）
-    for (const c of [...view.querySelectorAll(':scope > .card')]) if (!c.querySelector('button')) c.remove();
+    for (const c of [...view.querySelectorAll(':scope > .card')]) if (!c.querySelector('button:not(.hintQ)')) c.remove();
     view.prepend(tiles, main, help);
     tileIco();
   };
@@ -15273,6 +16144,24 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const VAGUE = { 朝: '08:00', 昼: '12:00', 夕方: '17:00', 夜: '19:00' };
   const AMT = /(?:[¥￥]\s*([\d,]+)|(\d[\d,]*(?:\.\d+)?)\s*(万)?\s*(?:円|えん))/;
   const NOT_SPEND = /給料|給与|入金|もらった|貰った|返して|バイト代|仕送り|お小遣い|お年玉/;
+
+  // 1行に「日付 なにか 日付 なにか」が並んでいたら、日付ごとに分ける（「11/19 大学 11/20 カフェ」→ 11/19 大学、11/20 カフェ）。
+  // 行が日付で始まって、日付のあいだに名前などがあるときだけ。範囲・いくつも（11/19-21、11/19と20、11/19から11/21）や「毎週」は1件のまま
+  const DT = new RegExp(String.raw`(?:\d{4}\s*[/.年]\s*)?\d{1,2}\s*[/.月]\s*\d{1,2}日?(?:\s*\(${JP}(?:曜日?)?\))?` +
+    String.raw`(?:\s*(?:[~\-]|から)\s*(?:\d{1,2}\s*[/.月]\s*)?\d{1,2}日?(?:\s*\(${JP}(?:曜日?)?\))?)?` +
+    String.raw`(?:\s*[,、・と]\s*(?:\d{1,2}\s*[/.月]\s*)?\d{1,2}日?)*` +
+    String.raw`|(?:再来週|来週|今週)?の?${JP}曜日?|明々後日|しあさって|明後日|あさって|明日|あした|今日|きょう|昨日|きのう`, 'g');
+  // 時刻・時限・つなぎのことばを抜いて、何か残るか（＝名前などの中身があるか）
+  const hasBody = t => !!t.replace(/(?:午前|午後|朝|夜|夕方|昼)?\s*\d{1,4}(?:\s*:\s*\d{2}|\s*時(?:半|\s*\d{1,2}\s*分)?)?(?:\s*(?:[~\-]|から)\s*\d{1,2}(?:\s*:\s*\d{2}|\s*時(?:半)?)?)?(?:\s*まで)?|\d{1,2}\s*限目?|[\s~\-,、・]|から|まで|と$/g, '');
+  window.qaSplit = line => {
+    const s = norm(line);
+    if (/毎週|毎月|毎日|隔週|平日/.test(s)) return [line];
+    const ms = [...s.matchAll(DT)];
+    if (ms.length < 2 || ms[0].index !== 0) return [line];
+    const end = m => m.index + m[0].length;
+    for (let i = 0; i < ms.length; i++) if (!hasBody(s.slice(end(ms[i]), i + 1 < ms.length ? ms[i + 1].index : undefined))) return [line];
+    return ms.map((m, i) => s.slice(m.index, i + 1 < ms.length ? ms[i + 1].index : undefined).trim());
+  };
 
   window.qaParse = (line, now = clock()) => {
     const r = { src: line, kind: '', evKind: 'other', title: '', dates: [], start: '', end: '', place: '', remind: 0, gid: '', cid: '', rep: '', next: false, amount: 0, cat: '', warn: [] };
@@ -15489,7 +16378,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     }
     if (!best && r.period && ds.length === 1) {
       const d = parseYmd(ds[0]);
-      best = (t?.courses || []).find(c => c.day === effDay(d, t) && c.period === r.period) || null;
+      best = (t?.courses || []).find(c => c.day === effDay(d, t) && inPeriod(c, r.period)) || null;
       // 「木3 レポート 次回」：時限で授業が決まったら「次回」はその授業の次の回
       if (best && /(?:^|\s)次回?の?(?=\s|$)/.test(title)) {
         r.next = true;
@@ -15624,12 +16513,12 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   box.id = 'qaBox';
   box.innerHTML =
     '<div class="qaRow"><textarea id="qaIn" rows="1" placeholder="例：明日19時 飲み会 @渋谷" aria-label="ひとことで追加" autocomplete="off" enterkeyhint="done"></textarea>' +
-    '<button type="button" class="primary" id="qaGo" disabled>追加</button></div>' +
+    '<button type="button" class="primary" id="qaGo" aria-disabled="true" data-why="上の欄に予定ややることを書いてね">追加</button></div>' +
     '<ul class="qaPrev" id="qaPrev"></ul>' +
     '<p class="qaTools"><button type="button" class="linkBtn" id="qaHow">書き方の例</button>' +
     '<button type="button" class="linkBtn" id="qaAi" hidden>AIで読み直す</button><span class="hint" id="qaSt"></span></p>' +
-    `<div class="qaEx" id="qaEx" hidden><p class="hint">押すと入るよ。何行もまとめて貼り付けてもいい（1行1件）</p>${EXAMPLES.map(e => `<button type="button" class="qaChip" data-qex="${esc(e)}">${esc(e)}</button>`).join('')}` +
-    '<p class="hint">日付：11/3・3日・明日・火曜・来週の金曜・3日後・月末／時刻：19・19時半・19-22・3限・夜<br>' +
+    `<div class="qaEx" id="qaEx" hidden><p class="hint" data-keep>押すと入るよ。何行もまとめて貼り付けてもいい（1行1件）</p>${EXAMPLES.map(e => `<button type="button" class="qaChip" data-qex="${esc(e)}">${esc(e)}</button>`).join('')}` +
+    '<p class="hint" data-keep>日付：11/3・3日・明日・火曜・来週の金曜・3日後・月末／時刻：19・19時半・19-22・3限・夜<br>' +
     '「提出」「締切」→課題、「持ってく」「次の○○」→持ち物、「休講」→休講、「テスト」→試験、「バイト」→バイト<br>' +
     '「帰りに」「買う」「〜しなきゃ」→ToDo、「〜だった」「〜した」「日記：」→一言日記、「800円」→支出<br>' +
     '毎週火曜・毎月25日・平日 → くり返し、@場所、30分前 → 通知、#グループ名 → 共有</p></div>';
@@ -15650,7 +16539,9 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 
   const inp = $('#qaIn');
   let ovr = {}; // 行の文 → 手で直したところ
-  const lines = () => inp.value.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 30);
+  const daysOpen = new Set(); // 「ほか○日」を開いている行の文
+  // 1行に日付ごとの予定が並んでいたら分ける（qaSplit）。直したところ（ovr）は分けたあとの文ごとに覚える
+  const lines = () => inp.value.split('\n').map(l => l.trim()).filter(Boolean).flatMap(l => qaSplit(l)).slice(0, 30);
   const fix = x => {
     if (['item', 'cancel'].includes(x.kind) && !x.cid) x.cid = courses().find(c => c.name)?.id || '';
     if (!x.dates.length) {
@@ -15676,7 +16567,8 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
       (x.kind === 'item' && !d0 ? '<span class="qaChip">次の授業</span>'
         : `<span class="qaDate"><input type="date" data-qf="date" value="${d0}" aria-label="${x.kind === 'task' ? '締切' : '日付'}">` +
           `<small>${d0 ? WEEK[parseYmd(d0).getDay()] : '締切なし'}</small></span>`) +
-      (x.dates.length > 1 ? `<span class="qaChip">ほか${x.dates.length - 1}日${x.rep ? `（${esc(x.rep)}）` : ''}</span>` : '') +
+      (x.dates.length > 1 ? `<button type="button" class="qaChip qaMoreDays" data-qmore="${i}" aria-expanded="${daysOpen.has(x.src)}">ほか${x.dates.length - 1}日${x.rep ? `（${esc(x.rep)}）` : ''} ${daysOpen.has(x.src) ? '▴' : '▾'}</button>` +
+        (daysOpen.has(x.src) ? `<span class="qaDays">${x.dates.map(d => md(parseYmd(d))).join('・')}</span>` : '') : '') +
       (x.kind === 'spend' ? `<span class="qaAmt"><input type="number" min="0" inputmode="numeric" data-qf="amount" value="${toYen(x.amount) || ''}" aria-label="金額">円</span>` +
         `<select data-qf="cat" aria-label="カテゴリ">${SP_CATS.map(c => `<option value="${c.id}"${c.id === spCat(x.cat).id ? ' selected' : ''}>${c.label}</option>`).join('')}</select>` : '') +
       (x.kind === 'ev' ? `<span class="qaTime"><input type="time" data-qf="start" value="${x.start}" aria-label="開始"><span class="qaTil">〜</span><input type="time" data-qf="end" value="${x.end}" aria-label="終了"></span>` : '') +
@@ -15689,7 +16581,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const draw = () => {
     const p = plan();
     $('#qaPrev').innerHTML = p.map(row).join('');
-    $('#qaGo').disabled = !p.length || p.some(bad);
+    setWhy($('#qaGo'), !p.length ? '上の欄に予定ややることを書いてね' : p.some(bad) ? '赤い点線の行に、足りないところ（授業・金額など）を入れてね' : '');
     $('#qaGo').textContent = p.length > 1 ? `${p.length}件追加` : '追加';
     $('#qaAi').hidden = !p.length || !aiOk() || !featOn('ai');
     for (const k of Object.keys(ovr)) if (!lines().includes(k)) delete ovr[k];
@@ -15701,7 +16593,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     clearTimeout(tm); draw();
-    if (!$('#qaGo').disabled) $('#qaGo').click();
+    if (!whyOff($('#qaGo'))) $('#qaGo').click();
   });
   // プレビューを直す
   const edit = (e, redraw) => {
@@ -15722,6 +16614,15 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (redraw) draw();
   };
   $('#qaPrev').addEventListener('change', e => edit(e, true));
+  // 「ほか○日」を押すと、全部の日付を出す（もう一度で閉じる）
+  $('#qaPrev').addEventListener('click', e => {
+    const b = e.target.closest('[data-qmore]');
+    if (!b) return;
+    const x = plan()[+b.dataset.qmore];
+    if (!x) return;
+    if (daysOpen.has(x.src)) daysOpen.delete(x.src); else daysOpen.add(x.src);
+    draw();
+  });
   $('#qaPrev').addEventListener('input', e => { if (e.target.dataset.qf === 'title') edit(e, false); });
   $('#qaGo').onclick = () => {
     const p = plan();
@@ -15793,7 +16694,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     dlg.innerHTML = '<div class="dlgHead"><h2>今日の授業</h2><button type="button" class="x big" data-clsx aria-label="閉じる">×</button></div>' +
       (cs.length ? '<ul class="clsList">' + cs.map(c => {
         const on = c.absences.includes(k);
-        return `<li><b>${c.period}限 ${esc(nm(c))}</b><span>` +
+        return `<li><b>${periodLabel(c)}限 ${esc(nm(c))}</b><span>` +
           `<button type="button" class="flowAbs${on ? ' on' : ''}${focus === 'absent' ? ' qaFocus' : ''}" data-clsabs="${c.id}">${on ? '欠席済' : '欠席'}</button>` +
           `<button type="button" data-ico="camera" data-cam="${c.id}"${focus === 'photo' ? ' class="qaFocus"' : ''}>板書</button>` +
           `<button type="button" data-ico="note" data-clsnote="${c.id}"${focus === 'note' ? ' class="qaFocus"' : ''}>ノート</button></span></li>`;
@@ -15849,6 +16750,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
   const scrollTo = sel => () => { showTab('today'); setTimeout(() => $(sel)?.scrollIntoView({ block: 'center' }), 80); };
   FEATURES.push(
     { id: 'help', name: '機能をさがす', where: 'その他 → 困ったとき →「機能をさがす」', desc: 'やりたいことを書くと、どの機能でどこにあるかを探す', kw: '探す さがす 検索 どこ 使い方 わからない', go: () => { showTab('more'); $('#helpBtn')?.click(); } },
+    { id: 'todoAlarm', app: true, name: 'ToDoのアラーム', where: '今日の画面の ToDo の右の「5分」（アプリ版）', desc: '「あとでやろう」を忘れないように、押すと5分後に鳴る。長押しか、もう一度押すと10分後・1時間後・時刻を選べる。マナーモードでも鳴る（iOS 26以降・Android）', kw: 'アラーム リマインダー 通知 5分後 あとで 忘れない ToDo', go: scrollTo('#todoCard') },
     { id: 'todo', name: 'ToDo', where: '今日の画面の「ToDo」', desc: '今日やることを書いて、終わったらチェック。ひとことで「帰りに牛乳買う」みたいに入れてもいい', kw: 'ToDo やること タスク リスト 買い物 やり忘れ', go: scrollTo('#todoCard') },
     { id: 'habit', name: '日課', where: '今日の画面の「日課」→「編集」', desc: '毎日やりたいこと（英単語10個、筋トレ…）を決めて、やった日にチェック', kw: '日課 習慣 毎日 継続 ルーティン 筋トレ 勉強', go: scrollTo('#habitCard') },
     { id: 'mood', name: '今日の気分', where: '今日の画面の一言日記の上', desc: '9種類の顔から今日の気分を選んで残す。カレンダーや「月ごとに見る」にも顔が出る', kw: '気分 きもち 機嫌 顔 体調 日記 記録', go: scrollTo('#moodRow') },
@@ -15873,8 +16775,28 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 /* ===== お知らせ（運営からのお知らせ＋アップデートの新機能。アプリの中だけ） ===== */
 // 運営からのお知らせは www/news.json（Web版と一緒に公開。アプリ版はネットの最新を読む）。読めなくても何も出さないだけ
 // 新機能は WHATS_NEW に書く（新機能がないバージョンは書かない）。APP_VER は package.json の version と同じにする（テストで確かめる）
-const APP_VER = '1.1.2';
+const APP_VER = '1.1.3';
 const WHATS_NEW = [
+  { ver: '1.1.3', items: [
+    { feat: 'todoAlarm', title: 'ToDoを5分後にアラームで知らせる', desc: '今日の画面の ToDo の右の「5分」を押すと、5分後にアラームが鳴るよ（マナーモードでも。iOS 26以降・Android）。長押しか、もう一度押すと時間を変えられる。完了・削除したら鳴らない。アラームを使えない端末は通知で知らせるよ' },
+    { feat: 'quickAdd', title: 'ひとことで追加：日ごとにまとめて入れる', desc: '「11/19 大学 11/20 カフェ」のように1行に書くと、11/19に大学、11/20にカフェと日ごとに分けて追加するよ。「11/19-21 旅行」の「ほか2日」を押すと、全部の日付が見られる' },
+    { feat: 'timeline', title: 'カレンダーを時間の流れで見る', desc: 'カレンダーの上の「時間」（時間軸）で、3・5・7日ずつ（選べる）予定と授業を時間の位置に並べて見られるよ。上下で時間が動き、左右に払うと次の日へめくれる（7日なら1週間ずつ）。右上のボタンか、スマホを横向きにすると全画面で見られる。日付と時刻はいつも見えたまま。時刻のない予定や締切は上の帯に出る。授業は薄く出て、隠すこともできる。アラームも鳴る時刻に線で出るよ' },
+    { feat: 'agenda', title: '今日から先の予定を一覧で確認', desc: 'カレンダーの上の「一覧」（予定一覧）で、予定・バイト・課題・試験を日付順にまとめて見られるよ。期限切れの課題は上にまとめ、一覧から完了にもできる。授業の表示や種類の絞り込み、30日ごとの続き表示にも対応。今日の画面からも開けるよ' },
+    { feat: 'grades', title: '成績・単位を入れてGPAを確認', desc: '「時間割 → 上の「一覧」 → 成績・単位」で、学期・通算GPAと修得単位を確認できるよ。愛教大の評価方式にも対応。複数コマを1科目にまとめたり、過去の成績だけ追加することもできる。不明な単位数は入力してね' },
+    { feat: 'courseOverview', title: '授業一覧で欠席・遅刻をまとめて確認', desc: '「時間割 → 上の「一覧」」で今の学期の欠席・遅刻がひと目でわかるよ。既存の欠席上限と遅刻の換算設定で要注意を表示し、絞り込みや欠席が多い順の並べ替えもできる。授業をタップすると記録を開けるよ' },
+    { feat: 'grid', title: '何コマか続く授業をひとつに', desc: '授業の「開始の時限」「終了の時限」を選ぶと、1〜2限や5〜9限のように時間割の枠がつながるよ。登録済みの授業も変えられる。前に1コマずつ登録した同じ授業は、聞いてから1つにまとめるよ。時間割の画像から読み取るときも、つながった授業は1つになる' },
+    { title: '課題にもメモ', desc: 'カレンダーで課題を追加・変更するときに、範囲や提出のしかたなどのメモを残せるよ。メモのある課題には📝が付く' },
+    { feat: 'grid', title: '時間割のコマの大きさをそろえた', desc: '中身の多い少ないや、授業がない時限でも、コマが同じ大きさで並ぶよ。授業が2つ入るコマだけ、入りきるように高くなる' },
+    { feat: 'ai', title: '画像の読み取りで、確認したいところがわかる', desc: '読みにくい項目や不自然な値に「要確認」の印がつくよ。元画像と見比べられて、「理由を表示」はオフにもできる。未確認のまま登録してもOK' },
+    { feat: 'alarm', title: 'オンデマンド・休講の日のアラーム設定', desc: '目覚ましアラームの「授業がある日」で、オンデマンドと休講それぞれを鳴らす対象にするか選べるよ。どちらも最初はオフだよ' },
+    { feat: 'news', title: 'お知らせを見出しだけで見やすく', desc: '新機能の紹介を見出しだけの一覧に整理したよ。気になる見出しをタップすると説明が開いて、もう一度タップすると閉じられる。「この機能を開く」から使う画面にも移れるよ' },
+    { feat: 'spend', title: '収入・支出の切り替え位置を修正', desc: '上の「収入」「支出」で切り替えたとき、画面の途中に飛ばず先頭から表示するようにしたよ。見ている月も引き継ぐよ' },
+    { feat: 'share', title: '空きコママッチが見やすく・グループも', desc: '「空き」「授業」で切り替えて、比べる人も選べるよ。右上のボタンから、友達をまとめた自分だけのグループや、共有グループのみんな（時間割を出した人）で比べられる。QRを読んだ人が「相手にも送る」を押すと、QRを見せた人にも時間割が届くよ' },
+    { feat: 'calDrag', title: '予定を長押しで変更・移動・複製', desc: 'カレンダーや時間軸で予定を長押しして離すと、「変更」「移動」「複製」を選べるよ。移動・複製は行き先の日（時間軸なら時刻も）をタップ。長押ししたまま動かすと、そのまま移動できる' },
+    { feat: 'cal', title: '予定・課題の変更はその場で', desc: '下の一覧や時間軸、予定一覧で予定や締切を押すと、今の画面の上に変更の画面が開くよ。下までスクロールしなくていい' },
+    { title: '細かい説明は「？」から', desc: '画面の細かい説明書きを、見出しや項目の横の小さい「？」にまとめたよ。押すと説明が出る。授業一覧の「出欠／成績」「すべて／要注意」は、上の段の右に移したよ' },
+    { title: '初心者ミッションの達成判定を修正', desc: '「見た目を変える」は無料のテーマ色・フォント・アイコン変更でもクリアできるようにしたよ。「AIの準備」では、がくログのAIも使えることを案内するよ' }
+  ] },
   { ver: '1.1.2', items: [
     { feat: 'spend', title: '収入・支出がすぐ入れられる', desc: '＋ボタンに「収入」「支出」、写真から追加に「レシート」が増えたよ。収入と支出の画面は、上の見出しで切りかえ' }
   ] },
@@ -15962,8 +16884,8 @@ const WHATS_NEW = [
 
   // 本文（文字はそのまま、改行だけ）と、下のボタン
   const bodyHtml = n => {
-    if (n.wn) return n.items.map(it => `<div class="newsItem"><b>${esc(it.title)}</b><p>${esc(it.desc)}</p>` +
-      (it.feat ? `<button type="button" data-newsgo="${esc(it.feat)}">詳しく見る</button>` : '') + '</div>').join('');
+    if (n.wn) return n.items.map((it, i) => `<details class="newsItem" data-newsitem="${i}"><summary>${esc(it.title)}</summary><div class="newsDetail"><p>${esc(it.desc)}</p>` +
+      (it.feat ? `<button type="button" data-newsgo="${esc(it.feat)}">この機能を開く</button>` : '') + '</div></details>').join('');
     const f = n.feat && featOk(n.feat);
     return `<p class="newsText">${esc(n.body).replace(/\n/g, '<br>')}</p>` + (f || n.url ? '<div class="newsBtns">' +
       (f ? `<button type="button" class="primary" data-newsgo="${esc(f.id)}">${esc(f.name)}を開く</button>` : '') +
@@ -16011,11 +16933,20 @@ const WHATS_NEW = [
     '<button type="button" class="x big" data-close aria-label="閉じる">×</button></div><div id="newsList"></div></div>';
   document.body.append(list);
   const drawList = () => {
+    // 再取得が終わっても、読んでいる説明を勝手に閉じない。
+    const opened = new Map([...list.querySelectorAll('[data-news]')].map(d => [d.dataset.news, { open: d.open,
+      items: new Set([...d.querySelectorAll('.newsItem[open]')].map(it => it.dataset.newsitem)) }]));
     const a = all();
     $('#newsList').innerHTML = a.length ? a.map(n => `<details class="newsRow${seen(n.id) ? '' : ' unread'}" data-news="${esc(n.id)}">` +
       `<summary>${n.important ? '<span class="newsImp">重要</span>' : ''}<b>${esc(n.title)}</b>` +
       (n.date ? `<small>${+n.date.slice(5, 7)}/${+n.date.slice(8)}</small>` : '') + '</summary>' + bodyHtml(n) + '</details>').join('')
-      : '<p class="hint">まだお知らせはないよ</p>';
+      : '<p class="hint" data-keep>まだお知らせはないよ</p>';
+    for (const d of list.querySelectorAll('[data-news]')) {
+      const prev = opened.get(d.dataset.news);
+      if (!prev) continue;
+      d.open = prev.open;
+      for (const it of d.querySelectorAll('.newsItem')) it.open = prev.items.has(it.dataset.newsitem);
+    }
   };
   btn.onclick = () => {
     drawList();
@@ -16023,7 +16954,7 @@ const WHATS_NEW = [
     window.newsLoad().then(ok => { if (ok && list.open) drawList(); });
   };
   list.addEventListener('toggle', e => {
-    const d = e.target.closest?.('details[data-news]');
+    const d = e.target.matches?.('details[data-news]') ? e.target : null;
     if (d?.open) { markSeen(d.dataset.news); d.classList.remove('unread'); }
   }, true);
   list.addEventListener('click', e => {
@@ -16101,8 +17032,8 @@ const WHATS_NEW = [
     $('#inMNext').disabled = mon >= 12;
     const pie = jobPie(jobs, g, { goal: state.incomeGoalMonth, limit: 0 });
     $('#inMSum').innerHTML = `<p class="inTotal">総支給<b>${yen(g)}</b><small>手取り ${yen(sumOf(xs, 'net'))}</small></p>` +
-      (netOnly(xs) ? '<p class="hint">総支給がわからない分は手取りで数えてるよ</p>' : '') +
-      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ</p>') + pie + (window.spBal?.(inYear, mon) || '');
+      (netOnly(xs) ? '<p class="hint" data-keep>総支給がわからない分は手取りで数えてるよ</p>' : '') +
+      (xs.length ? '' : '<p class="hint" data-keep>この月の記録はまだないよ</p>') + pie + (window.spBal?.(inYear, mon) || '');
   };
   const _ri = renderIncome;
   renderIncome = function () { _ri.apply(this, arguments); draw(); };
@@ -16121,14 +17052,19 @@ const WHATS_NEW = [
     save();
     draw();
   });
-  $('#incomeBtn').addEventListener('click', () => { $('#inGoalM').value = state.incomeGoalMonth; monYear = 0; draw(); });
+  let monthJumpToken = 0;
+  $('#incomeBtn').addEventListener('click', () => { monthJumpToken++; $('#inGoalM').value = state.incomeGoalMonth; monYear = 0; draw(); });
 
   // ほかの画面から「その月の収入」を開く
-  window.openIncomeMonth = (y, m) => {
+  window.getIncomeMonth = () => ({ year: inYear, month: mon });
+  window.openIncomeMonth = (y, m, scrollToMonth = true) => {
     $('#incomeBtn').click();
     inYear = y; monYear = y; mon = m;
     renderIncome();
-    setTimeout(() => box.scrollIntoView({ block: 'center' }), 60);
+    const token = monthJumpToken;
+    if (scrollToMonth) setTimeout(() => {
+      if ($('#incomeDlg').open && token === monthJumpToken) box.scrollIntoView({ block: 'center' });
+    }, 60);
   };
   // カレンダーの「この日の予定」：バイトがある日は、その月の収入へ
   const _rd = renderDay;
@@ -16202,7 +17138,7 @@ const WHATS_NEW = [
   dlg.id = 'spendDlg';
   dlg.innerHTML = '<div class="dlg">' +
     // 見出しが「収入　支出」のタブ（両方オンのとき。片方だけなら「支出」の見出し）
-    '<div class="dlgHead">' + '<div class="moneyTabs" role="tablist"><button type="button" role="tab" data-money="in">収入</button><button type="button" role="tab" data-money="out" class="on">支出</button></div>' +
+    '<div class="dlgHead">' + '<div class="moneyTabs" role="tablist"><button type="button" role="tab" data-money="in" aria-selected="false">収入</button><button type="button" role="tab" data-money="out" class="on" aria-selected="true">支出</button></div>' +
     '<h2 tabindex="-1" autofocus>支出</h2><button type="button" class="x big" id="spX" aria-label="閉じる">×</button></div>' +
     '<div class="row calNav"><button type="button" id="spPrev" aria-label="前の月">‹</button><b id="spTitle"></b><button type="button" id="spNext" aria-label="次の月">›</button></div>' +
     '<div id="spSum"></div>' +
@@ -16239,6 +17175,7 @@ const WHATS_NEW = [
     $('#spAmt').value = '';
     $('#spMemo').value = '';
     $('#spSt').textContent = '';
+    aiReviewReset($('#spSt'));
     $('#spHead').textContent = '支出を追加';
     $('#spSave').textContent = '追加';
     $('#spCancel').hidden = true;
@@ -16257,7 +17194,7 @@ const WHATS_NEW = [
     for (const x of xs) cats.set(x.cat, (cats.get(x.cat) || 0) + x.amount);
     const budget = toYen(state.spendGoalMonth) || 0;
     $('#spSum').innerHTML = `<p class="inTotal">支出<b>${yen(total)}</b><small>${xs.length}件</small></p>` +
-      (xs.length ? '' : '<p class="hint">この月の記録はまだないよ。下から追加するか、今日タブの「ひとことで追加」に「ランチ 800円」みたいに書いてもOK</p>') +
+      (xs.length ? '' : '<p class="hint" data-keep data-qhost>この月の記録はまだないよ</p><p class="hint">下から追加するか、今日タブの「ひとことで追加」に「ランチ 800円」みたいに書いてもOK</p>') +
       spPie(cats, total, budget) + window.spBal(spY, spM);
     $('#spList').innerHTML = xs.map(x => {
       const c = spCat(x.cat);
@@ -16277,6 +17214,7 @@ const WHATS_NEW = [
     resetForm();
     if (!dlg.open) dlg.showModal();
     window.spRender();
+    resetMoneyScroll(dlg);
     cleanPics();
   };
   window.openSpend = open;
@@ -16298,7 +17236,7 @@ const WHATS_NEW = [
   $('#spCats').addEventListener('click', e => { const b = e.target.closest('[data-spcat]'); if (b) setCat(b.dataset.spcat); });
   // メモを書いたらカテゴリを当てる（自分で選んだあとは変えない）
   let catTouched = false;
-  $('#spCats').addEventListener('click', () => { catTouched = true; });
+  $('#spCats').addEventListener('click', () => { catTouched = true; aiReviewEdited($('#spCats')); });
   $('#spMemo').addEventListener('input', e => {
     if (catTouched || spEdit) return;
     const id = spCatOf(e.target.value);
@@ -16397,6 +17335,7 @@ const WHATS_NEW = [
     e.target.value = '';
     if (!f || spRunning) return;
     const st = $('#spSt');
+    aiReviewReset(st);
     try { setPic(await shrinkGray(f)); }
     catch { st.textContent = '写真を開けなかった'; return; }
     if (!featOn('ai') || !aiOk()) {
@@ -16421,6 +17360,10 @@ const WHATS_NEW = [
       if (SP_CATS.some(c => c.id === d.cat) && !catTouched) setCat(d.cat);
       else if (store && !catTouched) setCat(spCatOf(store));
       st.textContent = got.length ? `${got.join('・')}を読み取ったよ。確かめて「${$('#spSave').textContent}」を押してね` : '金額が見つからなかった。手で入れてね';
+      const extra = {};
+      if (!(amt > 0)) extra.amount = '合計金額が読み取れなかったよ';
+      if (!isYmd(d.date) || d.date > ymd(addDays(new Date(), 1))) extra.date = '日付が読めないか未来の日付なので、入力欄の日付をそのままにしたよ';
+      aiReviewShow(st, [{ data: d, extra, fields: { date: $('#spDate'), amount: $('#spAmt'), store: $('#spMemo'), cat: $('#spCats') } }]);
     } catch (err) {
       st.textContent = isAbort(err) ? '中止したよ' : 'エラー: ' + friendlyError(err);
     } finally {
@@ -16447,19 +17390,19 @@ const WHATS_NEW = [
   const inTabs = document.createElement('div');
   inTabs.className = 'moneyTabs';
   inTabs.setAttribute('role', 'tablist');
-  inTabs.innerHTML = '<button type="button" role="tab" data-money="in" class="on">収入</button><button type="button" role="tab" data-money="out">支出</button>';
+  inTabs.innerHTML = '<button type="button" role="tab" data-money="in" class="on" aria-selected="true">収入</button><button type="button" role="tab" data-money="out" aria-selected="false">支出</button>';
   $('#incomeDlg .dlgHead h2').before(inTabs);
   document.addEventListener('click', e => {
     const b = e.target.closest('.moneyTabs [data-money]');
     if (!b || b.classList.contains('on')) return;
     if (b.dataset.money === 'out') {
-      const y = inYear, m = y === new Date().getFullYear() ? new Date().getMonth() + 1 : 12;
+      const { year: y, month: m } = window.getIncomeMonth();
       $('#incomeDlg').close();
       open(y, m);
     } else {
       const y = spY, m = spM;
       dlg.close();
-      window.openIncomeMonth(y, m);
+      window.openIncomeMonth(y, m, false);
     }
   });
 
@@ -16502,4 +17445,170 @@ const WHATS_NEW = [
 
   FEATURES.push({ id: 'spend', name: '支出', where: 'その他の「支出」（収入の右）／＋ボタン／写真から追加 → レシート', desc: '使ったお金をカテゴリごとに記録。月の予算と円グラフ、収入−支出で残りがわかる。レシートを撮るとAIが金額を読む。ひとことで追加に「ランチ 800円」でも入る',
     kw: '支出 お金 出費 家計簿 レシート 予算 節約 使った 食費 円グラフ', go: () => btn.click() });
+}
+
+/* ===== 説明書きを「？」にたたむ ===== */
+// 細かい説明が多くて、何がいる情報なのかわかりにくかったので、説明の .hint は小さい「？」にたたんで、押したらそばに吹き出しで出す。
+// 「？」はすぐ上の項目名・チェックの文字の右上、なければ同じカードの見出しの文字の右上に付ける（同じ見出しの説明は1つの「？」でまとめて開く）。
+// 開け閉めの行（summary）の「？」は開いてる時だけ出す（閉じたままだと押しても見えない）。見出しがなければ、その場所の右に小さく置く。
+// たたまないもの：id 付き（中身を書きかえる状態の表示）・エラー・読み上げで知らせる所・ボタンやリンク入り・
+// data-keep（件数・「まだ〜ないよ」・送る前の注意など、いる情報）・最初の質問の画面・短いラベル代わりの span。
+// id 付きでも data-fold を付けた説明はたたむ（押した時の中身を吹き出しに写すので、あとで書きかわってもいい）
+{
+  const SKIP = '.err, .gakuTag, [role], [aria-live], [data-keep], .calLegend, .lbl, #obDlg *';
+  const HEAD = 'h2, h3, h4, legend';
+  const STOP = 'details, dialog, .card, section, body';
+  let n = 0;
+  const live = q => (q._hints = q._hints.filter(h => h.isConnected)).length;
+  // 説明の見出しを探す：すぐ上の項目名 → 前にある見出し → 1つ外側… カード・ダイアログ・開け閉めの中まで
+  const hostOf = h => {
+    const prev = h.previousElementSibling;
+    if (prev?.matches('label, summary, [data-qhost], ' + HEAD) && !prev.hidden) return prev; // data-qhost：その文の右上に付ける // summary の「？」は開いてる時だけ出す（CSS）
+    for (let el = h; el && el !== document.body; el = el.parentElement) {
+      if (el !== h && el.matches(STOP)) break; // カード・ダイアログ・開け閉めの外の見出しには付けない
+      for (let p = el.previousElementSibling; p; p = p.previousElementSibling) {
+        if (p.hidden || p.tagName === 'SUMMARY') continue;
+        const hd = p.matches(HEAD) ? p : [...p.querySelectorAll(HEAD)].pop();
+        if (hd && !hd.closest('[hidden]')) return hd;
+      }
+    }
+    return null;
+  };
+  const sync = q => {
+    q.hidden = q._hints.every(h => h.hidden);
+  };
+  const fold = h => {
+    if (h.dataset.hq || (h.id && !/^hq\d+$/.test(h.id) && !h.hasAttribute('data-fold')) || h.tagName === 'SPAN' || h.matches(SKIP) || h.querySelector('a, button, input, select, textarea')) return;
+    if (h.textContent.trim().length < 6) return;
+    h.dataset.hq = '1';
+    if (!h.id) h.id = 'hq' + (++n);
+    h.classList.add('hintFold');
+    const host = hostOf(h);
+    let q = host && [...host.querySelectorAll(':scope > .hintQ')].find(live);
+    if (!q) {
+      q = document.createElement('button');
+      q.type = 'button'; q.className = 'hintQ'; q._hints = []; // 「？」は CSS で描く（見出しの文字に混ざらないように）
+      q.setAttribute('aria-label', '説明を見る'); q.setAttribute('aria-expanded', 'false');
+      if (host) {
+        host.querySelectorAll(':scope > .hintQ').forEach(b => b.remove());
+        // 見出し・項目名の文字のすぐ右上に（注釈の印みたいに）。後ろの「13/13 オン」などより前
+        const t = [...host.childNodes].find(c => c.nodeType === 3 && c.textContent.trim());
+        if (t) { const i = t.textContent.trimEnd().length; if (i < t.textContent.length) t.splitText(i); t.after(q); } else host.append(q);
+      } else { q.classList.add('solo'); h.before(q); }
+    }
+    q._hints.push(h); h._q = q;
+    sync(q);
+  };
+  const scan = root => {
+    if (root.nodeType !== 1) return;
+    if (root.matches('.hint')) fold(root);
+    root.querySelectorAll('.hint').forEach(fold);
+  };
+  // 押したら「？」のそばに吹き出しで出す（元の場所は隠したまま。開け閉めの中や隠れた欄の中の説明でも見える）
+  const pop = document.createElement('div');
+  pop.className = 'hintPop'; pop.id = 'hintPop'; pop.setAttribute('role', 'note'); pop.hidden = true;
+  let cur = null;
+  const close = () => {
+    if (!cur) return;
+    cur.setAttribute('aria-expanded', 'false'); cur = null; pop.hidden = true;
+  };
+  const place = q => {
+    // ダイアログの中ならそのダイアログに入れる（ダイアログより前に出すため）
+    (q.closest('dialog[open]') || document.body).append(pop);
+    pop.hidden = false;
+    const r = q.getBoundingClientRect(), W = innerWidth, H = innerHeight, w = pop.offsetWidth, h = pop.offsetHeight;
+    const left = Math.min(Math.max(16, r.left + r.width / 2 - w / 2), W - 16 - w);
+    const below = r.bottom + 8 + h <= H - 8 || r.top - 8 - h < 8;
+    pop.style.left = left + 'px';
+    pop.style.top = (below ? r.bottom + 8 : r.top - 8 - h) + 'px';
+    pop.style.setProperty('--arrow', (r.left + r.width / 2 - left) + 'px');
+    pop.classList.toggle('up', !below);
+  };
+  document.addEventListener('click', e => {
+    const q = e.target.closest('.hintQ');
+    if (!q) { if (cur && !e.target.closest('.hintPop')) close(); return; }
+    e.preventDefault(); e.stopPropagation(); // ラベルのチェックや開け閉めは切りかえない
+    if (!live(q)) { q.remove(); return; }
+    if (cur === q) { close(); return; }
+    close();
+    pop.replaceChildren(...q._hints.filter(h => !h.hidden).map(h => {
+      const p = document.createElement('p'); p.append(...[...h.childNodes].map(c => c.cloneNode(true))); return p;
+    }));
+    cur = q; q.setAttribute('aria-expanded', 'true'); q.setAttribute('aria-controls', 'hintPop');
+    place(q);
+  }, true);
+  // スクロール・画面の大きさが変わる・ダイアログを閉じたら吹き出しも閉じる
+  addEventListener('scroll', e => { if (cur && !pop.contains(e.target)) close(); }, true);
+  addEventListener('resize', close);
+  document.addEventListener('close', close, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && cur) close(); });
+  scan(document.body);
+  new MutationObserver(list => {
+    for (const m of list) {
+      // 説明ごと隠したら「？」も隠す
+      if (m.type === 'attributes') { if (m.target._q) sync(m.target._q); continue; }
+      m.addedNodes.forEach(scan);
+      // 見出しの文字を書きかえて「？」ごと消えたら、残った説明に付け直す
+      m.removedNodes.forEach(r => {
+        if (r.nodeType !== 1) return;
+        for (const q of r.matches('.hintQ') ? [r] : r.querySelectorAll('.hintQ')) {
+          if (q.isConnected) continue;
+          for (const h of q._hints) if (h.isConnected) { delete h.dataset.hq; fold(h); }
+        }
+      });
+    }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+}
+
+/* ===== 予定・課題の変更はダイアログで ===== */
+// 変更のフォームは月のカレンダーの下にあって、どこから開いても下までスクロールさせていた（時間軸からは月の表示に戻されていた）。
+// 変更を始めたら、同じフォーム（#evBox / #taskBox）をダイアログに一時的に移して、今の画面の上に重ねて出す。
+// 保存・削除・やめる・×で編集が終わったら元の場所に戻して閉じる。新しく追加するときは今までどおり下の「＋」の欄
+{
+  const dlg = document.createElement('dialog');
+  dlg.id = 'evEditDlg';
+  dlg.innerHTML = '<div class="dlg"><div class="dlgHead"><h2 tabindex="-1"></h2>' +
+    '<button type="button" class="x big" id="evEditX" aria-label="閉じる">×</button></div><div id="evEditBody"></div></div>';
+  document.body.append(dlg);
+  let box = null, mark = null;
+  const done = () => {
+    if (!box) return;
+    const b = box; box = null;
+    mark.replaceWith(b); mark = null;
+    if (dlg.open) dlg.close();
+    document.dispatchEvent(new Event('evEditDone')); // 時間軸などが描き直す
+  };
+  const wrap = (name, kind) => {
+    const f = window[name];
+    window[name] = function () {
+      // 先にダイアログへ移してから始める（中のスクロールがダイアログの中で済むように）
+      const want = $(kind === 'ev' ? '#evBox' : '#taskBox');
+      if (box && box !== want) { if (evEditId) endEvEdit(); if (ctEdit) endTaskEdit(); done(); } // 予定から課題へ等、別のフォームに変わる
+      if (!box) {
+        box = want;
+        mark = document.createComment('evEdit');
+        box.before(mark);
+        $('#evEditBody').append(box);
+      }
+      const r = f.apply(this, arguments);
+      if (!(kind === 'ev' ? evEditId : ctEdit)) { done(); return r; } // 見つからなかった（消された・変わった）
+      dlg.querySelector('h2').textContent = kind === 'ev' ? '予定を変更' : '課題を変更';
+      if (!dlg.open) dlg.showModal();
+      return r;
+    };
+  };
+  wrap('startEvEdit', 'ev');
+  wrap('startTaskEdit', 'task');
+  // 保存・削除・やめるのあとは renderDay が呼ばれるので、そこで編集が終わったかを見る
+  const rd = window.renderDay;
+  window.renderDay = function () { const r = rd.apply(this, arguments); if (box && !evEditId && !ctEdit) done(); return r; };
+  // ×・Esc で閉じたら、編集をやめる
+  $('#evEditX').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => {
+    // close は少し遅れて届くので、閉じた直後に別の変更を開き直していたら何もしない
+    if (!box || dlg.open) return;
+    if (evEditId) endEvEdit();
+    if (ctEdit) endTaskEdit();
+    done();
+  });
 }

@@ -7,6 +7,8 @@
   --font: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --bg: #f4f5f7; --surface: #fff; --text: #222; --sub: #555; --muted: #666;
   --line: #ddd; --line-soft: #eee; --border: #bbb;
+  /* 入力欄の枠とスイッチ（オフ）の色。どこに入力欄があるか分かるように、背景と3:1以上 */
+  --ctl-border: #8a8a8a;
   --accent: #2f6fde; --accent-strong: #2f6fde; --on-accent: #fff;
   --accent-soft: #f3f7ff; --course: #e3ecfb; --today: #eef4ff; --head: #ddd;
   --danger: #c33; --ok: #2a7d3a; --over: #c92a2a; --soon: #c2410c;
@@ -20,6 +22,7 @@
   :root {
     --bg: #121316; --surface: #1d1f24; --text: #e8e8ea; --sub: #b5b8bf; --muted: #9a9ea6;
     --line: #33363d; --line-soft: #2a2d33; --border: #4a4e57;
+    --ctl-border: #6e7380;
     --accent: #7aa5ff; --accent-strong: #3366cc; --on-accent: #fff;
     --accent-soft: #1f2a40; --course: #24324d; --today: #1a2233; --head: #2c2f36;
     --danger: #ff6b6b; --ok: #51cf66; --over: #ff6b6b; --soon: #ffa94d;
@@ -107,6 +110,9 @@ h2 { font-size: 15px; margin: 0 0 6px; }
 h2 small, h3 small { font-weight: normal; color: var(--sub); font-size: 12px; margin-left: 4px; }
 h3 small.alert { color: var(--over); font-weight: bold; }
 h2[tabindex]:focus { outline: none; }
+/* フォーカスの枠：キーボード（Tab）で操作しているときだけ、黄色と黒の二重の枠を出す（どの色の上でも見える。デジタル庁デザインシステムの形）。
+   指で触っているときは html.kbd が付かないので、今までどおり何も出ない。見出し（tabindex="-1"）は開いたときの置き場なので出さない */
+html.kbd :focus-visible:not([tabindex="-1"]) { outline: 3px solid #000 !important; outline-offset: 2px !important; box-shadow: 0 0 0 2px #ffd43b !important; }
 h3 { margin: 8px 0 0; font-size: 14px; }
 #termSelect { width: auto; max-width: 60%; min-width: 0; }
 
@@ -116,13 +122,17 @@ button {
   background: var(--surface); color: var(--text); cursor: pointer;
 }
 /* 無効・ロック中：半透明にすると元が薄い色だと読めなくなるので、読める薄い色＋点線の枠にする */
-button:disabled { color: var(--muted); border-style: dashed; cursor: default; }
-button.primary:disabled { background: var(--line); border-color: var(--line); color: var(--sub); }
+/* 押せない理由を出すボタン（aria-disabled）も、見た目は無効と同じ */
+button:is(:disabled, [aria-disabled="true"]) { color: var(--muted); border-style: dashed; cursor: default; }
+button.primary:is(:disabled, [aria-disabled="true"]) { background: var(--line); border-color: var(--line); color: var(--sub); }
+/* 押せない理由を出すチェック：箱は灰色に、横の文字は薄い色（読める濃さ）に */
+input[type="checkbox"][aria-disabled="true"] { filter: grayscale(1); cursor: default; }
+label:has(> input[type="checkbox"][aria-disabled="true"]) { color: var(--muted); }
 button.primary { background: var(--accent-strong); color: var(--on-accent); border-color: var(--accent-strong); }
 button.danger { color: var(--danger); border-color: var(--danger); }
 input, textarea, select {
   font: inherit; font-size: 16px; padding: 6px;
-  border: 1px solid var(--border); border-radius: 6px; width: 100%;
+  border: 1px solid var(--ctl-border); border-radius: 6px; width: 100%;
   background: var(--surface); color: var(--text);
 }
 input[type=checkbox] { width: auto; accent-color: var(--accent-strong); }
@@ -135,7 +145,7 @@ main { max-width: 900px; margin: 0 auto; padding: 8px; }
 .card > h2:first-child, .card > h3:first-child { font-size: 15px; margin: 0 0 6px; }
 /* 今日の画面：中身がないときの「なし」は出さず、見出しと入力欄だけにする */
 #view-today .card li.muted:only-child { display: none; }
-#noteCard:has(#noteList > li.muted:only-child) > .hint { display: none; }
+#noteCard:has(#noteList > li.muted:only-child) :is(> .hint, .hintQ) { display: none; }
 .muted { color: var(--muted); font-size: 13px; margin: 0; }
 .hint { color: var(--muted); font-size: 13px; margin: 0; }
 .ok { color: var(--ok); font-weight: bold; margin: 4px 0 0; font-size: 13px; }
@@ -219,6 +229,54 @@ li.soon .due { color: var(--soon); font-weight: bold; }
   display: flex; flex-direction: column; gap: 2px; cursor: pointer;
 }
 .cell.today { background: var(--today); }
+.cell.joined > .course { flex: 1; }
+/* コマの大きさをそろえる：授業1つ（か空き）のコマは中身で高くならない（はみ出す名前は3行・教室は1行で切る）。
+   授業が2つ以上のコマだけ、入りきるように行が高くなる */
+#grid { --cell-h: 88px; }
+.cell.solo { contain: size; overflow: hidden; min-height: 0; }
+.cell.solo > .course { flex: 1; min-height: 0; overflow: hidden; }
+.cell.solo:not(.joined) > .course b { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cell.solo:not(.joined) > .course small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frCell.joined > .frCo { flex: 1; }
+
+/* 画像読み取りの確認。色だけに頼らず「要確認」の文字も添える */
+.aiSuspect { outline: 2px dashed #a65a00; outline-offset: 1px; background: color-mix(in srgb, var(--surface) 86%, #f59e0b) !important; }
+.aiReview { margin: 10px 0; padding: 10px; border: 1px solid var(--muted); border-radius: 10px; min-width: 0; }
+.aiReviewHead { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; align-items: center; }
+.aiReviewHead label { font-size: 12px; }
+.aiReview ul { margin: 8px 0; padding: 0; list-style: none; }
+.aiReview li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 0; }
+.aiJump { font-size: 12px; border-style: dashed; text-align: left; }
+.aiReason { flex: 1 1 140px; font-size: 12px; overflow-wrap: anywhere; }
+.aiOkay { font-size: 11px; }
+.aiBrief .aiReason { display: none; }
+.aiSources { display: flex; gap: 6px; flex-wrap: wrap; }
+.aiSources button { font-size: 12px; }
+.aiSourceDlg { width: min(96vw, 900px); max-height: 94dvh; padding: 8px; }
+.aiSourceDlg img { display: block; width: 100%; height: auto; margin-top: 8px; }
+.aiSourceClose { position: sticky; top: 0; }
+
+/* 大学の授業候補 */
+.ccEntry { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 8px 0; }
+.ccEntry small { color: var(--muted); font-size: 11px; }
+html[data-page-scheme]:not(.hasWall) .ccEntry small { color: var(--page-fg); }
+#courseCatalogDlg { width: min(94vw, 600px); padding: 14px; box-sizing: border-box; }
+.ccFilters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ccFilters label, .ccQuery, .ccDates label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; min-width: 0; }
+.ccFilters label:first-child { grid-column: 1 / -1; }
+.ccFilters select, .ccQuery input, .ccDates input { width: 100%; min-width: 0; box-sizing: border-box; }
+.ccQuery { margin-top: 10px; }
+.ccList { padding: 0; margin: 8px 0; list-style: none; }
+.ccList li { display: block; padding: 0; margin: 6px 0; }
+.ccList button { width: 100%; text-align: left; padding: 10px; }
+.ccList :is(b,span,small) { display: block; overflow-wrap: anywhere; }
+.ccList span { font-size: 13px; margin-top: 3px; }
+.ccList small { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.ccSlots { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.ccDates { display: flex; }
+.ccDates label { flex: 1; }
+.ccBottom { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--muted); }
+.noGrid .ccEntry { display: none; }
 /* 授業がある一番遅い時限より後の時限は低く（タップで追加はそのままできる） */
 .cell.idle { min-height: 36px; }
 .pnum.idle { padding: 2px 0; }
@@ -236,6 +294,76 @@ li.soon .due { color: var(--soon); font-weight: bold; }
 /* ===== 集中講義 ===== */
 .contents { display: contents; }
 #intCard { margin-top: 8px; }
+/* 授業一覧：既存の欠席上限・遅刻換算をまとめて確認 */
+/* 時間割／授業一覧、カレンダー／予定一覧／時間軸の切り替え：見た目設定のタブと同じ（枠なし、選んだものを丸い線で囲む）。
+   壁紙の上でも読めるように、並び全体はカードと同じ色の帯にのせる */
+.courseViewSwitch { display: flex; gap: 4px; margin: 2px 0 10px; padding: 3px; border-radius: 999px; background: var(--surface); }
+.courseViewSwitch button { flex: 1 1 0; min-width: 0; min-height: 40px; padding: 6px 4px; border-radius: 999px;
+  border: 2px solid transparent; background: transparent; color: var(--text); font-size: 15px; white-space: nowrap; }
+.courseViewSwitch button[aria-pressed="true"] { border-color: var(--accent); font-weight: bold; }
+.courseOverviewTools button[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: bold;
+}
+.courseOverviewHead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 8px 0; }
+.courseOverviewHead span { font-size: 13px; }
+.courseOverviewTools { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; justify-content: space-between; }
+.courseOverviewTools button { min-height: 44px; }
+.courseOverviewTools label { display: grid; gap: 4px; font-size: 12px; color: var(--sub); }
+.courseOverviewTools select { width: auto; min-height: 44px; font-size: 14px; }
+#courseOverviewRows { display: grid; gap: 10px; }
+.courseOverviewRow { display: grid; gap: 7px; width: 100%; padding: 16px; border-radius: 16px; text-align: left; background: var(--surface); color: var(--text); }
+.courseOverviewTitle { display: flex; gap: 12px; justify-content: space-between; align-items: start; font-size: 16px; }
+.courseOverviewTitle b { overflow-wrap: anywhere; }
+.courseOverviewTitle > span { font-size: 24px; line-height: 1; color: var(--muted); }
+.courseOverviewWhen { font-size: 12px; color: var(--sub); overflow-wrap: anywhere; }
+.courseOverviewCounts { display: flex; flex-wrap: wrap; gap: 24px; align-items: baseline; }
+.courseOverviewCounts b { font-size: 26px; margin: 0 2px; font-variant-numeric: tabular-nums; }
+.courseOverviewStatus { font-size: 13px; color: var(--sub); }
+.courseOverviewRow.needsAttention { border-inline-start: 4px solid var(--over); }
+.courseOverviewRow.needsAttention .courseOverviewStatus { color: var(--over); font-weight: bold; }
+.showCourseOverview :is(#gridBar, .ccEntry, #tagLegend, #survCard) { display: none; }
+.gradeTabs, .gradeScope, .gradeActions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.gradeTabs button, .gradeScope button { min-height: 44px; }
+.gradeTabs button[aria-pressed="true"], .gradeScope button[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: bold;
+}
+.gradeStats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+.gradeStats > div { padding: 12px; background: var(--accent-soft); border-radius: 12px; font-size: 13px; }
+.gradeStats b { display: block; font-size: 30px; font-variant-numeric: tabular-nums; }
+.gradeStats small { font-size: 13px; margin-left: 4px; }
+#gradeRows { display: grid; gap: 12px; }
+.gradeRow { border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+.gradeRow h3 { overflow-wrap: anywhere; margin-top: 0; }
+.gradeInputs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; align-items: end; }
+.gradeRow label, #gradeDefault { margin-top: 8px; }
+.gradeRow input, .gradeRow select { min-width: 0; min-height: 44px; }
+.gradeRow .inline { display: flex; align-items: center; gap: 8px; }
+.gradeRow .inline input { min-height: 20px; }
+#gradesPanel > .sec > button { margin: 6px 6px 6px 0; }
+/* 今日から先の予定一覧 */
+.agendaHome { display: block; width: 100%; min-height: 44px; margin-top: 12px; }
+.agendaControls h2 { margin: 0; }
+.agendaFilters, .agendaOptions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.agendaFilters button { min-height: 44px; }
+.agendaFilters button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); font-weight: bold; }
+.agendaOptions { column-gap: 18px; }
+.agendaOptions input { min-width: 20px; min-height: 20px; }
+.agendaDay h3 { margin: 0 0 8px; font-size: 16px; }
+.agendaDay ul, .agendaFold ul { padding: 0; margin: 0; list-style: none; }
+.agendaItem { display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line-soft); }
+.agendaItem:last-child { border-bottom: none; }
+.agendaItem > input { flex: none; width: 22px; height: 22px; }
+.agendaEntry { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 12px 0; min-height: 52px; text-align: left; border: none; border-radius: 0; background: none; color: var(--text); }
+.agendaWhen { flex: 0 0 90px; font-size: 12px; color: var(--sub); overflow-wrap: anywhere; }
+.agendaItem > input + .agendaEntry .agendaWhen { flex-basis: 60px; }
+.agendaDue { color: var(--over); font-weight: bold; }
+.agendaBody { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.agendaBody b { display: block; font-size: 14px; }
+.agendaBody small { display: block; font-size: 12px; margin-top: 3px; color: var(--sub); }
+.agendaCompleted .agendaBody b { text-decoration: line-through; }
+.agendaFold > summary { padding: 6px 0; cursor: pointer; font-size: 14px; font-weight: bold; }
+#agendaMore { display: block; width: 100%; min-height: 44px; }
+@media(max-width:360px) { .agendaWhen { flex-basis: 76px; } .agendaItem > input + .agendaEntry .agendaWhen { flex-basis: 46px; } .agendaEntry { gap: 7px; } }
 .intList {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 4px; margin-bottom: 8px;
@@ -261,6 +389,16 @@ dialog::backdrop { background: var(--backdrop); }
 .row.end > * { flex: none; }
 .row.split { justify-content: space-between; }
 .row.split > * { flex: none; }
+/* 授業の期間：説明は上の行、日付の2つは下の行（スマホの幅に縮めて収める。狭すぎるときは縦に並べる） */
+#cIntRow { display: grid; gap: 4px; margin: 6px 0; }
+.dateRange { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; }
+.dateRange > input { width: 100%; min-width: 0; }
+/* iOS は日付の欄に中身ぶんの最小幅をつけるので、中の文字側も縮められるように */
+.dateRange > input::-webkit-date-and-time-value { min-width: 0; text-align: left; }
+@media (max-width: 330px) {
+  .dateRange { grid-template-columns: minmax(0, 1fr); }
+  .dateRange > .hint { justify-self: center; line-height: 1; }
+}
 .inline { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .num { width: 4em; }
 #imgPreview { max-width: 100%; max-height: 220px; object-fit: contain; display: none; }
@@ -404,11 +542,12 @@ details.sec > a, #aiBox > a { display: block; }
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom) + var(--ad-h, 0px)); z-index: 10;
-  display: flex; gap: 10px; align-items: center; max-width: 92vw;
+  /* left: 50% だと幅が画面の半分までに縮んで短い文でも折り返すので、中身の幅に（長いときは画面の92%で折り返す） */
+  display: flex; gap: 10px; align-items: center; width: max-content; max-width: 92vw;
   background: var(--toast-bg); color: var(--toast-fg); font-size: 14px;
   padding: 8px 8px 8px 14px; border-radius: 8px;
 }
-#toast button { background: none; border: none; color: var(--toast-link); font-weight: bold; }
+#toast button { flex: none; white-space: nowrap; background: none; border: none; color: var(--toast-link); font-weight: bold; }
 
 /* ===== 収入 ===== */
 .lbl { width: 4.5em; }
@@ -488,6 +627,29 @@ details.sec > a, #aiBox > a { display: block; }
 .calShowList label { justify-content: flex-start; font-size: 15px; }
 .gridBar[hidden] { display: none; }
 
+/* 表示の切り替え（左）とボタン（右）を1段に。どれもアイコンの下に短い名前の小さいボタン（押せる所は44px以上）。
+   カードと同じ色の帯にのせるので、壁紙の上でも読める */
+.viewRow { display: flex; align-items: center; gap: 4px; margin: 2px 0 8px; padding: 3px; border-radius: 16px; background: var(--surface); }
+.viewRow > .courseViewSwitch { flex: none; margin: 0; padding: 0; gap: 2px; background: none; border-radius: 0; }
+.viewRow > .gridBar { flex: 0 1 auto; min-width: 0; margin: 0 0 0 auto; gap: 2px; padding-left: 4px; border-left: 1px solid var(--line); }
+.viewRow button, .viewRow .gridBar button { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-width: 48px; min-height: 44px; padding: 3px 6px; border: 2px solid transparent; border-radius: 12px; background: transparent;
+  -webkit-backdrop-filter: none; backdrop-filter: none; font-size: 11px; line-height: 1.15; font-weight: normal; white-space: nowrap; }
+.viewRow .courseViewSwitch button { color: var(--text); }
+.viewRow .courseViewSwitch button[aria-pressed="true"] { border-color: var(--accent); font-weight: bold; }
+.viewRow .gridBar button { color: var(--accent); }
+.viewRow .gridBar button:active { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.viewRow [data-ico]::before { width: 20px; height: 20px; margin: 0; }
+/* 授業一覧の切り替え（出欠／成績、すべて／要注意）：時間割の段の右に、2つずつのかたまりで。一覧のときだけ出す */
+.listToggles { display: flex; gap: 6px; margin-left: auto; min-width: 0; }
+#view-grid:not(.showCourseOverview) .listToggles,
+#view-grid:has(#gradesPanel:not([hidden])) .listFilter { display: none; }
+.listToggles > div { display: flex; gap: 0; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 12px; }
+.viewRow .listToggles button { flex-direction: row; min-width: 44px; min-height: 44px; padding: 0 8px; border-radius: 11px; font-size: 13px; color: var(--sub); }
+.viewRow .listToggles button[aria-pressed="true"] { border-color: var(--accent); background: transparent; color: var(--text); font-weight: bold; }
+/* 予定一覧・時間軸では「画像」「表示」は使わないので出さない（切り替えだけ残る） */
+#view-cal:has(#agendaMonth[hidden]) #calBar { display: none; }
+
 /* ＋ボタン */
 #fab {
   position: fixed;
@@ -566,8 +728,8 @@ details.sec > a, #aiBox > a { display: block; }
 /* 画像読み込みの結果：曜日と時限がつぶれないように */
 #ocrResult { overflow-x: auto; }
 #ocrResult select.d { width: auto; min-width: 3.6em; padding: 3px 2px; }
-#ocrResult input.p { width: 3em; min-width: 3em; }
-#ocrResult td:first-child, #ocrResult td:nth-child(2) { width: 1%; white-space: nowrap; }
+#ocrResult input.p, #ocrResult input.pe { width: 3em; min-width: 3em; }
+#ocrResult td:first-child, #ocrResult td:nth-child(2), #ocrResult td:nth-child(3) { width: 1%; white-space: nowrap; }
 .calTitleWrap { position: relative; display: inline-block; overflow: hidden; }
 .calTitleWrap::after { content: ' ▾'; font-size: .8em; color: #888; }
 #calPick {
@@ -670,7 +832,7 @@ details.sec > a, #aiBox > a { display: block; }
 .feat { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
 .feat:first-child { border-top: 0; }
 .feat input { flex: none; width: 20px; height: 20px; margin: 0; }
-.feat span { display: flex; flex-direction: column; min-width: 0; }
+.feat span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .feat small { color: var(--muted); font-size: 12px; }
 
 /* 設定でオフにした機能（app.js の applyMode が <html> に off-xxx を付ける）。データは消えない */
@@ -815,7 +977,7 @@ details.sec > a, #aiBox > a { display: block; }
 
 /* ロック */
 #evLockRow { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 14px; }
-#evLockRow input:disabled + * , #evLockRow:has(input:disabled) { opacity: .6; }
+#evLockRow:has(input:is(:disabled, [aria-disabled="true"])) { color: var(--muted); }
 
 /* ===== 壁紙 ===== */
 #wallBg { position: fixed; inset: 0; z-index: -1; background-color: var(--bg); pointer-events: none; }
@@ -884,13 +1046,14 @@ html.hasWall .card .examLine { background: color-mix(in srgb, var(--exam-bg, #fd
 
 /* ===== カードと文字の色 ===== */
 html.cardC .card { --surface: var(--cardC); }
-html.cardT .card {
+html.cardT :is(.card, .viewRow) {
   --text: var(--cardT);
   --sub: color-mix(in srgb, var(--cardT) 78%, transparent);
   --muted: color-mix(in srgb, var(--cardT) 70%, transparent);
   --line: color-mix(in srgb, var(--cardT) 22%, transparent);
   --line-soft: color-mix(in srgb, var(--cardT) 12%, transparent);
   --border: color-mix(in srgb, var(--cardT) 35%, transparent);
+  --ctl-border: color-mix(in srgb, var(--cardT) 62%, var(--cardC, var(--surface)));
   color: var(--text);
 }
 html.cardT .card ::placeholder { color: var(--muted); }
@@ -930,7 +1093,7 @@ html[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .t
 #wallCHint:empty { display: none; }
 
 /* ===== カードの中のマスや帯も、カードの色に合わせる ===== */
-html.cardC :is(#grid, .gridBar button, #homeEdit) { --surface: var(--cardC); }
+html.cardC :is(#grid, .gridBar button, #homeEdit, .viewRow) { --surface: var(--cardC); }
 html.cardC :is(.card, #grid) {
   --bg: color-mix(in srgb, var(--cardC) 90%, var(--cardT));
   --head: color-mix(in srgb, var(--cardC) 82%, var(--cardT));
@@ -949,14 +1112,14 @@ html.cardT #grid {
 }
 
 /* 明るいカードには濃い色、暗いカードには明るい色の文字 */
-html[data-card-scheme="light"] :is(.card, #grid, .gridBar button, #homeEdit),
+html[data-card-scheme="light"] :is(.card, #grid, .gridBar button, #homeEdit, .viewRow),
 html.cardC[data-card-scheme="light"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 75%, #000);
   --tag-fg: var(--accent);
   --danger: #b02a2a; --ok: #2a7d3a; --over: #b02a2a; --soon: #a8320a; --od: #6d28d9;
   --tagn-bg: #fff4e6; --tagn-fg: #c2410c; --item-fg: #8a3b00;
 }
-html[data-card-scheme="dark"] :is(.card, #grid, .gridBar button, #homeEdit),
+html[data-card-scheme="dark"] :is(.card, #grid, .gridBar button, #homeEdit, .viewRow),
 html.cardC[data-card-scheme="dark"]:not(.tb-pastel, .tb-dark, .tb-glass, .tb-washi, .tb-neon, .tb-mint, .tb-sakura, .tb-sky, .tb-sunset, .tb-choco, .tb-forest) :is(body > header, #tabbar) {
   --accent: color-mix(in srgb, var(--accent-strong) 65%, #fff);
   --tag-fg: var(--accent);
@@ -1127,15 +1290,51 @@ dialog {
 #shareQrBtn { margin-top: 6px; }
 
 /* 空きコママッチ */
-.fmPeople { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
-.fmChip { background: #eef2ff; border-radius: 999px; padding: 4px 10px; font-size: 13px; }
-.fmChip button { border: 0; background: none; padding: 0 0 0 6px; flex: none; }
-.fmTbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.fmTbl th, .fmTbl td { border: 1px solid #ddd; text-align: center; padding: 8px 0; font-size: 13px; }
-.fmTbl td { color: #aaa; }
-.fmTbl td.some { background: #fef9c3; color: #333; }
-.fmTbl td.all { background: #bbf7d0; color: #333; font-weight: bold; }
-#fmClose { margin-top: 10px; width: 100%; }
+/* 空きコママッチ：空き／授業の切り替え、人のチップ（横にスクロール）、時限と時刻つきの表。授業がある人が多いほどテーマの色で濃く */
+#freeDlg { width: min(96vw, 560px); }
+#freeDlg .dlgHead h2 small { display: block; margin: 2px 0 0; }
+.fmPlus { margin-left: auto; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
+.fmPlus svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.fmPlus[aria-expanded="true"] { color: var(--accent); }
+.fmAddList { margin: 0 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
+.fmAddList[hidden] { display: none; }
+.fmAddList .hint { margin: 6px 0 0; }
+.fmAddHead { margin: 0 0 6px; font-size: 12px; color: var(--sub); }
+.fmAddRow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fmAddRow .fmChip small { margin-left: 4px; font-size: 10px; color: var(--sub); }
+.fmGChip { display: inline-flex; align-items: stretch; }
+.fmGChip .fmChip { border-radius: 10px 0 0 10px; }
+.fmGDel { min-width: 32px; min-height: 36px; margin: 0; padding: 0; border: 1px solid var(--line); border-left: 0; border-radius: 0 10px 10px 0; background: none; color: var(--sub); }
+.fmNew { border-style: dashed; color: var(--accent); }
+.fmMine { margin: 0 0 8px; font-size: 13px; }
+.fmMine[hidden] { display: none; }
+/* 共有：相手にも送る／届いた時間割 */
+.shareBack { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; }
+.shareBack .row { margin-top: 6px; }
+.shareBack input { flex: 1; min-width: 0; }
+.shareBack button { flex: none; margin: 0; }
+.shareGot:empty { display: none; }
+.shareGot { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+.shareGotItem { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 2px solid var(--accent); border-radius: 12px; background: var(--accent-soft); color: var(--text); font-size: 14px; }
+.shareGotItem span { flex: 1; min-width: 0; }
+.shareGotItem button { flex: none; margin: 0; min-height: 36px; }
+.fmSeg { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; margin: 4px 0 10px; border: 1px solid var(--line); border-radius: 999px; }
+.fmSeg button { min-height: 40px; margin: 0; border: 0; border-radius: 999px; background: none; color: var(--sub); font-size: 15px; }
+.fmSeg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); font-weight: bold; }
+.fmPeople { display: flex; gap: 6px; margin: 0 0 6px; padding-bottom: 4px; overflow-x: auto; scrollbar-width: none; }
+.fmChip { flex: none; min-height: 36px; margin: 0; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--text); font-size: 14px; white-space: nowrap; }
+.fmChip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: bold; }
+#fmNote { margin: 0 0 6px; }
+.fmTbl { width: 100%; border-collapse: separate; border-spacing: 4px; table-layout: fixed; }
+.fmTbl th { font-size: 13px; font-weight: normal; color: var(--sub); }
+.fmTbl tr > th:first-child { width: 34px; }
+.fmTbl th.fmP { font-size: 14px; font-weight: bold; color: var(--text); line-height: 1.2; }
+.fmTbl th.fmP small { display: block; font-size: 10px; font-weight: normal; color: var(--sub); }
+.fmTbl td { height: 52px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; text-align: center; font-size: 13px; color: var(--text);
+  background: color-mix(in srgb, var(--accent) var(--fm, 0%), var(--surface)); cursor: pointer; overflow: hidden; }
+.fmTbl td.free { background: var(--surface); color: var(--sub); }
+.fmTbl td.names { font-size: 10px; line-height: 1.3; }
+.fmTbl td.names span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ウィジェットのプレビュー */
 .wgPrevBtn { margin-right: 6px; flex: none; white-space: nowrap; } /* 説明が長くても縦書きにならないように */
@@ -1234,10 +1433,15 @@ dialog {
 .alList .alInfo small { color: var(--sub); }
 .alList li.off :is(input[type="time"], .alInfo b, .alInfo small) { color: var(--muted); }
 .alList .alDel { margin-left: 0; }
-.alTg input { appearance: none; -webkit-appearance: none; flex: none; width: 46px; height: 28px; margin: 0; border-radius: 999px; background: var(--line); position: relative; cursor: pointer; transition: background .2s; }
-.alTg input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: left .2s; }
-.alTg input:checked { background: var(--ok); }
-.alTg input:checked::after { left: 21px; }
+/* スイッチ：押したらすぐ反映される設定（目覚ましの一覧と「アラームを使う」「イヤホンで鳴らす」・設定の画面）。オフのレールも背景と3:1以上 */
+:is(.alTg, .alSw, #settingsDlg) input[type="checkbox"] { appearance: none; -webkit-appearance: none; flex: none; width: 46px; height: 28px; min-width: 46px; margin: 0; padding: 0; border: none; border-radius: 999px; background: var(--ctl-border); position: relative; cursor: pointer; transition: background .2s; }
+:is(.alTg, .alSw, #settingsDlg) input[type="checkbox"]::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: left .2s; }
+:is(.alTg, .alSw, #settingsDlg) input[type="checkbox"]:checked { background: var(--ok); }
+:is(.alTg, .alSw, #settingsDlg) input[type="checkbox"]:checked::after { left: 21px; }
+:is(.alTg, .alSw, #settingsDlg) input[type="checkbox"]:is(:disabled, [aria-disabled="true"]) { cursor: default; background: var(--line); }
+/* 設定と目覚ましのスイッチは行の右端に（説明の文が左） */
+:is(#settingsDlg label, label.alSw):has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 10px; }
+:is(#settingsDlg label, label.alSw):has(> input[type="checkbox"]) > input[type="checkbox"] { order: 2; margin-left: auto; }
 
 #alOnceD { width: 100%; box-sizing: border-box; }
 
@@ -1247,15 +1451,15 @@ dialog {
   flex-wrap: wrap;
   gap: 8px;
 }
-#shareRead {
-  flex: 1 1 100%;
-}
-#fmAdd,
-#fmAdd ~ button {
+#shareRead, #fmAdd {
   flex: 1 1 0;
   min-width: 0;
   white-space: nowrap;
+  margin-top: 0;
 }
+/* 受け取った時間割の追加ボタンは半分ずつ。友達として保存はその下の段 */
+#sharePreview > .row.end { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#sharePreview > .row.end > button { min-width: 0; margin: 0; }
 
 /* オンデマンド欄 */
 #odBox { margin-top: 12px; }
@@ -1288,7 +1492,7 @@ dialog {
 #iconBox .icList { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 #iconBox .icList button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 2px; font-size: .8em; }
 #iconBox .icList img { width: 40px; height: 40px; border-radius: 9px; }
-#iconBox .icList button.on { outline: 2px solid #8b5cf6; }
+#iconBox .icList button.on { outline: 2px solid var(--accent); }
 
 #iconBox .appIconIn { margin-top: 10px; }
 
@@ -1296,7 +1500,7 @@ dialog {
 
 .lookTabs { display: flex; gap: 6px; margin: 4px 0 14px; }
 .lookTabs button { flex: 1; padding: 8px 0; border-radius: 999px; border: 2px solid transparent; }
-.lookTabs button.on { border-color: #8b5cf6; font-weight: bold; }
+.lookTabs button.on { border-color: var(--accent); font-weight: bold; }
 .lookPane[hidden] { display: none !important; }
 #wallDlg details.flat { border: none; padding: 0; margin: 0; background: none; }
 #wallDlg details.flat > summary { display: none; }
@@ -1306,8 +1510,24 @@ dialog {
 .todoRow input[type="checkbox"], .homePick input { flex: none; width: auto; }
 .todoList .done, #dayList .done { text-decoration: line-through; color: var(--muted); }
 .todoAdd { display: flex; gap: 8px; margin-top: 8px; }
+/* ToDoのアラーム：本文（押すと完了）の外、削除の左。本文が長くても折り返して、ボタンの幅はそのまま */
+.todoRow label > span:not(.tag) { min-width: 0; overflow-wrap: anywhere; }
+.todoAl { flex: none; min-width: 56px; min-height: 40px; padding: 4px 10px; border-radius: 999px; font-size: 13px; color: var(--sub);
+  white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.todoAl.on { color: var(--accent); border-color: var(--accent); font-weight: bold; }
+.todoRow .x { flex: none; min-width: 40px; min-height: 40px; margin-left: 4px; }
+#todoAlDlg .taText { font-weight: bold; overflow-wrap: anywhere; margin: 4px 0; }
+#todoAlDlg .taQuick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+#todoAlDlg .taQuick button { min-height: 44px; }
+#todoAlDlg .taAtRow input { flex: 1; min-width: 0; }
+.taAskList li { flex-wrap: wrap; }
+.taAskText { flex: 1 1 100%; overflow-wrap: anywhere; }
+.taAskBtns { display: flex; gap: 6px; margin-left: auto; }
 .todoAdd input { flex: 1; min-width: 0; }
 .todoAdd button { flex: none; }
+/* カレンダーの「＋ ToDo」：課題と同じく、入力のあと右下に大きな追加ボタン */
+#dayTodo { display: grid; gap: 8px; margin-top: 8px; }
+#dayTodo input { width: 100%; }
 /* 今日の画面の一番下：「表示するものを選ぶ」。色は時間割・カレンダーの上のボタンと同じ（.gridBar button のところ） */
 #homeEdit { display: block; width: 100%; margin: 12px auto 24px; padding: 10px; }
 .homePick { list-style: none; padding: 0; }
@@ -1395,11 +1615,13 @@ dialog {
 .frIntT { display: block; margin-top: 10px; font-size: 13px; }
 .frIntL { margin: 4px 0 0; padding-left: 1.2em; font-size: 13px; }
 .frIntL small { margin-left: 6px; opacity: .7; }
-.frBtns { display: flex; gap: 8px; margin-top: 12px; }
-.frBtns button { flex: 1; }
+.frBtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.frBtns button { flex: 1; margin: 0; }
+.frBtns .frFree { flex-basis: 100%; }
 
 /* QRをカメラで読む */
-#qrCamDlg { width: min(92vw, 420px); }
+#qrCamDlg { width: min(92vw, 420px); padding: 12px 16px 16px; box-sizing: border-box; }
+#qrCamDlg .dlgHead { margin-bottom: 8px; }
 .qrCamWrap { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden;
   border-radius: 12px; background: #000; }
 #qrCamV { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -1455,7 +1677,7 @@ dialog {
 .evPreBar { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 6px; }
 .evPreBar button { font-size: 12px; padding: 3px 10px; }
 .evPreBar button[hidden] { display: none; }
-#evPreDel:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+#evPreDel:not(:disabled, [aria-disabled="true"]) { color: var(--danger); border-color: var(--danger); }
 #evChips.editing .chip { opacity: .65; }
 #evChips.editing .chip.sel { opacity: 1; outline: 2px solid var(--accent, #3b82f6); }
 
@@ -1548,7 +1770,7 @@ html.tb-forest #tabbar button.on, .tbSet.tb-forest .tbPrev button.on { filter: d
 .tbPickList { display: flex; flex-wrap: wrap; gap: 6px; }
 .tbPickList button { padding: 6px 12px; border-radius: 999px; border: 2px solid var(--line); background: var(--surface); color: var(--text); font-size: 13px; }
 .tbPickList button.on { border-color: var(--accent); font-weight: bold; }
-.tbPickList button:disabled { background: var(--bg); color: var(--muted); border-style: dashed; }
+.tbPickList button:is(:disabled, [aria-disabled="true"]) { background: var(--bg); color: var(--muted); border-style: dashed; }
 .tbPickList small { margin-left: 4px; }
 
 /* 交換所のグループ */
@@ -1568,14 +1790,9 @@ html.tb-forest #tabbar button.on, .tbSet.tb-forest .tbPrev button.on { filter: d
 .tbGap { height: 56px; }
 .hdTerm { font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; }
 
-/* 共有の受け取りボタンを折り返す */
-:has(> #qrCamBtn) { display: flex; flex-wrap: wrap; gap: 8px; }
-:has(> #qrCamBtn) > :is(button, label) {
-  flex: 1 1 calc(50% - 4px);
-  min-width: 0;
-  white-space: nowrap;
-  display: flex; justify-content: center; align-items: center;
-}
+/* QRコードを読み取る：送るの段の下に横いっぱい。画像から選ぶはカメラの画面の下 */
+:has(> #shareSend) > #qrCamBtn { grid-column: 1 / -1; margin-top: 0; display: flex; justify-content: center; align-items: center; }
+#qrPickBtn { display: flex; justify-content: center; align-items: center; margin-top: 10px; }
 
 /* 交換所の背景 */
 #wallBg.wp-shop { background-size: cover; background-position: center; background-repeat: no-repeat; }
@@ -1620,7 +1837,7 @@ html.tb-forest #tabbar button.on, .tbSet.tb-forest .tbPrev button.on { filter: d
 #evScopeList input[type="radio"] { flex: none; width: auto; margin: 0; }
 .evScopeBox .hint { margin: 0; }
 #evPhoto[hidden] { display: none; }
-#evMemo { display: block; width: 100%; margin: 6px 0; resize: vertical; box-sizing: border-box; }
+#evMemo, #ctMemo { display: block; width: 100%; margin: 6px 0; resize: vertical; box-sizing: border-box; }
 
 .qsBar { height: 6px; margin: 8px 0; border-radius: 3px; background: var(--line, #e5e7eb); overflow: hidden; }
 .qsBar i { display: block; height: 100%; background: var(--accent, #2563eb); transition: width .4s; }
@@ -1896,6 +2113,10 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 [data-ico].icoOnly::before, [data-ico]:empty::before, #tourE::before { margin-right: 0; }
 .obIco { margin-right: 4px; }
 [data-ico="camera"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z'/><circle cx='12' cy='13' r='3.5'/></svg>"); }
+[data-ico="grid"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='17' rx='2'/><path d='M3 9.5h18M3 15h18M9 4v17M15 4v17'/></svg>"); }
+[data-ico="list"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6h11M9 12h11M9 18h11'/><circle cx='4.5' cy='6' r='1'/><circle cx='4.5' cy='12' r='1'/><circle cx='4.5' cy='18' r='1'/></svg>"); }
+[data-ico="clock"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>"); }
+[data-ico="expand"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/></svg>"); }
 [data-ico="calendar"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='5' width='18' height='16' rx='2'/><path d='M3 10h18M8 3v4M16 3v4'/></svg>"); }
 [data-ico="link"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1'/><path d='M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'/></svg>"); }
 [data-ico="task"] { --ico: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><path d='M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z'/><path d='M14 3v5h5M9 13h6M9 17h4'/></svg>"); }
@@ -1954,6 +2175,9 @@ html[data-page-scheme]:not(.hasWall) .tagLegend { color: var(--page-fg); }
 .qaDate small, .qaTil { color: var(--muted); font-size: 12px; }
 .qaChip { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: 12px; line-height: 1.6; color: inherit; background: none; min-height: 0; white-space: nowrap; }
 button.qaChip { cursor: pointer; margin: 0 4px 4px 0; }
+/* 「ほか○日」を押すと出る、全部の日付（行の下にまとめて） */
+.qaDays { flex-basis: 100%; font-size: 12px; color: var(--sub); line-height: 1.6; overflow-wrap: anywhere; }
+.qaMoreDays { color: var(--accent); }
 .qaWarn { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 .qaTools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 6px 0 0; }
 .qaTools .linkBtn, .qaTools button { background: none; border: none; padding: 0; min-height: 0; color: var(--accent); font-size: 13px; text-decoration: underline; }
@@ -2052,6 +2276,8 @@ html { touch-action: manipulation; }
 .newsRow { border-top: 1px solid var(--line); padding: 10px 2px; }
 .newsRow:first-child { border-top: 0; }
 .newsRow > summary { cursor: pointer; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.newsRow > summary::before { content: ''; flex: 0 0 6px; height: 6px; margin: 0 5px 2px 2px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); }
+.newsRow[open] > summary::before { transform: rotate(45deg); }
 .newsRow > summary b { font-weight: normal; }
 .newsRow.unread > summary b { font-weight: bold; }
 .newsRow.unread > summary::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--over); align-self: center; }
@@ -2060,7 +2286,14 @@ html { touch-action: manipulation; }
 .newsKind { margin: 0 0 4px; font-size: 12px; font-weight: bold; color: var(--accent); }
 #newsCard h2 { margin: 0 0 8px; }
 .newsText { line-height: 1.7; margin: 8px 0; }
-.newsItem { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.newsItem { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+.newsItem > summary { display: flex; align-items: center; gap: 12px; list-style: none; cursor: pointer; padding: 12px; min-height: 44px; box-sizing: border-box; font-weight: 600; }
+.newsItem > summary::-webkit-details-marker { display: none; }
+.newsItem > summary::after { content: ''; flex: 0 0 7px; height: 7px; margin-left: auto; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); }
+.newsItem[open] > summary::after { transform: rotate(225deg); }
+.newsItem > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+.newsDetail { padding: 0 12px 12px; }
+.newsItem:not([open]) > .newsDetail { display: none; }
 .newsItem p { margin: 4px 0 6px; color: var(--sub); font-size: 14px; }
 .newsItem button { padding: 4px 12px; font-size: 13px; }
 .newsBtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -2088,6 +2321,7 @@ html { touch-action: manipulation; }
 .off-spend #fabMenu [data-fab="spend"], .off-job #fabMenu [data-fab="income"], .off-spend .phOpt[data-ph="receipt"] { display: none !important; }
 /* 収入と支出の画面の見出し：「収入　支出」のタブ。両方オンのときはタブだけ、片方なら今までの見出し */
 .moneyTabs { display: flex; align-items: flex-end; gap: 22px; }
+#incomeDlg .dlgHead, #spendDlg .dlgHead { top: 0; }
 .moneyTabs button { margin: 0; padding: 2px 2px 5px; min-height: 0; border: none; border-bottom: 3px solid transparent; border-radius: 0;
   background: none; color: var(--muted); font-size: 1.3em; font-weight: bold; line-height: 1.2; }
 .moneyTabs button.on { color: var(--text); border-bottom-color: var(--accent-strong); }
@@ -2114,3 +2348,119 @@ html:not(.off-job):not(.off-spend) .moneyTabs + h2 { position: absolute; width: 
 .spBal b.over { color: var(--over); }
 .qaAmt { display: inline-flex; align-items: center; gap: 3px; }
 .qaAmt input { width: 7em; }
+
+/* ===== カレンダーの時間軸（timeline.js）：3日ずつ。日付と終日の帯（上）・時刻（左）は動かない ===== */
+.tlTools { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+/* 「‹ 11月 ›」はひとまとまりで真ん中に（横向きで広くても離れない）。320px でも1段に収まるように少し詰める */
+.tlTools #tlTitle { flex: none; min-width: 2.4em; text-align: center; white-space: nowrap; }
+.tlTools #tlPrev { margin-left: auto; }
+.tlTools #tlNext { margin-right: auto; }
+@media (max-width: 340px) { .tlTools { gap: 2px; } }
+.tlTools button { padding: 6px 9px; white-space: nowrap; }
+.tlTools label { flex: none; white-space: nowrap; font-size: 14px; gap: 4px; }
+.tlTools .tlNav { flex: none; width: 34px; min-height: 40px; padding: 0 0 3px; border: none; border-radius: 50%; font-size: 22px; line-height: 1;
+  background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--sub); }
+.tlTools #tlDays { width: auto; flex: none; padding: 6px 2px; font-size: 14px; }
+/* 7日は1列が細いので、ブロックは名前だけ（時刻と場所は押した先で見られる） */
+#tlGrid[data-days="7"] .tlBlock small { display: none; }
+/* 縦はふつうにスクロール、横は指で動かさず JS で「めくる」（縦と横が同時に動いて誤操作しないように） */
+#tlScroll { overflow-x: hidden; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+  -webkit-overflow-scrolling: touch; }
+#tlGrid { position: relative; }
+/* 全画面：ヘッダー・切り替え・下のタブの上にかぶせて、時間軸だけを画面いっぱいに（ノッチ・下のバー・広告はよける） */
+html.tlFull body { overflow: hidden; }
+html.tlFull #tlPanel { position: fixed; inset: 0; z-index: 55; display: flex; flex-direction: column; background: var(--bg);
+  padding: calc(env(safe-area-inset-top) + 6px) calc(env(safe-area-inset-right) + 8px) calc(env(safe-area-inset-bottom) + var(--ad-h, 0px) + 6px) calc(env(safe-area-inset-left) + 8px); }
+html.tlFull #tlScroll { flex: 1; min-height: 0; }
+.tlTools #tlFull { font-size: 20px; }
+/* 日の列は「前・今・次」の3ページ分を帯（tlStrip）に並べて、はみ出す分は枠（tlClip）で隠す。めくるときは帯を横にずらす */
+.tlClip { flex: 1; min-width: 0; overflow: hidden; }
+.tlStrip { display: flex; width: max-content; height: 100%; will-change: transform; }
+.tlTop { position: sticky; top: 0; z-index: 4; display: flex; background: var(--surface); border-bottom: 1px solid var(--line); }
+.tlBody { display: flex; height: 1152px; }
+.tlCorner { position: sticky; left: 0; z-index: 5; flex: none; width: 40px; background: var(--surface);
+  font-size: 10px; color: var(--sub); display: flex; align-items: flex-end; justify-content: center; padding-bottom: 4px; }
+.tlHead { flex: none; width: var(--tl-w); padding: 4px 3px; border-left: 1px solid var(--line-soft); min-width: 0; }
+.tlDate { display: flex; align-items: baseline; justify-content: center; gap: 4px; }
+.tlDate b { font-size: 15px; line-height: 1.2; }
+.tlDate small { font-size: 10px; color: var(--sub); }
+.tlHead.sat .tlDate small { color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.tlHead.sun .tlDate small { color: color-mix(in srgb, var(--over) 80%, var(--text)); }
+.tlHead.today .tlDate b { background: var(--accent-strong); color: var(--on-accent); border-radius: 999px; padding: 0 6px; }
+.tlChips { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+/* 上の帯（時刻のない予定・オンデマの授業など）は小さく1行に。はみ出しは「…」 */
+.tlChips { gap: 1px; margin-top: 2px; }
+.tlChips button { width: 100%; margin: 0; border: 0; min-height: 0; padding: 0 3px; font-size: 10px; line-height: 1.45; text-align: left; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tlChips .tlClassChip { box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: -1px; }
+.tlChips .tlMore { background: none; color: var(--accent-strong); padding: 0 4px; font-weight: bold; }
+.tlAxis { position: sticky; left: 0; z-index: 3; flex: none; width: 40px; background: var(--surface); border-right: 1px solid var(--line); }
+.tlAxis span { position: absolute; right: 4px; transform: translateY(-50%); font-size: 10px; color: var(--sub); }
+.tlDay { position: relative; flex: none; width: var(--tl-w); scroll-snap-align: start; border-left: 1px solid var(--line-soft);
+  background-image: repeating-linear-gradient(to bottom, var(--line-soft) 0 1px, transparent 1px 48px); }
+.tlDay.today { background-color: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tlBlock { position: absolute; z-index: 1; margin: 0 0 0 1px; padding: 2px 4px; border: 0; border-radius: 6px; min-height: 0;
+  display: flex; flex-direction: column; align-items: flex-start; overflow: hidden; text-align: left; font-size: 11px; line-height: 1.25; white-space: normal; }
+.tlBlock b { font-size: 12px; overflow-wrap: anywhere; }
+.tlBlock small { font-size: 10px; overflow-wrap: anywhere; }
+/* 授業は薄く（予定の下に） */
+.tlBlock.tlClass, .tlChips .tlClassChip { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+.tlBlock.tlClass { z-index: 0; }
+/* アラーム：時刻の位置に点線と、押すとアラームの画面が開くラベル */
+.tlAlarmLine { position: absolute; left: 0; right: 0; border-top: 2px dashed var(--accent-strong); z-index: 2; pointer-events: none; }
+.tlAlarm { position: absolute; left: 2px; max-width: calc(100% - 4px); z-index: 3; transform: translateY(-50%); margin: 0; min-height: 0;
+  padding: 1px 6px; border: 0; border-radius: 999px; background: var(--accent-strong); color: var(--on-accent); font-size: 11px; font-weight: bold;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 3px; }
+.tlNow { position: absolute; left: 0; right: 0; height: 2px; background: var(--over); z-index: 2; pointer-events: none; }
+.tlNow::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--over); }
+
+/* 説明書きを「？」にたたむ（押したら出す） */
+.hint.hintFold { display: none; }
+.hintQ { display: inline-flex; align-items: center; justify-content: center; flex: none; align-self: flex-start;
+  width: 11px; height: 11px; min-width: 0; min-height: 0; margin: 0 2px 0 1px; padding: 0; border: 1px solid var(--muted); border-radius: 50%;
+  background: transparent; color: var(--muted); font-size: 8px; font-weight: bold; line-height: 1; position: relative; top: -0.6em; vertical-align: middle; }
+.hintQ.solo { display: flex; top: 0; margin: 0 0 2px auto; } /* 見出しがない所：その場所の右に */
+.hintQ::before { content: "?"; }
+.hintQ::after { content: ""; position: absolute; inset: -16px; } /* 押せる所は広めに */
+.hintQ[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.hintQ[hidden], details:not([open]) > summary > .hintQ { display: none; }
+/* 説明の吹き出し：「？」のそばに浮かせて出す */
+.hintPop { position: fixed; z-index: 1000; width: max-content; max-width: min(320px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); color: var(--text); font-size: 13px; line-height: 1.6; box-shadow: 0 6px 24px rgb(0 0 0 / .25); }
+.hintPop[hidden] { display: none; }
+.hintPop p { margin: 0; }
+.hintPop p + p { margin-top: 6px; }
+.hintPop::before { content: ''; position: absolute; left: calc(var(--arrow, 20px) - 6px); top: -6px; width: 10px; height: 10px; transform: rotate(45deg);
+  background: var(--surface); border-left: 1px solid var(--line); border-top: 1px solid var(--line); }
+.hintPop.up::before { top: auto; bottom: -6px; transform: rotate(225deg); }
+/* 時間軸：予定を長押しで動かす（行き先の枠・つかんだ予定・上の帯に落とすとき） */
+.tlBlock, .tlChips button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.tlMoving { opacity: .35; }
+.tlDropBox { position: absolute; left: 1px; right: 2px; z-index: 5; pointer-events: none; border: 2px dashed var(--accent-strong); border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); font-size: 10px; font-style: normal; font-weight: bold; padding: 1px 3px; }
+.tlDropBox[hidden] { display: none; }
+#tlGrid .tlHead.dropTo { outline: 2px solid var(--accent-strong); outline-offset: -2px; }
+/* 予定・課題の変更のダイアログ（フォームを移して出す）。見出しはダイアログの方に出すので中の見出しは隠す */
+#evEditDlg :is(#evHead, #ctHead) { display: none; }
+#evEditDlg :is(#evBox, #taskBox).editing { border: 0; padding: 0; margin: 0; background: none; box-shadow: none; }
+/* 予定を長押し：移動・複製のメニューと、行き先を選んでいる間の帯 */
+/* iPhone の長押しメニュー風：すりガラス・大きい角丸・アイコンと名前を縦に */
+#evActMenu { position: fixed; z-index: 1001; display: flex; flex-direction: column; width: 172px; padding: 4px 0; border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6);
+  box-shadow: 0 12px 40px rgb(0 0 0 / .35); animation: evActIn .16s ease-out; transform-origin: center; }
+@keyframes evActIn { from { opacity: 0; transform: scale(.92); } }
+@media (prefers-reduced-motion: reduce) { #evActMenu { animation: none; } }
+#evActMenu[hidden] { display: none; }
+#evActMenu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; margin: 0; padding: 0 18px; border: 0; border-radius: 0;
+  background: none; -webkit-backdrop-filter: none; backdrop-filter: none; color: var(--text); font-size: 15px; font-weight: normal; text-align: left; }
+#evActMenu button:active { background: color-mix(in srgb, var(--text) 10%, transparent); }
+#evActMenu svg { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#evPlaceBar { position: fixed; z-index: 1001; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 8px); display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 2px solid var(--accent-strong); border-radius: 14px; background: var(--surface); color: var(--text); font-size: 14px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / .28); }
+#evPlaceBar[hidden] { display: none; }
+#evPlaceBar span { flex: 1; min-width: 0; }
+#evPlaceBar button { flex: none; min-height: 40px; margin: 0; }
+html.evPlacing :is(#calGrid .cd, #tlGrid .tlDay, #tlGrid .tlHead) { cursor: copy; }
