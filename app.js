@@ -17612,3 +17612,14 @@ const WHATS_NEW = [
     done();
   });
 }
+
+/* ===== 入力中は＋ボタンを消す（下の「追加」ボタンと重ならないように） ===== */
+{
+  const NO_TYPE = /^(checkbox|radio|button|submit|reset|range|color|file|image)$/;
+  const typing = el => !!el && !el.closest?.('#fab') && (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+    || (el.tagName === 'INPUT' && !NO_TYPE.test(el.type)));
+  const sync = () => document.documentElement.classList.toggle('typing', typing(document.activeElement));
+  document.addEventListener('focusin', sync);
+  // フォーカスが次の入力欄へ移る途中で一瞬消えたり出たりしないよう、少し待ってから見る
+  document.addEventListener('focusout', () => setTimeout(sync, 0));
+}

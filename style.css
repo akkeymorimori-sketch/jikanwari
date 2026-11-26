@@ -2464,3 +2464,6 @@ html.tlFull #tlScroll { flex: 1; min-height: 0; }
 #evPlaceBar span { flex: 1; min-width: 0; }
 #evPlaceBar button { flex: none; min-height: 40px; margin: 0; }
 html.evPlacing :is(#calGrid .cd, #tlGrid .tlDay, #tlGrid .tlHead) { cursor: copy; }
+
+/* 入力中は＋ボタンを消す（下の「追加」ボタンと重ならないように） */
+html.typing #fab { display: none; }
