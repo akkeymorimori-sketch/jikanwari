@@ -4,14 +4,14 @@
   --bg: #f2f6fd; --card: #ffffff; --ink: #172033; --sub: #4b5670; --line: #d9e2f0;
   --blue: #2f6fe0; --blue-deep: #1c4fb5; --onblue: #ffffff;
   --busy: #c9d8f7; --busy-ink: #143a85; --mine: #fbe3cf; --mine-ink: #8a3d00;
-  --free: #f1faf4; --free-ink: #2f7a4d; --free-line: #a9dcbc; --res: #e3f5ea; --res-ink: #1d5c36;
+  --free: #f1faf4; --free-ink: #2f7a4d; --free-line: #a9dcbc;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #11151d; --card: #1b212c; --ink: #e8ecf4; --sub: #a9b3c6; --line: #2e3747;
     --blue: #5b8ff0; --blue-deep: #84a9f5; --onblue: #0b1220;
     --busy: #2c4372; --busy-ink: #dde7fb; --mine: #4a3322; --mine-ink: #ffd6b3;
-    --free: #15241b; --free-ink: #8fd3a8; --free-line: #2f5e42; --res: #183a26; --res-ink: #b9f0cc;
+    --free: #15241b; --free-ink: #8fd3a8; --free-line: #2f5e42;
   }
 }
 * { box-sizing: border-box; }
@@ -57,8 +57,6 @@ h2 { font-size: 19px; line-height: 1.4; margin: 0; }
   background: var(--card); color: var(--blue-deep); border: 2px solid var(--blue); cursor: pointer; }
 .svBtn.svMain { display: block; width: 100%; margin-top: 16px; background: var(--blue); color: var(--onblue); border-color: var(--blue); font-size: 17px; }
 .svBtn.svGhost { border-color: var(--line); color: var(--sub); font-weight: 500; }
-.svResult { white-space: pre-line; margin: 14px 0 0; font-weight: 700; color: var(--res-ink); background: var(--res); border-radius: 12px; padding: 10px 12px; }
-.svResult:empty { display: none; }
 .svList { margin-top: 12px; font-size: 14px; }
 .svList summary { cursor: pointer; color: var(--blue-deep); font-weight: 600; }
 .svList ul { list-style: none; padding: 0; margin: 8px 0 0; }

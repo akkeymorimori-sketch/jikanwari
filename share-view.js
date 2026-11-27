@@ -129,7 +129,7 @@
           continue;
         }
         const both = !c && !me;
-        if (both) free.push([d, p]);
+        if (both) free.push(k);
         td.className = both ? 'both' : [c && 'busy', me && 'mine'].filter(Boolean).join(' '); // 両方授業なら斜めに2色
         const b = document.createElement('button');
         b.type = 'button'; b.dataset.k = k;
@@ -145,27 +145,8 @@
     $('#svLegend').textContent = comparing
       ? '緑の点線のコマが、2人とも空き。タップすると「自分の授業あり／なし」が切り替わるよ'
       : '色のついたコマが友だちの授業。授業名は略称で出しているよ';
-    $('#svResult').textContent = comparing
-      ? (free.length ? `2人とも空いてるコマ（${free.length}コマ）\n${freeText(free)}` : '2人とも空いてるコマはないみたい')
-      : '';
-  }
-
-  // [[曜日, 時限]…] → 「月 4〜7限」「火 2・4〜7限」のように曜日ごと・続く時限はまとめる
-  function freeText(list) {
-    const lines = [];
-    for (let d = 0; d < 6; d++) {
-      const ps = list.filter(x => x[0] === d).map(x => x[1]).sort((a, b) => a - b);
-      if (!ps.length) continue;
-      const parts = [];
-      for (let i = 0; i < ps.length; i++) {
-        let j = i;
-        while (j + 1 < ps.length && ps[j + 1] === ps[j] + 1) j++;
-        parts.push(j > i ? `${ps[i]}〜${ps[j]}` : `${ps[i]}`);
-        i = j;
-      }
-      lines.push(`${DAYS[d]} ${parts.join('・')}限`);
-    }
-    return lines.join('\n');
+    // 一覧は出さない（表で見ればわかる）。読み上げ用に、表の名前で数だけ伝える
+    tbl.setAttribute('aria-label', comparing ? `2人とも空いてるコマは${free.length}コマ` : '友だちの時間割');
   }
 
   function renderExtra() {
