@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>友だちから時間割が届いたよ｜がくログ</title>
+<meta name="description" content="開くと時間割が見られて、自分との空きコマも比べられるよ（アプリなしでOK）">
+<meta property="og:title" content="友だちから時間割が届いたよ｜がくログ">
+<meta property="og:description" content="開くと時間割が見られて、自分との空きコマも比べられるよ（アプリなしでOK）">
+<meta property="og:image" content="https://akkeymorimori-sketch.github.io/jikanwari/share-og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="がくログ">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="share-view.css?v=2">
+</head>
+<body>
+<header class="svTop">
+  <a class="svBrand" href="https://akkeymorimori-sketch.github.io/gakulog/"><img src="icon-192.png" alt="" width="28" height="28">がくログ</a>
+</header>
+
+<main>
+  <section class="svCard" id="svTheirs">
+    <h1 id="svTitle">時間割を読んでるよ…</h1>
+    <p class="svSub" id="svSub"></p>
+    <p class="svMsg" id="svMsg" role="status"></p>
+    <button type="button" class="svBtn" id="svRetry" hidden>もう一度読む</button>
+    <div class="svWrap" id="svGridWrap" hidden><table class="svGrid" id="svGrid"></table></div>
+    <p class="svNote" id="svLegend" hidden></p>
+    <div id="svExtra"></div>
+  </section>
+
+  <section class="svCard" id="svCompare" hidden>
+    <h2>自分と空きコマを比べる</h2>
+    <p class="svSub" id="svCmpHint">自分の授業があるコマを、上の表でタップしてね。2人とも空いてるコマに緑の点線がつくよ。入れた内容はこのスマホの中だけに残って、どこにも送られないよ。</p>
+    <div class="svRow">
+      <button type="button" class="svBtn" id="svUseMine" hidden>がくログ（Web 版）の自分の時間割で比べる</button>
+      <button type="button" class="svBtn svGhost" id="svClear">自分のコマを全部消す</button>
+    </div>
+    <p class="svResult" id="svResult" role="status"></p>
+  </section>
+
+  <section class="svCard svCta" id="svCta">
+    <h2>アプリなら、もっとかんたん</h2>
+    <ul class="svPoints">
+      <li>自分の時間割も、写真を撮るだけで入る</li>
+      <li>友だち何人でも、空きコマをまとめて比べられる</li>
+      <li>課題・バイト・お金・日記・目覚ましまで、これ1つで</li>
+      <li>自分の時間割を、このリンクで友だちに送り返せる</li>
+    </ul>
+    <div class="svGet">
+      <a class="svStore" href="https://apps.apple.com/jp/app/id6822575777"><img src="appstore-badge-ja.svg" alt="App Storeからダウンロード（iPhone 版）" width="152" height="56"></a>
+      <a class="svWeb" id="svWebLink" href="./"><small>PC・Android</small>Web 版で使う</a>
+    </div>
+    <p class="svNote">Android アプリは準備中。それまでは Web 版を使ってね。Web 版で開くと、この時間割を自分のがくログに取り込むこともできるよ。</p>
+    <p class="svNote"><a id="svAppLink" href="gakulog://share">がくログのアプリを持ってる人は、アプリで開く</a></p>
+  </section>
+</main>
+
+<footer class="svFoot">
+  <a href="https://akkeymorimori-sketch.github.io/gakulog/">がくログについて</a>
+  <a href="privacy.html">プライバシーポリシー</a>
+</footer>
+<script src="share-view.js?v=2"></script>
+</body>
+</html>
