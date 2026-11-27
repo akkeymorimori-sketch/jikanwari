@@ -1474,20 +1474,23 @@ function renderPack() {
 /* ===== 画面：課題 ===== */
 let taskAll = false; // 課題を全部表示するか
 
+// 見出しの右に「追加」（日課の「編集」と同じ形）。押すと＋メニューの「課題」と同じ
+const taskHead = n => `<div class="hbHead"><h2>課題${n ? ` <small>${n}</small>` : ''}</h2>` +
+  '<button type="button" class="hbEditBtn" data-taskadd>追加</button></div>';
 function renderTasks() {
   const el = $('#taskCard');
   const all = [];
   for (const c of [...courses(), ...taskGroups()]) for (const t of c.tasks) if (!t.done) all.push({ c, t });
   all.sort((a, b) => (dueOf(a.t) || '9999').localeCompare(dueOf(b.t) || '9999'));
   if (!all.length) {
-    el.innerHTML = '<h2>課題</h2><p class="muted">未完了の課題はないよ。カレンダーの日付か、時間割の授業から追加できる</p>';
+    el.innerHTML = taskHead('') + '<p class="muted">未完了の課題はないよ。右上の「追加」から入れられる</p>';
     return;
   }
   // 普段は「ホームに出す」時期に入った課題だけ
   const vis = all.filter(x => showable(x.t));
   const shown = taskAll ? all : vis;
   const rest = all.length - shown.length;
-  el.innerHTML = `<h2>課題 <small>${vis.length}件</small></h2><ul>` + (shown.map(({ c, t }) => {
+  el.innerHTML = taskHead(`${vis.length}件`) + '<ul>' + (shown.map(({ c, t }) => {
     const st = dueState(dueOf(t));
     return `<li class="${st.cls}"><label><input type="checkbox" data-task="${t.id}" data-cid="${c.id}">` +
       `<span>${esc(t.title)}</span></label>` +
@@ -1516,7 +1519,14 @@ function renderCourseOverview() {
     (state.lateRule ? `（遅刻${state.lateRule}回を欠席1回に換算して判定）` : '');
   document.querySelectorAll('[data-course-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.courseFilter === courseOverviewFilter)));
   const daySort = (a, b) => (a.day < 0 ? 7 : a.day) - (b.day < 0 ? 7 : b.day) || a.period - b.period || a.name.localeCompare(b.name, 'ja');
-  const list = all.filter(c => courseOverviewFilter !== 'warn' || warn(c)).sort((a, b) =>
+  // 曜日でしぼりこみ：授業がある曜日（と集中講義）だけを選べるようにする
+  const daySel = $('#courseOverviewDay'), days = [...new Set(all.map(c => c.day < 0 ? 7 : c.day))].sort((a, b) => a - b);
+  const pick = days.includes(+daySel.value) && daySel.value !== '' ? daySel.value : '';
+  daySel.innerHTML = '<option value="">すべての曜日</option>' +
+    days.map(d => `<option value="${d}">${d === 7 ? '集中講義' : DAYS[d] + '曜'}</option>`).join('');
+  daySel.value = pick;
+  const onDay = c => pick === '' || (c.day < 0 ? 7 : c.day) === +pick;
+  const list = all.filter(c => (courseOverviewFilter !== 'warn' || warn(c)) && onDay(c)).sort((a, b) =>
     ($('#courseOverviewSort').value === 'absence' ? absInfo(b).n - absInfo(a).n : 0) || daySort(a, b));
   $('#courseOverviewRows').innerHTML = list.map(c => {
     const a = absInfo(c), converted = a.n - c.absences.length;
@@ -1529,7 +1539,8 @@ function renderCourseOverview() {
       `<span class="courseOverviewCounts"><span>欠席 <b>${c.absences.length}</b>回</span><span>遅刻 <b>${a.late}</b>回</span></span>` +
       (converted ? `<span class="courseOverviewWhen">遅刻換算を含む欠席：${a.n}回</span>` : '') +
       `<span class="courseOverviewStatus">${warn(c) ? '要注意・' : ''}${status}</span></button>`;
-  }).join('') || `<p class="card muted">${all.length ? '要注意の授業はないよ' : 'まだ授業がないよ。時間割から授業を追加してね'}</p>`;
+  }).join('') || `<p class="card muted">${!all.length ? 'まだ授業がないよ。時間割から授業を追加してね'
+    : courseOverviewFilter === 'warn' ? (pick === '' ? '要注意の授業はないよ' : 'この曜日に要注意の授業はないよ') : 'この曜日の授業はないよ'}</p>`;
 }
 $('#courseViewSwitch').addEventListener('click', e => {
   const b = e.target.closest('[data-course-view]');
@@ -1546,6 +1557,7 @@ $('#courseOverview').addEventListener('click', e => {
   $('#cMore').open = true;
 });
 $('#courseOverviewSort').onchange = renderCourseOverview;
+$('#courseOverviewDay').onchange = renderCourseOverview;
 
 function renderGrid() {
   renderCourseOverview();
@@ -1689,6 +1701,7 @@ $('#taskCard').addEventListener('change', e => {
 });
 $('#taskCard').addEventListener('click', e => {
   if (e.target.closest('[data-tmore]')) { taskAll = !taskAll; renderTasks(); return; }
+  if (e.target.closest('[data-taskadd]')) return $('#fabMenu [data-fab="task"]')?.click();
   const id = e.target.closest('.due')?.dataset.id;
 if (id && !isGroup(id)) openCourse(id);
 });
@@ -16783,7 +16796,7 @@ const WHATS_NEW = [
     { feat: 'timeline', title: 'カレンダーを時間の流れで見る', desc: 'カレンダーの上の「時間」（時間軸）で、3・5・7日ずつ（選べる）予定と授業を時間の位置に並べて見られるよ。上下で時間が動き、左右に払うと次の日へめくれる（7日なら1週間ずつ）。右上のボタンか、スマホを横向きにすると全画面で見られる。日付と時刻はいつも見えたまま。時刻のない予定や締切は上の帯に出る。授業は薄く出て、隠すこともできる。アラームも鳴る時刻に線で出るよ' },
     { feat: 'agenda', title: '今日から先の予定を一覧で確認', desc: 'カレンダーの上の「一覧」（予定一覧）で、予定・バイト・課題・試験を日付順にまとめて見られるよ。期限切れの課題は上にまとめ、一覧から完了にもできる。授業の表示や種類の絞り込み、30日ごとの続き表示にも対応。今日の画面からも開けるよ' },
     { feat: 'grades', title: '成績・単位を入れてGPAを確認', desc: '「時間割 → 上の「一覧」 → 成績・単位」で、学期・通算GPAと修得単位を確認できるよ。愛教大の評価方式にも対応。複数コマを1科目にまとめたり、過去の成績だけ追加することもできる。不明な単位数は入力してね' },
-    { feat: 'courseOverview', title: '授業一覧で欠席・遅刻をまとめて確認', desc: '「時間割 → 上の「一覧」」で今の学期の欠席・遅刻がひと目でわかるよ。既存の欠席上限と遅刻の換算設定で要注意を表示し、絞り込みや欠席が多い順の並べ替えもできる。授業をタップすると記録を開けるよ' },
+    { feat: 'courseOverview', title: '授業一覧で欠席・遅刻をまとめて確認', desc: '「時間割 → 上の「一覧」」で今の学期の欠席・遅刻がひと目でわかるよ。既存の欠席上限と遅刻の換算設定で要注意を表示し、要注意や曜日での絞り込み、欠席が多い順の並べ替えもできる。授業をタップすると記録を開けるよ' },
     { feat: 'grid', title: '何コマか続く授業をひとつに', desc: '授業の「開始の時限」「終了の時限」を選ぶと、1〜2限や5〜9限のように時間割の枠がつながるよ。登録済みの授業も変えられる。前に1コマずつ登録した同じ授業は、聞いてから1つにまとめるよ。時間割の画像から読み取るときも、つながった授業は1つになる' },
     { title: '課題にもメモ', desc: 'カレンダーで課題を追加・変更するときに、範囲や提出のしかたなどのメモを残せるよ。メモのある課題には📝が付く' },
     { feat: 'grid', title: '時間割のコマの大きさをそろえた', desc: '中身の多い少ないや、授業がない時限でも、コマが同じ大きさで並ぶよ。授業が2つ入るコマだけ、入りきるように高くなる' },
