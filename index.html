@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="apple-touch-icon.png">
 <title>がくログ</title>
-<link rel="stylesheet" href="style.css?v=338">
+<link rel="stylesheet" href="style.css?v=339">
 </head>
 <body>
 <header>
@@ -391,10 +391,11 @@
       <p class="hint" id="shareInfo"></p>
       <label class="inline"><input type="checkbox" id="shareItems"> 「毎回」の持ち物も入れる</label>
       <label class="inline"><input type="checkbox" id="shareOff"> 授業がない日・曜日の振替も入れる</label>
-      <p class="hint">先生の一言・課題・欠席・バイトなどの予定は送らないよ</p>
+      <label class="inline"><input type="checkbox" id="shareRoom"> 先生・教室・シラバスも入れる</label>
+      <p class="hint">先生の一言・課題・欠席・バイトなどの予定は送らないよ。送ったリンクを知っている人なら、アプリがなくても30日間は時間割を見られるよ</p>
       <div class="row end">
         <button id="shareCopy" type="button">コピー</button>
-        <button id="shareSend" class="primary">共有コードを送る</button>
+        <button id="shareSend" class="primary">リンクを送る</button>
       </div>
 
       <h3>受け取る</h3>
@@ -670,7 +671,7 @@
 <script src="qrcode.js"></script>
 <script src="jsQR.js"></script>
 <script src="ai-review.js?v=318"></script>
-<script src="app.js?v=338"></script>
+<script src="app.js?v=339"></script>
 <script src="course-catalog.js?v=318"></script>
 <script src="community-courses.js?v=2"></script>
 <script src="grades.js?v=318"></script>

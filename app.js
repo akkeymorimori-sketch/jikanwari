@@ -3153,6 +3153,7 @@ function openTermDlg(openId = '') {
   // 共有
   $('#shareItems').checked = false;
   $('#shareOff').checked = true;
+  $('#shareRoom').checked = false;
   $('#shareIn').value = '';
   shareData = null;
   renderSharePreview();
@@ -3585,14 +3586,15 @@ async function unpackText(mode, body) {
   return await new Response(st).text();
 }
 
-// 送る中身（メモ・課題・欠席・予定は入れない）
+// 送る中身（メモ・課題・欠席・予定は入れない）。先生・教室・シラバスは「入れる」を選んだときだけ
+// （リンクは転送されやすいので、知らない人に「いつ・どの教室にいるか」が伝わらないように、最初はオフ）
 function shareJSON() {
-  const t = term(), withItems = $('#shareItems').checked;
+  const t = term(), withItems = $('#shareItems').checked, withRoom = $('#shareRoom').checked;
   const d = {
     v: 1, name: t.name, start: t.start, end: t.end, p: state.periods,
     times: state.times.map(x => [x.start, x.end]),
     c: t.courses.filter(c => c.name.trim()).map(c => [
-      c.day, c.period, c.name, c.short, c.teacher, c.room, c.syllabus, c.from, c.to,
+      c.day, c.period, c.name, c.short, withRoom ? c.teacher : '', withRoom ? c.room : '', withRoom ? c.syllabus : '', c.from, c.to,
       withItems ? c.items.filter(i => i.type === 'always').map(i => i.text) : [],
       tagOf(c) ? [tagOf(c).name, tagOf(c).color] : 0, endPeriod(c)
     ])
@@ -3682,10 +3684,14 @@ async function renderShareCode() {
   $('#shareSend').disabled = $('#shareCopy').disabled = false;
 }
 
+// 共有リンク：アプリがなくても、ブラウザで時間割を見て空きコマを比べられる（www/s.html）。
+// c=GK-… にしておくと、1.1.3 までのアプリの読み取り（GK- の前が英数字でなければOK）でも共有コードとして読める
+const shareLink = code => `${APP_URL}s.html?c=GK-${code}`;
 function shareText() {
   const url = APP_URL;
-  if (shareShort) return `がくログの時間割（${term().name}）\n共有コード：GK-${shareShort.code}\n` +
-    `アプリの「その他」→「時間割を共有」に、このメッセージを貼り付けてね\n${url}`;
+  if (shareShort) return `がくログの時間割（${term().name}）が届いたよ\n` +
+    `▼タップすると見られる（アプリなしでOK）。空きコマも比べられるよ\n${shareLink(shareShort.code)}\n` +
+    `（がくログを使ってる人は、このメッセージを「時間割を共有」に貼っても読めるよ）`;
   return `がくログの共有コード（${term().name}）\n` +
     `アプリの「その他」→「時間割を共有」に、このメッセージを丸ごと貼り付けてね\n${url}\n\n` +
     `${SHARE_TAG}.${shareCode}`;
@@ -3702,6 +3708,7 @@ function copyShare(text) {
 $('#shareSec').addEventListener('toggle', e => { if (e.target.open) renderShareCode(); });
 $('#shareItems').onchange = renderShareCode;
 $('#shareOff').onchange = renderShareCode;
+$('#shareRoom').onchange = renderShareCode;
 
 // PC だと「送る」は共有の画面が出るので、そのままコピーもできるように
 $('#shareCopy').onclick = () => { if (shareCode) copyShare(shareText()); };
@@ -6429,7 +6436,7 @@ const FEATURES = [
   { id: 'tags', name: 'タグ（授業の色分け）', where: '授業の詳細 →「タグ」', desc: 'タグを付けると時間割が色分けされる', kw: 'タグ 色分け 分類 色', grid: 1, go: () => showTab('grid') },
   { id: 'short', name: '略名', where: '授業の詳細 → 授業名の横', desc: '時間割やホームに短い名前で出す', kw: '略名 短く 名前', grid: 1, go: () => showTab('grid') },
   { id: 'notes', name: 'メモ・一言日記', where: 'ホームの課題の下', desc: '今日だけのメモ、残すメモ、一言日記。過去の分はカレンダーで見返せる', kw: 'メモ 日記 ひとこと', go: () => showTab('today') },
-  { id: 'share', name: '時間割の共有', where: '学期の画面 →「共有」', desc: '共有コードで友達と時間割をやりとり', kw: '共有 友達 送る コード', grid: 1, go: () => openTermDlg('shareSec') },
+  { id: 'share', name: '時間割の共有', where: '学期の画面 →「共有」', desc: 'リンクや共有コードで友達と時間割をやりとり。相手はアプリがなくても、リンクを開けば見られて空きコマも比べられる', kw: '共有 友達 送る コード リンク QR 空きコマ', grid: 1, go: () => openTermDlg('shareSec') },
   { id: 'backup', name: 'バックアップ・復元', where: '設定 → データ', desc: 'データをファイルに書き出す・戻す。機種変更やアプリ版への引っ越しに', kw: 'バックアップ 復元 引っ越し 機種変 データ', go: () => goSet('#exportBtn') },
   { id: 'ics', name: 'カレンダーに書き出す', where: '設定 → データの下', desc: '課題の締切と持ち物をスマホのカレンダーに入れる。前日21時に通知', kw: '書き出し ics 通知 リマインド Googleカレンダー', go: () => goSet('#icsBtn') },
   { id: 'notify', name: '通知', where: '設定 →「通知」', desc: '前の日の夜に持ち物と締切、バイトの前にお知らせ', kw: '通知 リマインド お知らせ', app: 1, go: () => goSet('#nOn') },
@@ -9986,13 +9993,15 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     if (!qBox.hidden) return closeQr();
     if (!shareCode) return alert('共有コードを作ってる途中だよ。少し待ってもう一回押してね');
     if (typeof qrcode !== 'function') return alert('QRコードの部品が読み込めてないみたい');
-    const text = shareShort ? `GK-${shareShort.code}` : `${SHARE_TAG}.${shareCode}`;
+    // 短いコードはリンクにする（スマホのカメラで読むと、そのままブラウザで開ける。がくログの「QRコードを読む」でも読める）
+    const text = shareShort ? shareLink(shareShort.code) : `${SHARE_TAG}.${shareCode}`;
     try {
       const qr = qrcode(0, shareShort ? 'M' : 'L');
       qr.addData(text);
       qr.make();
       qBox.innerHTML = qr.createSvgTag(4, 4) +
-        '<p class="hint">相手のがくログで「QRコードを読む」を押して、これを撮ってもらってね</p>';
+        `<p class="hint">${shareShort ? 'スマホのカメラで撮ると、アプリがなくても見られるよ。がくログの「QRコードを読む」でも読めるよ'
+          : '相手のがくログで「QRコードを読む」を押して、これを撮ってもらってね'}</p>`;
     } catch {
       return alert('授業が多すぎてQRコードに入りきらなかった。「送る」のほうを使ってね');
     }
@@ -10000,7 +10009,7 @@ setTimeout(() => { grKindsSync(); renderAll(); }, 0);
     qBtn.textContent = 'QRコードを閉じる';
   };
   // 持ち物・休みを入れるかを変えたら、古いQRは閉じる
-  for (const id of ['#shareItems', '#shareOff']) $(id)?.addEventListener('change', closeQr);
+  for (const id of ['#shareItems', '#shareOff', '#shareRoom']) $(id)?.addEventListener('change', closeQr);
   $('#shareSec').addEventListener('toggle', e => { if (!e.target.open) closeQr(); });
 
   // 読む側：「読み込む」の横に「QRコードを読む」
@@ -10065,13 +10074,14 @@ const fmBusyOf = cs => new Set(cs.filter(c => c.day >= 0).flatMap(c => Array.fro
     '<button type="button" data-fmview="busy" aria-pressed="false">授業</button></div>' +
     '<div class="fmPeople" id="fmPeople" role="group" aria-label="比べる人"></div>' +
     '<p class="hint" id="fmNote"></p>' +
+    '<button type="button" id="fmImport" hidden>この時間割を自分のがくログに取り込む</button>' +
     '<div class="fmWrap"><table class="fmTbl" id="fmTbl"></table></div></div>';
   document.body.append(fmDlg);
   $('#shareRead').insertAdjacentHTML('afterend',
     '<button type="button" id="fmAdd">空きコマを比べる</button>');
 
   // src：今見ているグループ（null＝その場で集めた人、{ type: 'local' | 'shared', id }）
-  let fmList = [], view = 'free', pick = new Set(), src = null, waiting = []; // pick が空なら全員。waiting＝共有グループでまだ出してない人
+  let fmList = [], view = 'free', pick = new Set(), src = null, waiting = [], fmLink = ''; // fmLink：共有リンクから来た友だちのコード // pick が空なら全員。waiting＝共有グループでまだ出してない人
   const people = () => [{ key: 'me', name: '自分', busy: fmBusyOf(courses()) }, ...fmList];
   const frEntry = g => ({ key: 'fr-' + g.id, name: g.name, busy: fmBusyOf(g.courses) });
 
@@ -10086,6 +10096,7 @@ const fmBusyOf = cs => new Set(cs.filter(c => c.day >= 0).flatMap(c => Array.fro
     const g = src?.type === 'local' ? (state.fmGroups ||= []).find(x => x.id === src.id) : src?.type === 'shared' ? grGroups.find(x => x.id === src.id) : null;
     $('#fmTitle').innerHTML = g ? `${esc(g.name || 'グループ')}<small>${src.type === 'shared' ? '共有グループの空きコマ' : '空きコママッチ'}</small>` : '空きコママッチ<small>時間割の共有</small>';
     $('#fmMine').hidden = src?.type !== 'shared';
+    $('#fmImport').hidden = !fmLink;
     if (src?.type === 'shared') $('#fmMineOn').checked = !!(state.grGridOn ||= {})[src.id];
     fmDlg.querySelectorAll('[data-fmview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.fmview === view)));
     $('#fmPeople').innerHTML = `<button type="button" class="fmChip" data-fmp="" aria-pressed="${!pick.size}">${pick.size ? '' : '✓ '}全員</button>` +
@@ -10133,6 +10144,13 @@ const fmBusyOf = cs => new Set(cs.filter(c => c.day >= 0).flatMap(c => Array.fro
     renderFree(); if (!fmDlg.open) fmDlg.showModal();
   };
   window.openFreeMatch = openFm;
+  // 共有リンク（gakulog://share?c=… ・Web 版の ?c=…）から：その友だちと自分をすぐ比べる。取り込みたければ下のボタンから
+  window.fmAddFriend = (d, code, name = '友だち') => {
+    fmList = fmList.filter(x => x.key !== 'clink');
+    fmList.push({ key: 'clink', name, busy: fmBusyOf(d.courses) });
+    src = null; pick.clear(); fmLink = code;
+    renderAdd(); openFm();
+  };
 
   // 共有グループのみんなの時間割を読む
   async function loadShared(gid) {
@@ -10236,8 +10254,15 @@ const fmBusyOf = cs => new Set(cs.filter(c => c.day >= 0).flatMap(c => Array.fro
     } catch (err) { alert('できなかった：' + fbErr(err)); }
   });
   $('#fmClose').onclick = () => fmDlg.close();
+  $('#fmImport').onclick = () => {
+    const code = fmLink;
+    fmDlg.close();
+    openTermDlg('shareSec');
+    $('#shareIn').value = 'GK-' + code;
+    $('#shareRead').click();
+  };
   fmDlg.addEventListener('close', () => {
-    fmList = []; pick.clear(); view = 'free'; src = null; waiting = [];
+    fmList = []; pick.clear(); view = 'free'; src = null; waiting = []; fmLink = '';
     $('#fmAddList').hidden = true; $('#fmPlus').setAttribute('aria-expanded', 'false');
   });
 }
@@ -16736,7 +16761,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     const cs = coursesOn(d).filter(c => c.day >= 0).map(c => ({ c, o: occurrence(c, d) })).filter(x => x.o);
     return (cs.find(x => x.o.start - 10 * 60000 <= now && now <= x.o.end) || cs.find(x => x.o.start > now))?.c || null;
   };
-  const go = route => {
+  const go = (route, url = '') => {
     document.querySelectorAll('dialog[open]').forEach(x => { if (x.id !== 'qaDlg') x.close(); });
     if (route === 'add') return openQa();
     if (route === 'grid') return showTab(state.useGrid ? 'grid' : 'today');
@@ -16747,12 +16772,16 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
     if (route === 'task') return $('#fabMenu [data-fab="task"]')?.click();
     if (route === 'absent' || route === 'photo') return openClasses(route);
     if (route === 'note') { const c = nowClass(); return c ? window.mnOpen?.(null, c) : openClasses('note'); }
+    if (route === 'share') return window.openShareCode?.(url);
   };
   window.openRoute = go;
   const fromUrl = u => {
     const m = /^gakulog:\/\/(\w+)/.exec(u || '');
-    if (m && m[1] !== 'alarm') setTimeout(() => go(m[1]), 300); // 目覚ましは目覚ましの section で開く
+    if (m && m[1] !== 'alarm') setTimeout(() => go(m[1], u), 300); // 目覚ましは目覚ましの section で開く
+    // 共有リンクをタップしてアプリが開いた（iOS のユニバーサルリンク・Android の App Links）
+    else if (/^https:\/\/akkeymorimori-sketch\.github\.io\/jikanwari\/s\.html\?/.test(u || '')) setTimeout(() => go('share', u), 300);
   };
+  window.openFromUrl = fromUrl;
   const APP = window.Capacitor?.Plugins?.App;
   APP?.addListener?.('appUrlOpen', e => fromUrl(e?.url));
   APP?.getLaunchUrl?.().then(r => fromUrl(r?.url)).catch(() => {});
@@ -16791,6 +16820,7 @@ $('#evAdd').addEventListener('click', () => { $('#evCourse').value = ''; syncEvC
 const APP_VER = '1.1.4';
 const WHATS_NEW = [
   { ver: '1.1.4', items: [
+    { feat: 'share', title: '時間割をリンクで送れる', desc: '「時間割を共有」の「リンクを送る」で送ると、相手はアプリがなくてもリンクを開くだけで時間割を見られて、自分との空きコマも比べられるよ。QRコードもスマホのカメラで読めるようになった。先生・教室・シラバスは「入れる」を選んだときだけ送るよ' },
     { feat: 'courseOverview', title: '授業一覧を曜日でしぼりこむ', desc: '「時間割 → 上の「一覧」」の「しぼりこみ」で、月曜だけ・集中講義だけのように曜日ごとに見られるよ。「要注意」と一緒にも使える' },
     { feat: 'tasks', title: '今日の画面から課題を追加', desc: '今日の画面の「課題」の右上の「追加」から、すぐに課題を入れられるよ' },
   ] },
@@ -17639,4 +17669,34 @@ const WHATS_NEW = [
   document.addEventListener('focusin', sync);
   // フォーカスが次の入力欄へ移る途中で一瞬消えたり出たりしないよう、少し待ってから見る
   document.addEventListener('focusout', () => setTimeout(sync, 0));
+}
+
+/* ===== 共有リンクから開いた（Web 版の ?c=GK-… ・アプリの gakulog://share?c=GK-…） ===== */
+// s.html の「Web 版で使う」「アプリで開く」から来る。自分の授業があれば、空きコママッチでその友だちとすぐ比べる
+// （「取り込む」ボタンもそこに出す）。まだ授業がなければ、共有の画面でコードを読み込む（取り込むかは本人が選ぶ）。
+// はじめての質問やお知らせのダイアログが開いていれば、閉じるのを待つ
+{
+  const codeIn = u => String(u || '').replace(/\s+/g, '').match(/[?&]c=(?:GK-?)?([A-HJ-NP-Z2-9]{8})(?![A-Za-z0-9])/i)?.[1]?.toUpperCase();
+  const openShareCode = u => {
+    const code = codeIn(u);
+    if (!code) return false;
+    let n = 0;
+    const tryOpen = async () => {
+      if (document.querySelector('dialog[open]') && n++ < 240) return setTimeout(tryOpen, 500);
+      if (courses().some(c => c.name.trim()) && window.fmAddFriend) {
+        try { return window.fmAddFriend(await shareFrom('GK-' + code), code); }
+        catch {} // 読めなければ共有の画面へ（そこでわけを出す）
+      }
+      openTermDlg('shareSec');
+      $('#shareIn').value = 'GK-' + code;
+      $('#shareRead').click();
+    };
+    setTimeout(tryOpen, 600);
+    return true;
+  };
+  window.openShareCode = openShareCode;
+  if (!window.Capacitor?.isNativePlatform?.() && openShareCode(location.search)) {
+    // 読み込み直しでまた開かないように、URL からは消しておく
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch {}
+  }
 }
